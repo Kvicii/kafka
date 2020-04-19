@@ -29,8 +29,8 @@ import java.nio.channels.FileChannel;
 import java.util.Iterator;
 import java.util.Objects;
 
-import static org.apache.kafka.common.record.Records.LOG_OVERHEAD;
 import static org.apache.kafka.common.record.Records.HEADER_SIZE_UP_TO_MAGIC;
+import static org.apache.kafka.common.record.Records.LOG_OVERHEAD;
 import static org.apache.kafka.common.record.Records.MAGIC_OFFSET;
 import static org.apache.kafka.common.record.Records.OFFSET_OFFSET;
 import static org.apache.kafka.common.record.Records.SIZE_OFFSET;
@@ -46,9 +46,10 @@ public class FileLogInputStream implements LogInputStream<FileLogInputStream.Fil
 
     /**
      * Create a new log input stream over the FileChannel
+     *
      * @param records Underlying FileRecords instance
-     * @param start Position in the file channel to start from
-     * @param end Position in the file channel not to read past
+     * @param start   Position in the file channel to start from
+     * @param end     Position in the file channel not to read past
      */
     FileLogInputStream(FileRecords records,
                        int start,
@@ -74,7 +75,7 @@ public class FileLogInputStream implements LogInputStream<FileLogInputStream.Fil
         // V0 has the smallest overhead, stricter checking is done later
         if (size < LegacyRecord.RECORD_OVERHEAD_V0)
             throw new CorruptRecordException(String.format("Found record size %d smaller than minimum record " +
-                            "overhead (%d) in file %s.", size, LegacyRecord.RECORD_OVERHEAD_V0, fileRecords.file()));
+                    "overhead (%d) in file %s.", size, LegacyRecord.RECORD_OVERHEAD_V0, fileRecords.file()));
 
         if (position > end - LOG_OVERHEAD - size)
             return null;

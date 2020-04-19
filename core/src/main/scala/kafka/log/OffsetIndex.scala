@@ -6,7 +6,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
  *
- *    http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -51,7 +51,8 @@ import org.apache.kafka.common.errors.InvalidOffsetException
  */
 // Avoid shadowing mutable `file` in AbstractIndex
 class OffsetIndex(_file: File, baseOffset: Long, maxIndexSize: Int = -1, writable: Boolean = true)
-    extends AbstractIndex(_file, baseOffset, maxIndexSize, writable) {
+  extends AbstractIndex(_file, baseOffset, maxIndexSize, writable) {
+
   import OffsetIndex._
 
   override def entrySize = 8
@@ -89,7 +90,7 @@ class OffsetIndex(_file: File, baseOffset: Long, maxIndexSize: Int = -1, writabl
     maybeLock(lock) {
       val idx = mmap.duplicate
       val slot = largestLowerBoundSlotFor(idx, targetOffset, IndexSearchType.KEY)
-      if(slot == -1)
+      if (slot == -1)
         OffsetPosition(baseOffset, 0)
       else
         parseEntry(idx, slot)
@@ -122,6 +123,7 @@ class OffsetIndex(_file: File, baseOffset: Long, maxIndexSize: Int = -1, writabl
 
   /**
    * Get the nth offset mapping from the index
+   *
    * @param n The entry number in the index
    * @return The offset/position pair at that entry
    */
@@ -136,6 +138,7 @@ class OffsetIndex(_file: File, baseOffset: Long, maxIndexSize: Int = -1, writabl
 
   /**
    * Append an entry for the given offset/location pair to the index. This entry must have a larger offset than all subsequent entries.
+   *
    * @throws IndexOffsetOverflowException if the offset causes index offset to overflow
    */
   def append(offset: Long, position: Int): Unit = {
@@ -168,12 +171,12 @@ class OffsetIndex(_file: File, baseOffset: Long, maxIndexSize: Int = -1, writabl
        * 3) if there is no entry for this offset, delete everything larger than the next smallest
        */
       val newEntries =
-        if(slot < 0)
-          0
-        else if(relativeOffset(idx, slot) == offset - baseOffset)
-          slot
+        if (slot < 0)
+          0 // 截断全部
+        else if (relativeOffset(idx, slot) == offset - baseOffset)
+          slot // 截断该消息及之后的内容
         else
-          slot + 1
+          slot + 1 // 截断比下一个消息的位移大的所有消息
       truncateToEntries(newEntries)
     }
   }
