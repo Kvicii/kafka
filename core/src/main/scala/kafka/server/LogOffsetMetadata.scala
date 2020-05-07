@@ -6,7 +6,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
  *
- *    http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -38,9 +38,10 @@ object LogOffsetMetadata {
  *  2. the base message offset of the located segment
  *  3. the physical position on the located segment
  */
-case class LogOffsetMetadata(messageOffset: Long,
-                             segmentBaseOffset: Long = Log.UnknownOffset,
-                             relativePositionInSegment: Int = LogOffsetMetadata.UnknownFilePosition) {
+case class LogOffsetMetadata(messageOffset: Long, // 消息位移值
+                             segmentBaseOffset: Long = Log.UnknownOffset, // 该位移值所在日志段的起始位移值(判断两条消息是否处于同一个日志段)
+                             relativePositionInSegment: Int = LogOffsetMetadata.UnknownFilePosition // 该位移值所在日志段的物理磁盘位置
+                            ) {
 
   // check if this offset is already on an older segment compared with the given offset
   def onOlderSegment(that: LogOffsetMetadata): Boolean = {
@@ -51,6 +52,7 @@ case class LogOffsetMetadata(messageOffset: Long,
   }
 
   // check if this offset is on the same segment with the given offset
+  // 判断两个LogOffsetMetadata对象是否处于同一个日志段
   def onSameSegment(that: LogOffsetMetadata): Boolean = {
     if (messageOffsetOnly)
       throw new KafkaException(s"$this cannot compare its segment info with $that since it only has message offset info")
@@ -66,9 +68,9 @@ case class LogOffsetMetadata(messageOffset: Long,
   // compute the number of bytes between this offset to the given offset
   // if they are on the same segment and this offset precedes the given offset
   def positionDiff(that: LogOffsetMetadata): Int = {
-    if(!onSameSegment(that))
+    if (!onSameSegment(that))
       throw new KafkaException(s"$this cannot compare its segment position with $that since they are not on the same segment")
-    if(messageOffsetOnly)
+    if (messageOffsetOnly)
       throw new KafkaException(s"$this cannot compare its segment position with $that since it only has message offset info")
 
     this.relativePositionInSegment - that.relativePositionInSegment
