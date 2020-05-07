@@ -539,7 +539,7 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径 To
       // 创建Leader Epoch Cache检查点文件
       val checkpointFile = new LeaderEpochCheckpointFile(leaderEpochFile, logDirFailureChannel)
       // 创建Leader Epoch Cache对象
-      new LeaderEpochFileCache(topicPartition, logEndOffset _, checkpointFile)
+      new LeaderEpochFileCache(topicPartition, () => logEndOffset, checkpointFile)
     }
 
     if (recordVersion.precedes(RecordVersion.V2)) {
