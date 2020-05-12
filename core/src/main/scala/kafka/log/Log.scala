@@ -994,7 +994,7 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径 To
   private def loadProducersFromLog(producerStateManager: ProducerStateManager, records: Records): Unit = {
     val loadedProducers = mutable.Map.empty[Long, ProducerAppendInfo]
     val completedTxns = ListBuffer.empty[CompletedTxn]
-    records.batches.asScala.foreach { batch =>
+    records.batches.forEach { batch =>
       if (batch.hasProducerId) {
         val maybeCompletedTxn = updateProducers(batch,
           loadedProducers,
@@ -1231,7 +1231,7 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径 To
 
         // update the epoch cache with the epoch stamped onto the message by the leader
         // 5.更新Leader Epoch缓存
-        validRecords.batches.asScala.foreach { batch =>
+        validRecords.batches.forEach { batch =>
           if (batch.magic >= RecordBatch.MAGIC_VALUE_V2) {
             maybeAssignEpochStartOffset(batch.partitionLeaderEpoch, batch.baseOffset)
           } else {
