@@ -1127,11 +1127,11 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径 To
    * @param records                    The log records to append
    * @param origin                     Declares the origin of the append which affects required validations
    * @param interBrokerProtocolVersion Inter-broker message protocol version
-   * @param assignOffsets Should the log assign offsets to this message set or blindly apply what it is given
-   * @param leaderEpoch The partition's leader epoch which will be applied to messages when offsets are assigned on the leader
-   * @param ignoreRecordSize true to skip validation of record size.
-   * @throws KafkaStorageException If the append fails due to an I/O error.
-   * @throws OffsetsOutOfOrderException If out of order offsets found in 'records'
+   * @param assignOffsets              Should the log assign offsets to this message set or blindly apply what it is given
+   * @param leaderEpoch                The partition's leader epoch which will be applied to messages when offsets are assigned on the leader
+   * @param ignoreRecordSize           true to skip validation of record size.
+   * @throws KafkaStorageException           If the append fails due to an I/O error.
+   * @throws OffsetsOutOfOrderException      If out of order offsets found in 'records'
    * @throws UnexpectedAppendOffsetException If the first or last offset in append is less than next offset
    * @return Information about the appended messages including the first and last offset.
    */
@@ -1822,9 +1822,10 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径 To
   private def deleteOldSegments(predicate: (LogSegment, Option[LogSegment]) => Boolean, reason: String): Int = {
     lock synchronized {
       val deletable = deletableSegments(predicate) // 确定哪些日志段可以删除
-      if (deletable.nonEmpty)
+      if (deletable.nonEmpty) {
         info(s"Found deletable segments with base offsets [${deletable.map(_.baseOffset).mkString(",")}] due to $reason")
-      deleteSegments(deletable) // 实际删除
+        deleteSegments(deletable) // 实际删除
+      } else 0
     }
   }
 
@@ -2339,15 +2340,17 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径 To
    * @param asyncDelete Whether the segment files should be deleted asynchronously
    */
   private def removeAndDeleteSegments(segments: Iterable[LogSegment], asyncDelete: Boolean): Unit = {
-    lock synchronized {
-      // As most callers hold an iterator into the `segments` collection and `removeAndDeleteSegment` mutates it by
-      // removing the deleted segment, we should force materialization of the iterator here, so that results of the
-      // iteration remain valid and deterministic.
-      val toDelete = segments.toList
-      toDelete.foreach { segment =>
-        this.segments.remove(segment.baseOffset)
+    if (segments.nonEmpty) {
+      lock synchronized {
+        // As most callers hold an iterator into the `segments` collection and `removeAndDeleteSegment` mutates it by
+        // removing the deleted segment, we should force materialization of the iterator here, so that results of the
+        // iteration remain valid and deterministic.
+        val toDelete = segments.toList
+        toDelete.foreach { segment =>
+          this.segments.remove(segment.baseOffset)
+        }
+        deleteSegmentFiles(toDelete, asyncDelete)
       }
-      deleteSegmentFiles(toDelete, asyncDelete)
     }
   }
 
@@ -2365,14 +2368,14 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径 To
     segments.foreach(_.changeFileSuffixes("", Log.DeletedFileSuffix))
 
     def deleteSegments(): Unit = {
-      info(s"Deleting segments $segments")
+      info(s"Deleting segments ${segments.mkString(",")}")
       maybeHandleIOException(s"Error while deleting segments for $topicPartition in dir ${dir.getParent}") {
         segments.foreach(_.deleteIfExists())
       }
     }
 
     if (asyncDelete) {
-      info(s"Scheduling segments for deletion $segments")
+      info(s"Scheduling segments for deletion ${segments.mkString(",")}")
       scheduler.schedule("delete-file", () => deleteSegments, delay = config.fileDeleteDelayMs)
     } else {
       deleteSegments()
