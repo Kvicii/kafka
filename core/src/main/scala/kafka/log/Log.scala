@@ -133,8 +133,12 @@ case class LogAppendInfo(var firstOffset: Option[Long],
 /**
  * Container class which represents a snapshot of the significant offsets for a partition. This allows fetching
  * of these offsets atomically without the possibility of a leader change affecting their consistency relative
+<<<<<<< HEAD
  * to each other. See [[kafka.cluster.Partition.fetchOffsetSnapshot()]].
  * 封装分区所有位移元数据的容器类
+=======
+ * to each other. See [[Log.fetchOffsetSnapshot()]].
+>>>>>>> 07360680138d8cd65fb50757df0e4bf9b3ff6cc3
  */
 case class LogOffsetSnapshot(logStartOffset: Long,
                              logEndOffset: LogOffsetMetadata,
@@ -191,6 +195,17 @@ object RollParams {
       appendInfo.lastOffset,
       messagesSize, now)
   }
+}
+
+sealed trait LogStartOffsetIncrementReason
+case object ClientRecordDeletion extends LogStartOffsetIncrementReason {
+  override def toString: String = "client delete records request"
+}
+case object LeaderOffsetIncremented extends LogStartOffsetIncrementReason {
+  override def toString: String = "leader offset increment"
+}
+case object SegmentDeletion extends LogStartOffsetIncrementReason {
+  override def toString: String = "segment deletion"
 }
 
 /**
@@ -1366,20 +1381,20 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径 To
   /**
    * Increment the log start offset if the provided offset is larger.
    */
-  def maybeIncrementLogStartOffset(newLogStartOffset: Long): Unit = {
-    if (newLogStartOffset > highWatermark)
-      throw new OffsetOutOfRangeException(s"Cannot increment the log start offset to $newLogStartOffset of partition $topicPartition " +
-        s"since it is larger than the high watermark $highWatermark")
-
+  def maybeIncrementLogStartOffset(newLogStartOffset: Long, reason: LogStartOffsetIncrementReason): Unit = {
     // We don't have to write the log start offset to log-start-offset-checkpoint immediately.
     // The deleteRecordsOffset may be lost only if all in-sync replicas of this broker are shutdown
     // in an unclean manner within log.flush.start.offset.checkpoint.interval.ms. The chance of this happening is low.
     maybeHandleIOException(s"Exception while increasing log start offset for $topicPartition to $newLogStartOffset in dir ${dir.getParent}") {
       lock synchronized {
+        if (newLogStartOffset > highWatermark)
+          throw new OffsetOutOfRangeException(s"Cannot increment the log start offset to $newLogStartOffset of partition $topicPartition " +
+            s"since it is larger than the high watermark $highWatermark")
+
         checkIfMemoryMappedBufferClosed()
         if (newLogStartOffset > logStartOffset) {
-          info(s"Incrementing log start offset to $newLogStartOffset")
           updateLogStartOffset(newLogStartOffset)
+          info(s"Incremented log start offset to $newLogStartOffset due to $reason")
           leaderEpochCache.foreach(_.truncateFromStart(logStartOffset))
           producerStateManager.truncateHead(newLogStartOffset)
           maybeIncrementFirstUnstableOffset()
@@ -1840,11 +1855,11 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径 To
         lock synchronized {
           checkIfMemoryMappedBufferClosed() // 确保Log对象没有被关闭
           // remove the segments for lookups
-          removeAndDeleteSegments(deletable, asyncDelete = true) // 删除给定的日志段对象以及底层的物理文件
-          maybeIncrementLogStartOffset(segments.firstEntry.getValue.baseOffset) // 尝试更新日志的Log Start Offset值
           // Log Start Offset 值是整个 Log 对象对外可见消息的最小位移值
           // 如果我们删除了日志段对象很有可能对外可见消息的范围发生了变化
           // 此时自然要看一下是否需要更新 Log Start Offset 值 这就是 deleteSegments 方法最后要更新 Log Start Offset 值的原因
+          removeAndDeleteSegments(deletable, asyncDelete = true)  // 删除给定的日志段对象以及底层的物理文件
+          maybeIncrementLogStartOffset(segments.firstEntry.getValue.baseOffset, SegmentDeletion)  // 尝试更新日志的Log Start Offset值
         }
       }
       numToDelete
