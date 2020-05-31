@@ -6,7 +6,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
  *
- *    http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -50,12 +50,19 @@ import org.apache.kafka.common.record.RecordBatch
  *
  */
 // Avoid shadowing mutable file in AbstractIndex
+// 定义时间戳索引 保存<时间戳, 位移值>
 class TimeIndex(_file: File, baseOffset: Long, maxIndexSize: Int = -1, writable: Boolean = true)
-    extends AbstractIndex(_file, baseOffset, maxIndexSize, writable) {
+  extends AbstractIndex(_file, baseOffset, maxIndexSize, writable) {
+
   import TimeIndex._
 
   @volatile private var _lastEntry = lastEntryFromIndexFile
 
+  /**
+   * 时间戳占8个字节 位移值也是相对于起始位移值 所以占用4个字节 一共占用12字节
+   *
+   * @return
+   */
   override def entrySize = 12
 
   debug(s"Loaded index file ${file.getAbsolutePath} with maxEntries = $maxEntries, maxIndexSize = $maxIndexSize," +
@@ -84,12 +91,13 @@ class TimeIndex(_file: File, baseOffset: Long, maxIndexSize: Int = -1, writable:
 
   /**
    * Get the nth timestamp mapping from the time index
+   *
    * @param n The entry number in the time index
    * @return The timestamp/offset pair at that entry
    */
   def entry(n: Int): TimestampOffset = {
     maybeLock(lock) {
-      if(n >= _entries)
+      if (n >= _entries)
         throw new IllegalArgumentException(s"Attempt to fetch the ${n}th entry from  time index ${file.getAbsolutePath} " +
           s"which has size ${_entries}.")
       parseEntry(mmap, n)
@@ -105,8 +113,8 @@ class TimeIndex(_file: File, baseOffset: Long, maxIndexSize: Int = -1, writable:
    * The new entry is appended only if both the timestamp and offsets are greater than the last appended timestamp and
    * the last appended offset.
    *
-   * @param timestamp The timestamp of the new time index entry
-   * @param offset The offset of the new time index entry
+   * @param timestamp     The timestamp of the new time index entry
+   * @param offset        The offset of the new time index entry
    * @param skipFullCheck To skip checking whether the segment is full or not. We only skip the check when the segment
    *                      gets rolled or the segment is closed.
    */
@@ -176,9 +184,9 @@ class TimeIndex(_file: File, baseOffset: Long, maxIndexSize: Int = -1, writable:
        * 3) if there is no entry for this offset, delete everything larger than the next smallest
        */
       val newEntries =
-        if(slot < 0)
+        if (slot < 0)
           0
-        else if(relativeOffset(idx, slot) == offset - baseOffset)
+        else if (relativeOffset(idx, slot) == offset - baseOffset)
           slot
         else
           slot + 1

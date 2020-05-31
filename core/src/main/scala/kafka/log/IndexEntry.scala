@@ -6,7 +6,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
  *
- *    http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -22,6 +22,7 @@ import org.apache.kafka.common.requests.ListOffsetResponse
 sealed trait IndexEntry {
   // We always use Long for both key and value to avoid boxing.
   def indexKey: Long
+
   def indexValue: Long
 }
 
@@ -32,6 +33,7 @@ sealed trait IndexEntry {
  */
 case class OffsetPosition(offset: Long, position: Int) extends IndexEntry {
   override def indexKey = offset
+
   override def indexValue = position.toLong
 }
 
@@ -39,11 +41,13 @@ case class OffsetPosition(offset: Long, position: Int) extends IndexEntry {
 /**
  * The mapping between a timestamp to a message offset. The entry means that any message whose timestamp is greater
  * than that timestamp must be at or after that offset.
+ *
  * @param timestamp The max timestamp before the given offset.
- * @param offset The message offset.
+ * @param offset    The message offset.
  */
 case class TimestampOffset(timestamp: Long, offset: Long) extends IndexEntry {
   override def indexKey = timestamp
+
   override def indexValue = offset
 }
 

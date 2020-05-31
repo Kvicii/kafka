@@ -40,6 +40,8 @@ private[log] case class TxnIndexSearchResult(abortedTransactions: List[AbortedTx
  * whose commit markers were written in the corresponding log segment. Note, however, that individual transactions
  * may span multiple segments. Recovering the index therefore requires scanning the earlier segments in
  * order to find the start of the transactions.
+ *
+ * 定义事务索引 为已终止事务(Aborted Transaction)保存重要的元数据信息 只有启用Kafka事务后 这个索引才有可能出现
  */
 @nonthreadsafe
 class TransactionIndex(val startOffset: Long, @volatile private var _file: File) extends Logging {
@@ -167,7 +169,7 @@ class TransactionIndex(val startOffset: Long, @volatile private var _file: File)
   /**
    * Collect all aborted transactions which overlap with a given fetch range.
    *
-   * @param fetchOffset Inclusive first offset of the fetch range
+   * @param fetchOffset      Inclusive first offset of the fetch range
    * @param upperBoundOffset Exclusive last offset in the fetch range
    * @return An object containing the aborted transactions and whether the search needs to continue
    *         into the next log segment.
@@ -217,6 +219,7 @@ private[log] object AbortedTxn {
 }
 
 private[log] class AbortedTxn(val buffer: ByteBuffer) {
+
   import AbortedTxn._
 
   def this(producerId: Long,

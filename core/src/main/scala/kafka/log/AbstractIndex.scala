@@ -6,7 +6,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
  *
- *    http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -32,17 +32,28 @@ import org.apache.kafka.common.utils.{ByteBufferUnmapper, OperatingSystem, Utils
 /**
  * The abstract index class which holds entry format agnostic methods.
  *
- * @param _file The index file
- * @param baseOffset the base offset of the segment that this index is corresponding to.
- * @param maxIndexSize The maximum index size in bytes.
+ * 关于索引的顶层抽象类 封装了所有索引类型的公共操作
+ * 由于是抽象基类 Kafka的所有子类自动继承了这4个参数
+ *
+ * @param _file        The index file.  索引文件 var类型说明可被修改  自1.1.0版本之后 Kafka允许迁移底层的日志路径 所以索引文件自然要是可以更换的
+ * @param baseOffset   the base offset of the segment that this index is corresponding to.  起始位移值 索引对象对应日志段对象的起始位移值 日志文件和索引文件都是成组出现的
+ * @param maxIndexSize The maximum index size in bytes. 索引文件最大字节数 控制了索引文件的最大长度 传入该参数的值是broker端参数segment.index.bytes值(10M) 即默认情况下Kafka的所有索引文件默认大小都是10MB
+ * @param writable     索引文件的打开方式 True代表以读写方式打开 False代表以只读方式打开
  */
-abstract class AbstractIndex(@volatile private var _file: File, val baseOffset: Long, val maxIndexSize: Int = -1,
-                             val writable: Boolean) extends Closeable {
+abstract class AbstractIndex(@volatile private var _file: File, val baseOffset: Long,
+                             val maxIndexSize: Int = -1, val writable: Boolean) extends Closeable {
+
   import AbstractIndex._
 
   // Length of the index file
   @volatile
   private var _length: Long = _
+
+  /**
+   * 表示不同索引项的大小
+   *
+   * @return
+   */
   protected def entrySize: Int
 
   /*
@@ -106,14 +117,19 @@ abstract class AbstractIndex(@volatile private var _file: File, val baseOffset: 
 
   protected val lock = new ReentrantLock
 
+  /**
+   * Kafka索引底层的实现原理 内存映射文件(MappedByteBuffer)
+   * 拥有很高的IO性能 文件直接映射到一段虚拟内存 访问内存映射文件的速度要快于普通文件的读写速度
+   * 在Linux操作系统 这段映射的内存区域直接就是操作系统的Page Cache 意味着不需要将数据拷贝到用户态空间 避免了时间/空间消耗
+   */
   @volatile
   protected var mmap: MappedByteBuffer = {
     val newlyCreated = file.createNewFile()
     val raf = if (writable) new RandomAccessFile(file, "rw") else new RandomAccessFile(file, "r")
     try {
       /* pre-allocate the file if necessary */
-      if(newlyCreated) {
-        if(maxIndexSize < entrySize)
+      if (newlyCreated) {
+        if (maxIndexSize < entrySize)
           throw new IllegalArgumentException("Invalid max index size: " + maxIndexSize)
         raf.setLength(roundDownToExactMultiple(maxIndexSize, entrySize))
       }
@@ -127,10 +143,10 @@ abstract class AbstractIndex(@volatile private var _file: File, val baseOffset: 
           raf.getChannel.map(FileChannel.MapMode.READ_ONLY, 0, _length)
       }
       /* set the position in the index for the next entry */
-      if(newlyCreated)
+      if (newlyCreated)
         idx.position(0)
       else
-        // if this is a pre-existing index, assume it is valid and set position to last entry
+      // if this is a pre-existing index, assume it is valid and set position to last entry
         idx.position(roundDownToExactMultiple(idx.limit(), entrySize))
       idx
     } finally {
@@ -292,6 +308,7 @@ abstract class AbstractIndex(@volatile private var _file: File, val baseOffset: 
 
   /**
    * Get offset relative to base offset of this index
+   *
    * @throws IndexOffsetOverflowException
    */
   def relativeOffset(offset: Long): Int = {
@@ -303,6 +320,7 @@ abstract class AbstractIndex(@volatile private var _file: File, val baseOffset: 
 
   /**
    * Check if a particular offset is valid to be appended to this index.
+   *
    * @param offset The offset to check
    * @return true if this offset is valid to be appended to this index; false otherwise
    */
@@ -344,7 +362,7 @@ abstract class AbstractIndex(@volatile private var _file: File, val baseOffset: 
    * To parse an entry in the index.
    *
    * @param buffer the buffer of this memory mapped index.
-   * @param n the slot
+   * @param n      the slot
    * @return the index entry stored in the given slot.
    */
   protected def parseEntry(buffer: ByteBuffer, n: Int): IndexEntry
@@ -353,7 +371,7 @@ abstract class AbstractIndex(@volatile private var _file: File, val baseOffset: 
    * Find the slot in which the largest entry less than or equal to the given target key or value is stored.
    * The comparison is made using the `IndexEntry.compareTo()` method.
    *
-   * @param idx The index buffer
+   * @param idx    The index buffer
    * @param target The index key to look for
    * @return The slot found or -1 if the least entry in the index is larger than the target key or the index is empty
    */
@@ -371,20 +389,20 @@ abstract class AbstractIndex(@volatile private var _file: File, val baseOffset: 
    */
   private def indexSlotRangeFor(idx: ByteBuffer, target: Long, searchEntity: IndexSearchEntity): (Int, Int) = {
     // check if the index is empty
-    if(_entries == 0)
+    if (_entries == 0)
       return (-1, -1)
 
-    def binarySearch(begin: Int, end: Int) : (Int, Int) = {
+    def binarySearch(begin: Int, end: Int): (Int, Int) = {
       // binary search for the entry
       var lo = begin
       var hi = end
-      while(lo < hi) {
+      while (lo < hi) {
         val mid = (lo + hi + 1) >>> 1
         val found = parseEntry(idx, mid)
         val compareResult = compareIndexEntry(found, target, searchEntity)
-        if(compareResult > 0)
+        if (compareResult > 0)
           hi = mid - 1
-        else if(compareResult < 0)
+        else if (compareResult < 0)
           lo = mid
         else
           return (mid, mid)
@@ -394,12 +412,12 @@ abstract class AbstractIndex(@volatile private var _file: File, val baseOffset: 
 
     val firstHotEntry = Math.max(0, _entries - 1 - _warmEntries)
     // check if the target offset is in the warm section of the index
-    if(compareIndexEntry(parseEntry(idx, firstHotEntry), target, searchEntity) < 0) {
+    if (compareIndexEntry(parseEntry(idx, firstHotEntry), target, searchEntity) < 0) {
       return binarySearch(firstHotEntry, _entries - 1)
     }
 
     // check if the target offset is smaller than the least offset
-    if(compareIndexEntry(parseEntry(idx, 0), target, searchEntity) > 0)
+    if (compareIndexEntry(parseEntry(idx, 0), target, searchEntity) > 0)
       return (-1, 0)
 
     binarySearch(0, firstHotEntry)

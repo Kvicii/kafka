@@ -50,11 +50,20 @@ import org.apache.kafka.common.errors.InvalidOffsetException
  * storage format.
  */
 // Avoid shadowing mutable `file` in AbstractIndex
+// 定义位移索引 保存<位移值, 文件磁盘物理位置>
 class OffsetIndex(_file: File, baseOffset: Long, maxIndexSize: Int = -1, writable: Boolean = true)
   extends AbstractIndex(_file, baseOffset, maxIndexSize, writable) {
 
   import OffsetIndex._
 
+  /**
+   * 位移值用4字节表示(虽然使用了Long类型 但是该位移值是相对于起始位移值baseOffset而言的 -> [真实位移值 - 起始位移值] 所以只占用4字节 节省了磁盘空间) 物理磁盘位置也用4字节表示
+   * broker端参数log.segment.bytes是整型 即Kafka每个日志段文件的大小不会超过 2 ^ 32(4GB)
+   * 说明同一个日志段文件上的位移值 - baseOffset的差值一定在整数范围内 所以保存4字节就足够了
+   *
+   *
+   * @return
+   */
   override def entrySize = 8
 
   /* the last offset in the index */
