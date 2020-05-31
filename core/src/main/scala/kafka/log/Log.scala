@@ -133,12 +133,8 @@ case class LogAppendInfo(var firstOffset: Option[Long],
 /**
  * Container class which represents a snapshot of the significant offsets for a partition. This allows fetching
  * of these offsets atomically without the possibility of a leader change affecting their consistency relative
-<<<<<<< HEAD
- * to each other. See [[kafka.cluster.Partition.fetchOffsetSnapshot()]].
- * 封装分区所有位移元数据的容器类
-=======
  * to each other. See [[Log.fetchOffsetSnapshot()]].
->>>>>>> 07360680138d8cd65fb50757df0e4bf9b3ff6cc3
+ * 封装分区所有位移元数据的容器类
  */
 case class LogOffsetSnapshot(logStartOffset: Long,
                              logEndOffset: LogOffsetMetadata,
@@ -198,12 +194,15 @@ object RollParams {
 }
 
 sealed trait LogStartOffsetIncrementReason
+
 case object ClientRecordDeletion extends LogStartOffsetIncrementReason {
   override def toString: String = "client delete records request"
 }
+
 case object LeaderOffsetIncremented extends LogStartOffsetIncrementReason {
   override def toString: String = "leader offset increment"
 }
+
 case object SegmentDeletion extends LogStartOffsetIncrementReason {
   override def toString: String = "segment deletion"
 }
@@ -1858,8 +1857,8 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径 To
           // Log Start Offset 值是整个 Log 对象对外可见消息的最小位移值
           // 如果我们删除了日志段对象很有可能对外可见消息的范围发生了变化
           // 此时自然要看一下是否需要更新 Log Start Offset 值 这就是 deleteSegments 方法最后要更新 Log Start Offset 值的原因
-          removeAndDeleteSegments(deletable, asyncDelete = true)  // 删除给定的日志段对象以及底层的物理文件
-          maybeIncrementLogStartOffset(segments.firstEntry.getValue.baseOffset, SegmentDeletion)  // 尝试更新日志的Log Start Offset值
+          removeAndDeleteSegments(deletable, asyncDelete = true) // 删除给定的日志段对象以及底层的物理文件
+          maybeIncrementLogStartOffset(segments.firstEntry.getValue.baseOffset, SegmentDeletion) // 尝试更新日志的Log Start Offset值
         }
       }
       numToDelete
