@@ -121,21 +121,27 @@ abstract class AbstractIndex(@volatile private var _file: File, val baseOffset: 
    * Kafka索引底层的实现原理 内存映射文件(MappedByteBuffer)
    * 拥有很高的IO性能 文件直接映射到一段虚拟内存 访问内存映射文件的速度要快于普通文件的读写速度
    * 在Linux操作系统 这段映射的内存区域直接就是操作系统的Page Cache 意味着不需要将数据拷贝到用户态空间 避免了时间/空间消耗
+   *
+   * 创建MappedByteBuffer对象 {@link AbstractIndex} 的其他大部分操作都和mmap有关
    */
   @volatile
   protected var mmap: MappedByteBuffer = {
+    // 1.尝试创建索引对象对应的物理磁盘文件
     val newlyCreated = file.createNewFile()
+    // 2.根据writable参数以指定方式(读写/只读)打开索引文件
     val raf = if (writable) new RandomAccessFile(file, "rw") else new RandomAccessFile(file, "r")
     try {
       /* pre-allocate the file if necessary */
       if (newlyCreated) {
-        if (maxIndexSize < entrySize)
-          throw new IllegalArgumentException("Invalid max index size: " + maxIndexSize)
-        raf.setLength(roundDownToExactMultiple(maxIndexSize, entrySize))
+        if (maxIndexSize < entrySize) // 预设的索引文件不能太小 如果连一个索引项都保存不了直接抛出异常
+        throw new IllegalArgumentException("Invalid max index size: " + maxIndexSize)
+        // 3.设置索引文件长度 roundDownToExactMultiple计算的是不超过maxIndexSize的最大整数倍entrySize
+        raf.setLength(roundDownToExactMultiple(maxIndexSize, entrySize)) // 比如maxIndexSize=1234567 entrySize=8 那么调整后的文件长度为1234560
       }
-
+      // info.索引对象的文件长度是指索引对象底层物理文件的大小 索引对象的长度字段是内存中索引类的长度属性
       /* memory-map the file */
-      _length = raf.length()
+      _length = raf.length() // 4.更新索引对象长度字段_length
+      // 5.更具writable参数创建只读/读写MappedByteBuffer
       val idx = {
         if (writable)
           raf.getChannel.map(FileChannel.MapMode.READ_WRITE, 0, _length)
@@ -143,29 +149,33 @@ abstract class AbstractIndex(@volatile private var _file: File, val baseOffset: 
           raf.getChannel.map(FileChannel.MapMode.READ_ONLY, 0, _length)
       }
       /* set the position in the index for the next entry */
+      // 6.索引文件是全新创建的 将MappedByteBuffer对象的当前位置设置为0
       if (newlyCreated)
         idx.position(0)
       else
       // if this is a pre-existing index, assume it is valid and set position to last entry
-        idx.position(roundDownToExactMultiple(idx.limit(), entrySize))
-      idx
+        idx.position(roundDownToExactMultiple(idx.limit(), entrySize)) // 如果索引文件已存在 将MappedByteBuffer对象的当前位置调整为最后一个索引项所在的位置
+      idx //7.返回创建的MappedByteBuffer对象
     } finally {
-      CoreUtils.swallow(raf.close(), AbstractIndex)
+      CoreUtils.swallow(raf.close(), AbstractIndex) // 关闭打开索引文件句柄
     }
   }
 
   /**
    * The maximum number of entries this index can hold
+   * 索引对象最多能容纳多少个索引项
    */
   @volatile
   private[this] var _maxEntries: Int = mmap.limit() / entrySize
 
   /** The number of entries in this index */
+  // 计算索引对象中当前有多少个索引项
   @volatile
   protected var _entries: Int = mmap.position() / entrySize
 
   /**
    * True iff there are no more slots available in this index
+   * 判断当前索引文件是否已经写满
    */
   def isFull: Boolean = _entries >= _maxEntries
 
@@ -360,9 +370,10 @@ abstract class AbstractIndex(@volatile private var _file: File, val baseOffset: 
 
   /**
    * To parse an entry in the index.
+   * 查找给定的索引项
    *
    * @param buffer the buffer of this memory mapped index.
-   * @param n      the slot
+   * @param n      the slot. 查找给定ByteBuffer中保存的第n个索引项(第n个槽)
    * @return the index entry stored in the given slot.
    */
   protected def parseEntry(buffer: ByteBuffer, n: Int): IndexEntry
@@ -386,12 +397,26 @@ abstract class AbstractIndex(@volatile private var _file: File, val baseOffset: 
 
   /**
    * Lookup lower and upper bounds for the given target.
+   * 二分查找算法找出索引项对象的所在的第n个槽
+   *
+   * 之前版本问题:
+   * 由于Kafka使用了Linux的Page Cache完成MappedByteBuffer的映射 而操作系统的Page Cache大都使用了LRU或近似LRU的机制来管理
+   * Kafka是在文件末尾追加写入的 索引的查询几乎也是发生在索引文件尾部 这就导致了在查询时 可能目前的Page没有写满 二分查找经过的Page一直是其中几个
+   * 当目前Page写满重新申请Page时 之前访问的部分Page可能会失效 导致缺页中断(Page Fault) 此时Kafka线程会被阻塞 等待从磁盘中读数据到缓存页
+   *
+   * 每当索引文件占用 Page 数发生变化时 就会强行变更二分查找的搜索路径 从而出现不在页缓存的冷数据必须要加载到页缓存的情形 而这种加载过程是非常耗时的
+   *
+   * 解决方案:
+   * 将所有索引项分成两个部分:热区(Warm Area)和冷区(Cold Area) 然后分别在这两个区域内执行二分查找算法
+   * 这个改进版算法的最大好处在于 查询最热那部分数据所遍历的 Page 永远是固定的 因此大概率在页缓存中 从而避免无意义的 Page Fault
    */
   private def indexSlotRangeFor(idx: ByteBuffer, target: Long, searchEntity: IndexSearchEntity): (Int, Int) = {
     // check if the index is empty
+    // 如果当前索引对象没有索引项直接返回<-1, -1>
     if (_entries == 0)
       return (-1, -1)
 
+    // 封装原版的二分查找算法
     def binarySearch(begin: Int, end: Int): (Int, Int) = {
       // binary search for the entry
       var lo = begin
@@ -410,16 +435,22 @@ abstract class AbstractIndex(@volatile private var _file: File, val baseOffset: 
       (lo, if (lo == _entries - 1) -1 else lo + 1)
     }
 
-    val firstHotEntry = Math.max(0, _entries - 1 - _warmEntries)
+    // 确定热区首个索引项位于哪个槽 _warmEntries就是所谓的分割线 目前固定为8192字节处
+    // 如果是 {@link OffsetIndex}  _warmEntries = 8192 / entrySize 即第1024个槽
+    // 如果是 {@link TimeIndex} _warmEntries = 8192 / 12 = 682，即第682个槽
+    val firstHotEntry = Math.max(0, _entries - 1 - _warmEntries) // 热区位于尾部
     // check if the target offset is in the warm section of the index
+    // 判断target是在热区还是冷区
     if (compareIndexEntry(parseEntry(idx, firstHotEntry), target, searchEntity) < 0) {
+      // 热区直接搜索
       return binarySearch(firstHotEntry, _entries - 1)
     }
 
     // check if the target offset is smaller than the least offset
+    // 确保target位移值不能 < 当前最小位移值
     if (compareIndexEntry(parseEntry(idx, 0), target, searchEntity) > 0)
       return (-1, 0)
-
+    // 如果在冷区搜索冷区
     binarySearch(0, firstHotEntry)
   }
 

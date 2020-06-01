@@ -20,6 +20,7 @@ package kafka.log
 import java.io.File
 import java.nio.ByteBuffer
 
+import kafka.common.IndexOffsetOverflowException
 import kafka.utils.CoreUtils.inLock
 import kafka.utils.Logging
 import org.apache.kafka.common.errors.InvalidOffsetException
@@ -122,10 +123,31 @@ class OffsetIndex(_file: File, baseOffset: Long, maxIndexSize: Int = -1, writabl
     }
   }
 
+  /**
+   * 计算相对位移值
+   *
+   * @param buffer
+   * @param n
+   * @return
+   */
   private def relativeOffset(buffer: ByteBuffer, n: Int): Int = buffer.getInt(n * entrySize)
 
+  /**
+   * 计算物理位移值
+   *
+   * @param buffer
+   * @param n
+   * @return
+   */
   private def physical(buffer: ByteBuffer, n: Int): Int = buffer.getInt(n * entrySize + 4)
 
+  /**
+   * {@link IndexEntry} 的实现 将绝对位移值和物理位移值存入
+   *
+   * @param buffer the buffer of this memory mapped index.
+   * @param n      the slot. 查找给定ByteBuffer中保存的第n个索引项(第n个槽)
+   * @return the index entry stored in the given slot.
+   */
   override protected def parseEntry(buffer: ByteBuffer, n: Int): OffsetPosition = {
     OffsetPosition(baseOffset + relativeOffset(buffer, n), physical(buffer, n))
   }
@@ -148,19 +170,28 @@ class OffsetIndex(_file: File, baseOffset: Long, maxIndexSize: Int = -1, writabl
   /**
    * Append an entry for the given offset/location pair to the index. This entry must have a larger offset than all subsequent entries.
    *
+   * 向索引文件中写入新的索引项
+   *
    * @throws IndexOffsetOverflowException if the offset causes index offset to overflow
    */
   def append(offset: Long, position: Int): Unit = {
-    inLock(lock) {
+    inLock(lock) { // 索引对象的各个属性可能被多个线程并发修改 需要加锁保证线程安全
+      // 1.判断日志文件是否已经写满
       require(!isFull, "Attempt to append to a full index (size = " + _entries + ").")
+      // 2.Kafka不允许写入一个比最新索引项还小的索引项 所以必须满足以下两个条件才允许写入:
+      // ----a.当前索引文件为空
+      // ----b.待写入的索引项位移值 > 当前以写入的索引项位移值(Kafka规定索引项中的位移值必须是单调增加的)
       if (_entries == 0 || offset > _lastOffset) {
         trace(s"Adding index entry $offset => $position to ${file.getAbsolutePath}")
-        mmap.putInt(relativeOffset(offset))
-        mmap.putInt(position)
+        mmap.putInt(relativeOffset(offset)) // 3A.向mmap写入相对位移值
+        mmap.putInt(position) // 3B.向mmap写入物理位移值
+        // 4. 更新元数据信息 即索引项计数和当前索引项最新位移
         _entries += 1
         _lastOffset = offset
+        // 5.检验写入的的索引项格式是否满足要求 即索引项个数 * 单个索引项占用字节数 == 当前文件物理大小 不想等说明文件已损坏
         require(_entries * entrySize == mmap.position(), s"$entries entries but file position in index is ${mmap.position()}.")
       } else {
+        // 无法写入时抛出的异常
         throw new InvalidOffsetException(s"Attempt to append an offset ($offset) to position $entries no larger than" +
           s" the last offset appended (${_lastOffset}) to ${file.getAbsolutePath}.")
       }
