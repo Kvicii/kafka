@@ -21,6 +21,7 @@ import org.apache.kafka.common.requests.ListOffsetResponse
 
 /**
  * 定义了一种类似于Map结构的用于存储k-v的集合 供 {@link OffsetPosition} 和 {@link TimestampOffset} 实现
+ * 在保存同等数量索引项的基础上 TimeIndex 会比 OffsetIndex 占用更多的磁盘空间
  */
 sealed trait IndexEntry {
   // We always use Long for both key and value to avoid boxing.

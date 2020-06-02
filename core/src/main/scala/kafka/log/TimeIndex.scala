@@ -113,6 +113,8 @@ class TimeIndex(_file: File, baseOffset: Long, maxIndexSize: Int = -1, writable:
    * The new entry is appended only if both the timestamp and offsets are greater than the last appended timestamp and
    * the last appended offset.
    *
+   * 向索引文件写入时间戳索引项
+   *
    * @param timestamp     The timestamp of the new time index entry
    * @param offset        The offset of the new time index entry
    * @param skipFullCheck To skip checking whether the segment is full or not. We only skip the check when the segment
@@ -121,16 +123,19 @@ class TimeIndex(_file: File, baseOffset: Long, maxIndexSize: Int = -1, writable:
   def maybeAppend(timestamp: Long, offset: Long, skipFullCheck: Boolean = false): Unit = {
     inLock(lock) {
       if (!skipFullCheck)
-        require(!isFull, "Attempt to append to a full time index (size = " + _entries + ").")
+        require(!isFull, "Attempt to append to a full time index (size = " + _entries + ").") // 磁盘文件以写满抛出异常
       // We do not throw exception when the offset equals to the offset of last entry. That means we are trying
       // to insert the same time index entry as the last entry.
       // If the timestamp index entry to be inserted is the same as the last entry, we simply ignore the insertion
       // because that could happen in the following two scenarios:
       // 1. A log segment is closed.
       // 2. LogSegment.onBecomeInactiveSegment() is called when an active log segment is rolled.
+      // 当前索引文件非空 但是 待写入的索引项位移值 < 当前以写入的索引项位移值 不允许写入
+      // 确保索引单调增加
       if (_entries != 0 && offset < lastEntry.offset)
         throw new InvalidOffsetException(s"Attempt to append an offset ($offset) to slot ${_entries} no larger than" +
           s" the last offset appended (${lastEntry.offset}) to ${file.getAbsolutePath}.")
+      // 确保时间戳的单调增加性
       if (_entries != 0 && timestamp < lastEntry.timestamp)
         throw new IllegalStateException(s"Attempt to append a timestamp ($timestamp) to slot ${_entries} no larger" +
           s" than the last timestamp appended (${lastEntry.timestamp}) to ${file.getAbsolutePath}.")
@@ -139,10 +144,10 @@ class TimeIndex(_file: File, baseOffset: Long, maxIndexSize: Int = -1, writable:
       // index will be empty.
       if (timestamp > lastEntry.timestamp) {
         trace(s"Adding index entry $timestamp => $offset to ${file.getAbsolutePath}.")
-        mmap.putLong(timestamp)
-        mmap.putInt(relativeOffset(offset))
-        _entries += 1
-        _lastEntry = TimestampOffset(timestamp, offset)
+        mmap.putLong(timestamp) // 向mmap写入时间戳
+        mmap.putInt(relativeOffset(offset)) // 向mmap写入相对位移值
+        _entries += 1 // 更新索引项个数
+        _lastEntry = TimestampOffset(timestamp, offset) //更新当前最新的索引项
         require(_entries * entrySize == mmap.position(), s"${_entries} entries but file position in index is ${mmap.position()}.")
       }
     }

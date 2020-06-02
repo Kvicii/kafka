@@ -91,19 +91,21 @@ class OffsetIndex(_file: File, baseOffset: Long, maxIndexSize: Int = -1, writabl
    * Find the largest offset less than or equal to the given targetOffset
    * and return a pair holding this offset and its corresponding physical file position.
    *
-   * @param targetOffset The offset to look up.
+   * 定位消息所在的物理磁盘位置
+   *
+   * @param targetOffset The offset to look up. 目标位移值参数
    * @return The offset found and the corresponding file position for this offset
    *         If the target offset is smaller than the least entry in the index (or the index is empty),
    *         the pair (baseOffset, 0) is returned.
    */
   def lookup(targetOffset: Long): OffsetPosition = {
     maybeLock(lock) {
-      val idx = mmap.duplicate
-      val slot = largestLowerBoundSlotFor(idx, targetOffset, IndexSearchType.KEY)
+      val idx = mmap.duplicate // 复制mmap 共享索引文件的内容
+      val slot = largestLowerBoundSlotFor(idx, targetOffset, IndexSearchType.KEY) // 内部调用二分查找找到索引项对象所在的槽
       if (slot == -1)
-        OffsetPosition(baseOffset, 0)
+        OffsetPosition(baseOffset, 0) // 没有找到返回一个空的槽 即物理文件从头开始读
       else
-        parseEntry(idx, slot)
+        parseEntry(idx, slot) // 返回slot槽对应的索引项  即不大于给定位移值 targetOffset 的最大位移值
     }
   }
 
@@ -142,7 +144,10 @@ class OffsetIndex(_file: File, baseOffset: Long, maxIndexSize: Int = -1, writabl
   private def physical(buffer: ByteBuffer, n: Int): Int = buffer.getInt(n * entrySize + 4)
 
   /**
-   * {@link IndexEntry} 的实现 将绝对位移值和物理位移值存入
+   * {@link IndexEntry} 的实现
+   * baseOffset + relativeOffset(buffer, n) 用于还原完整位移值
+   * physical(buffer, n)计算出消息在日志度文件中的物理位置
+   * 将绝对位移值和物理位移值存入
    *
    * @param buffer the buffer of this memory mapped index.
    * @param n      the slot. 查找给定ByteBuffer中保存的第n个索引项(第n个槽)
@@ -223,12 +228,14 @@ class OffsetIndex(_file: File, baseOffset: Long, maxIndexSize: Int = -1, writabl
 
   /**
    * Truncates index to a known number of entries.
+   *
+   * @param entries 表示截取到哪个槽
    */
   private def truncateToEntries(entries: Int): Unit = {
     inLock(lock) {
-      _entries = entries
-      mmap.position(_entries * entrySize)
-      _lastOffset = lastEntry.offset
+      _entries = entries // 更新索引项计数
+      mmap.position(_entries * entrySize) // 表示要截断到位置
+      _lastOffset = lastEntry.offset // 更新索引文件的最大位移值
       debug(s"Truncated index ${file.getAbsolutePath} to $entries entries;" +
         s" position is now ${mmap.position()} and last offset is now ${_lastOffset}")
     }

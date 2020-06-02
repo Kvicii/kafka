@@ -319,6 +319,8 @@ abstract class AbstractIndex(@volatile private var _file: File, val baseOffset: 
   /**
    * Get offset relative to base offset of this index
    *
+   * 将Long型位移值转换为相对位移值
+   *
    * @throws IndexOffsetOverflowException
    */
   def relativeOffset(offset: Long): Int = {
@@ -468,13 +470,12 @@ abstract class AbstractIndex(@volatile private var _file: File, val baseOffset: 
   private def roundDownToExactMultiple(number: Int, factor: Int) = factor * (number / factor)
 
   private def toRelative(offset: Long): Option[Int] = {
-    val relativeOffset = offset - baseOffset
+    val relativeOffset = offset - baseOffset // 计算位移值与起始位移值的差值 即相对位移值
     if (relativeOffset < 0 || relativeOffset > Int.MaxValue)
       None
     else
-      Some(relativeOffset.toInt)
+      Some(relativeOffset.toInt) // 校验通过返回这个值
   }
-
 }
 
 object AbstractIndex extends Logging {
