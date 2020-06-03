@@ -16,13 +16,13 @@
  */
 package org.apache.kafka.common.memory;
 
-import java.nio.ByteBuffer;
-import java.util.concurrent.atomic.AtomicLong;
-
 import org.apache.kafka.common.metrics.Sensor;
 import org.apache.kafka.common.utils.Utils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import java.nio.ByteBuffer;
+import java.util.concurrent.atomic.AtomicLong;
 
 
 /**
@@ -42,7 +42,7 @@ public class SimpleMemoryPool implements MemoryPool {
     public SimpleMemoryPool(long sizeInBytes, int maxSingleAllocationBytes, boolean strict, Sensor oomPeriodSensor) {
         if (sizeInBytes <= 0 || maxSingleAllocationBytes <= 0 || maxSingleAllocationBytes > sizeInBytes)
             throw new IllegalArgumentException("must provide a positive size and max single allocation size smaller than size."
-                + "provided " + sizeInBytes + " and " + maxSingleAllocationBytes + " respectively");
+                    + "provided " + sizeInBytes + " and " + maxSingleAllocationBytes + " respectively");
         this.sizeBytes = sizeInBytes;
         this.strict = strict;
         this.availableMemory = new AtomicLong(sizeInBytes);

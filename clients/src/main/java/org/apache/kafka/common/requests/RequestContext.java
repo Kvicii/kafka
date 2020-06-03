@@ -25,21 +25,21 @@ import org.apache.kafka.common.protocol.ApiKeys;
 import org.apache.kafka.common.protocol.types.Struct;
 import org.apache.kafka.common.security.auth.KafkaPrincipal;
 import org.apache.kafka.common.security.auth.SecurityProtocol;
+import org.apache.kafka.server.authorizer.AuthorizableRequestContext;
 
 import java.net.InetAddress;
 import java.nio.ByteBuffer;
-import org.apache.kafka.server.authorizer.AuthorizableRequestContext;
 
 import static org.apache.kafka.common.protocol.ApiKeys.API_VERSIONS;
 
 public class RequestContext implements AuthorizableRequestContext {
-    public final RequestHeader header;
-    public final String connectionId;
-    public final InetAddress clientAddress;
-    public final KafkaPrincipal principal;
-    public final ListenerName listenerName;
-    public final SecurityProtocol securityProtocol;
-    public final ClientInformation clientInformation;
+    public final RequestHeader header;  // Request头部数据 主要是一些对用户不可见的元数据信息 如Request类型、Request API版本、clientId等
+    public final String connectionId;   // Request发送方的TCP连接串标识 由Kafka根据一定规则定义 主要用于表示TCP连接
+    public final InetAddress clientAddress; // Request发送方IP地址
+    public final KafkaPrincipal principal;  // Kafka用户认证类 用于认证授权
+    public final ListenerName listenerName; // 监听器名称 可以是预定义的监听器(如PLAINTEXT) 也可自行定义
+    public final SecurityProtocol securityProtocol; // 安全协议类型 目前支持4种:PLAINTEXT、SSL、SASL_PLAINTEXT、SASL_SSL
+    public final ClientInformation clientInformation;   // 用户自定义的一些连接方信息
 
     public RequestContext(RequestHeader header,
                           String connectionId,
@@ -57,19 +57,36 @@ public class RequestContext implements AuthorizableRequestContext {
         this.clientInformation = clientInformation;
     }
 
+    /**
+     * 从给定的ByteBuffer中提取出Request和对应的Size值
+     *
+     * @param buffer
+     * @return
+     */
     public RequestAndSize parseRequest(ByteBuffer buffer) {
+        // 判断版本的原因是:
+        // Kafka 必须保证版本号比最新支持版本还要高的 ApiVersions 请求也能被处理
+        // 这主要是考虑到了客户端和服务器端版本的兼容问题
+        // 客户端发送请求给 Broker 的时候很可能不知道 Broker 到底支持哪些版本的请求 它需要使用 ApiVersionsRequest 去获取完整的请求版本支持列表
+        // 但是 如果不做这个判断 Broker 可能无法处理客户端发送的 ApiVersionsRequest
         if (isUnsupportedApiVersionsRequest()) {
             // Unsupported ApiVersion requests are treated as v0 requests and are not parsed
+            // 不支持的ApiVersions请求类型被视为是V0版本的请求 并且不做解析操作 直接返回
             ApiVersionsRequest apiVersionsRequest = new ApiVersionsRequest(new ApiVersionsRequestData(), (short) 0, header.apiVersion());
             return new RequestAndSize(apiVersionsRequest, 0);
         } else {
+            // 从请求头部数据中获取ApiKey信息
             ApiKeys apiKey = header.apiKey();
             try {
+                // 从请求头部数据中获取版本信息
                 short apiVersion = header.apiVersion();
+                // 解析请求
                 Struct struct = apiKey.parseRequest(apiVersion, buffer);
                 AbstractRequest body = AbstractRequest.parseRequest(apiKey, apiVersion, struct);
+                // 封装解析后的请求对象以及请求大小返回
                 return new RequestAndSize(body, struct.sizeOf());
             } catch (Throwable ex) {
+                // 解析过程中出现任何问题都视为无效请求抛出异常
                 throw new InvalidRequestException("Error getting request for apiKey: " + apiKey +
                         ", apiVersion: " + header.apiVersion() +
                         ", connectionId: " + connectionId +
@@ -85,6 +102,7 @@ public class RequestContext implements AuthorizableRequestContext {
     }
 
     private boolean isUnsupportedApiVersionsRequest() {
+        // 当 Broker 接收到一个 ApiVersionsRequest 的时候 它会返回 Broker 当前支持的请求类型列表 包括请求类型名称、支持的最早版本号和最新版本号
         return header.apiKey() == API_VERSIONS && !API_VERSIONS.isVersionSupported(header.apiVersion());
     }
 

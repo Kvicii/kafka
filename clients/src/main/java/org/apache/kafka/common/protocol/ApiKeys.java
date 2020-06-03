@@ -16,19 +16,19 @@
  */
 package org.apache.kafka.common.protocol;
 
-import org.apache.kafka.common.message.AddPartitionsToTxnRequestData;
-import org.apache.kafka.common.message.AddPartitionsToTxnResponseData;
-import org.apache.kafka.common.message.AlterPartitionReassignmentsRequestData;
-import org.apache.kafka.common.message.AlterPartitionReassignmentsResponseData;
-import org.apache.kafka.common.message.ApiMessageType;
 import org.apache.kafka.common.message.AddOffsetsToTxnRequestData;
 import org.apache.kafka.common.message.AddOffsetsToTxnResponseData;
-import org.apache.kafka.common.message.ApiVersionsRequestData;
-import org.apache.kafka.common.message.ApiVersionsResponseData;
+import org.apache.kafka.common.message.AddPartitionsToTxnRequestData;
+import org.apache.kafka.common.message.AddPartitionsToTxnResponseData;
 import org.apache.kafka.common.message.AlterClientQuotasRequestData;
 import org.apache.kafka.common.message.AlterClientQuotasResponseData;
 import org.apache.kafka.common.message.AlterConfigsRequestData;
 import org.apache.kafka.common.message.AlterConfigsResponseData;
+import org.apache.kafka.common.message.AlterPartitionReassignmentsRequestData;
+import org.apache.kafka.common.message.AlterPartitionReassignmentsResponseData;
+import org.apache.kafka.common.message.ApiMessageType;
+import org.apache.kafka.common.message.ApiVersionsRequestData;
+import org.apache.kafka.common.message.ApiVersionsResponseData;
 import org.apache.kafka.common.message.ControlledShutdownRequestData;
 import org.apache.kafka.common.message.ControlledShutdownResponseData;
 import org.apache.kafka.common.message.CreateAclsRequestData;
@@ -99,10 +99,10 @@ import org.apache.kafka.common.message.StopReplicaRequestData;
 import org.apache.kafka.common.message.StopReplicaResponseData;
 import org.apache.kafka.common.message.SyncGroupRequestData;
 import org.apache.kafka.common.message.SyncGroupResponseData;
-import org.apache.kafka.common.message.UpdateMetadataRequestData;
-import org.apache.kafka.common.message.UpdateMetadataResponseData;
 import org.apache.kafka.common.message.TxnOffsetCommitRequestData;
 import org.apache.kafka.common.message.TxnOffsetCommitResponseData;
+import org.apache.kafka.common.message.UpdateMetadataRequestData;
+import org.apache.kafka.common.message.UpdateMetadataResponseData;
 import org.apache.kafka.common.message.WriteTxnMarkersRequestData;
 import org.apache.kafka.common.message.WriteTxnMarkersResponseData;
 import org.apache.kafka.common.protocol.types.Schema;
@@ -234,16 +234,24 @@ public enum ApiKeys {
         MAX_API_KEY = maxKey;
     }
 
-    /** the permanent and immutable id of an API--this can't change ever */
+    /**
+     * the permanent and immutable id of an API--this can't change ever
+     */
     public final short id;
 
-    /** an english description of the api--this is for debugging and can change */
+    /**
+     * an english description of the api--this is for debugging and can change
+     */
     public final String name;
 
-    /** indicates if this is a ClusterAction request used only by brokers */
+    /**
+     * indicates if this is a ClusterAction request used only by brokers
+     */
     public final boolean clusterAction;
 
-    /** indicates the minimum required inter broker magic required to support the API */
+    /**
+     * indicates the minimum required inter broker magic required to support the API
+     */
     public final byte minRequiredInterBrokerMagic;
 
     public final Schema[] requestSchemas;
@@ -387,7 +395,7 @@ public enum ApiKeys {
             @Override
             public void visit(Type field) {
                 if (field == BYTES || field == NULLABLE_BYTES || field == RECORDS ||
-                    field == COMPACT_BYTES || field == COMPACT_NULLABLE_BYTES)
+                        field == COMPACT_BYTES || field == COMPACT_NULLABLE_BYTES)
                     hasBuffer.set(true);
             }
         };

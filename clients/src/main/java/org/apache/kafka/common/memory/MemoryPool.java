@@ -58,20 +58,23 @@ public interface MemoryPool {
 
     /**
      * Tries to acquire a ByteBuffer of the specified size
+     *
      * @param sizeBytes size required
      * @return a ByteBuffer (which later needs to be release()ed), or null if no memory available.
-     *         the buffer will be of the exact size requested, even if backed by a larger chunk of memory
+     * the buffer will be of the exact size requested, even if backed by a larger chunk of memory
      */
     ByteBuffer tryAllocate(int sizeBytes);
 
     /**
      * Returns a previously allocated buffer to the pool.
+     *
      * @param previouslyAllocated a buffer previously returned from tryAllocate()
      */
     void release(ByteBuffer previouslyAllocated);
 
     /**
      * Returns the total size of this pool
+     *
      * @return total size, in bytes
      */
     long size();
@@ -79,6 +82,7 @@ public interface MemoryPool {
     /**
      * Returns the amount of memory available for allocation by this pool.
      * NOTE: result may be negative (pools may over allocate to avoid starvation issues)
+     *
      * @return bytes available
      */
     long availableMemory();
@@ -87,8 +91,9 @@ public interface MemoryPool {
      * Returns true if the pool cannot currently allocate any more buffers
      * - meaning total outstanding buffers meets or exceeds pool size and
      * some would need to be released before further allocations are possible.
-     *
+     * <p>
      * This is equivalent to availableMemory() <= 0
+     *
      * @return true if out of memory
      */
     boolean isOutOfMemory();

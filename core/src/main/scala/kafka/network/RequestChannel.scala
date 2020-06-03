@@ -6,7 +6,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
  *
- *    http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -27,8 +27,8 @@ import kafka.log.LogConfig
 import kafka.metrics.KafkaMetricsGroup
 import kafka.server.KafkaConfig
 import kafka.utils.{Logging, NotNothing, Pool}
-import org.apache.kafka.common.config.types.Password
 import org.apache.kafka.common.config.ConfigResource
+import org.apache.kafka.common.config.types.Password
 import org.apache.kafka.common.memory.MemoryPool
 import org.apache.kafka.common.message.IncrementalAlterConfigsRequestData
 import org.apache.kafka.common.message.IncrementalAlterConfigsRequestData._
@@ -52,8 +52,9 @@ object RequestChannel extends Logging {
 
   def isRequestLoggingEnabled: Boolean = requestLogger.underlying.isDebugEnabled
 
-  sealed trait BaseRequest
-  case object ShutdownRequest extends BaseRequest
+  sealed trait BaseRequest // trait关键字类似于Java中的Interface
+
+  case object ShutdownRequest extends BaseRequest // 仅仅起到标识位的作用 当Broker进程关闭时 请求处理器会发送ShutdownRequest到专属的请求处理线程 该线程收到请求后会触发一系列Broker的关闭逻辑
 
   case class Session(principal: KafkaPrincipal, clientAddress: InetAddress) {
     val sanitizedUser: String = Sanitizer.sanitize(principal.getName)
@@ -64,17 +65,29 @@ object RequestChannel extends Logging {
     private val metricsMap = mutable.Map[String, RequestMetrics]()
 
     (ApiKeys.values.toSeq.map(_.name) ++
-        Seq(RequestMetrics.consumerFetchMetricName, RequestMetrics.followFetchMetricName)).foreach { name =>
+      Seq(RequestMetrics.consumerFetchMetricName, RequestMetrics.followFetchMetricName)).foreach { name =>
       metricsMap.put(name, new RequestMetrics(name))
     }
 
     def apply(metricName: String) = metricsMap(metricName)
 
     def close(): Unit = {
-       metricsMap.values.foreach(_.removeMetrics())
+      metricsMap.values.foreach(_.removeMetrics())
     }
   }
 
+  /**
+   * 定义各类Client端或Broker端请求的实现类
+   *
+   * @param processor      是processor的线程号 即这个请求是由哪个processor线程接收处理的 broker端参数num.network.threads控制了broker每个监听器上创建的processor线程数
+   *                       保存processor线程号的原因是 当Request被后面的IO线程处理完毕后 还要依靠processor线程发送Response
+   *                       processor线程仅仅是网络接收线程 真正执行Request处理逻辑的是IO线程
+   * @param context        标识请求上下文信息
+   * @param startTimeNanos 记录Request对象创建的时间 用于各种时间统计指标的计算 以纳秒为单位可以实现非常细粒度的时间统计精度
+   * @param memoryPool     非阻塞的内存缓冲区 避免Request对象无限使用内存
+   * @param buffer         真正保存Request内容的缓冲区
+   * @param metrics        Request 相关的各种监控指标的一个管理类 里面构造了一个Map 封装了所有的请求JMX指标 Request类大部分代码都是与指标监控相关的代码
+   */
   class Request(val processor: Int,
                 val context: RequestContext,
                 val startTimeNanos: Long,
@@ -93,9 +106,11 @@ object RequestChannel extends Logging {
     @volatile var recordNetworkThreadTimeCallback: Option[Long => Unit] = None
 
     val session = Session(context.principal, context.clientAddress)
+    // Request 发送方必须按照 Kafka RPC 协议规定的格式向该缓冲区写入字节 否则将抛出 InvalidRequestException 异常
     private val bodyAndSize: RequestAndSize = context.parseRequest(buffer)
 
     def header: RequestHeader = context.header
+
     def sizeOfBodyInBytes: Int = bodyAndSize.size
 
     //most request types are parsed entirely into objects at this point. for those we can release the underlying buffer.
@@ -131,7 +146,7 @@ object RequestChannel extends Logging {
         case alterConfigs: AlterConfigsRequest =>
           val loggableConfigs = alterConfigs.configs().asScala.map { case (resource, config) =>
             val loggableEntries = new AlterConfigsRequest.Config(config.entries.asScala.map { entry =>
-                new AlterConfigsRequest.ConfigEntry(entry.name, loggableValue(resource.`type`, entry.name, entry.value))
+              new AlterConfigsRequest.ConfigEntry(entry.name, loggableValue(resource.`type`, entry.name, entry.value))
             }.asJavaCollection)
             (resource, loggableEntries)
           }.asJava
@@ -307,10 +322,13 @@ object RequestChannel extends Logging {
     override def toString: String =
       s"Response(type=EndThrottling, request=$request)"
   }
+
 }
 
-class RequestChannel(val queueSize: Int, val metricNamePrefix : String, time: Time) extends KafkaMetricsGroup {
+class RequestChannel(val queueSize: Int, val metricNamePrefix: String, time: Time) extends KafkaMetricsGroup {
+
   import RequestChannel._
+
   val metrics = new RequestChannel.Metrics
   private val requestQueue = new ArrayBlockingQueue[BaseRequest](queueSize)
   private val processors = new ConcurrentHashMap[Int, Processor]()
@@ -320,7 +338,7 @@ class RequestChannel(val queueSize: Int, val metricNamePrefix : String, time: Ti
   newGauge(requestQueueSizeMetricName, () => requestQueue.size)
 
   newGauge(responseQueueSizeMetricName, () => {
-    processors.values.asScala.foldLeft(0) {(total, processor) =>
+    processors.values.asScala.foldLeft(0) { (total, processor) =>
       total + processor.responseQueueSize
     }
   })
@@ -459,10 +477,10 @@ class RequestMetrics(name: String) extends KafkaMetricsGroup {
   // Temporary memory allocated for processing request (only populated for fetch and produce requests)
   // This shows the memory allocated for compression/conversions excluding the actual request size
   val tempMemoryBytesHist =
-    if (name == ApiKeys.FETCH.name || name == ApiKeys.PRODUCE.name)
-      Some(newHistogram(TemporaryMemoryBytes, biased = true, tags))
-    else
-      None
+  if (name == ApiKeys.FETCH.name || name == ApiKeys.PRODUCE.name)
+    Some(newHistogram(TemporaryMemoryBytes, biased = true, tags))
+  else
+    None
 
   private val errorMeters = mutable.Map[Errors, ErrorMeter]()
   Errors.values.foreach(error => errorMeters.put(error, new ErrorMeter(name, error)))
@@ -482,7 +500,7 @@ class RequestMetrics(name: String) extends KafkaMetricsGroup {
       else {
         synchronized {
           if (meter == null)
-             meter = newMeter(ErrorsPerSec, "requests", TimeUnit.SECONDS, tags)
+            meter = newMeter(ErrorsPerSec, "requests", TimeUnit.SECONDS, tags)
           meter
         }
       }

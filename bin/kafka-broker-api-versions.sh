@@ -14,4 +14,5 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# 实现原理就是构造 ApiVersionsRequest 对象 然后发送给对应的 Broker
 exec $(dirname $0)/kafka-run-class.sh kafka.admin.BrokerApiVersionsCommand "$@"
