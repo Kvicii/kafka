@@ -19,8 +19,7 @@ package kafka.network
 
 import java.io.IOException
 import java.net._
-import java.nio.channels._
-import java.nio.channels.{Selector => NSelector}
+import java.nio.channels.{Selector => NSelector, _}
 import java.util
 import java.util.Optional
 import java.util.concurrent._
@@ -28,30 +27,28 @@ import java.util.concurrent.atomic._
 
 import kafka.cluster.{BrokerEndPoint, EndPoint}
 import kafka.metrics.KafkaMetricsGroup
-import kafka.network.RequestChannel.{CloseConnectionResponse, EndThrottlingResponse, NoOpResponse, SendResponse, StartThrottlingResponse}
 import kafka.network.Processor._
+import kafka.network.RequestChannel.{Metrics => _, _}
 import kafka.network.SocketServer._
 import kafka.security.CredentialProvider
 import kafka.server.{BrokerReconfigurable, KafkaConfig}
 import kafka.utils._
 import org.apache.kafka.common.config.ConfigException
-import org.apache.kafka.common.{Endpoint, KafkaException, Reconfigurable}
 import org.apache.kafka.common.memory.{MemoryPool, SimpleMemoryPool}
 import org.apache.kafka.common.metrics._
 import org.apache.kafka.common.metrics.stats.{CumulativeSum, Meter}
-import org.apache.kafka.common.network.ClientInformation
 import org.apache.kafka.common.network.KafkaChannel.ChannelMuteEvent
-import org.apache.kafka.common.network.{ChannelBuilder, ChannelBuilders, KafkaChannel, ListenerName, ListenerReconfigurable, Selectable, Send, Selector => KSelector}
+import org.apache.kafka.common.network.{ChannelBuilder, ChannelBuilders, ClientInformation, KafkaChannel, ListenerName, ListenerReconfigurable, Selectable, Send, Selector => KSelector}
 import org.apache.kafka.common.protocol.ApiKeys
-import org.apache.kafka.common.requests.ApiVersionsRequest
-import org.apache.kafka.common.requests.{RequestContext, RequestHeader}
+import org.apache.kafka.common.requests.{ApiVersionsRequest, RequestContext, RequestHeader}
 import org.apache.kafka.common.security.auth.SecurityProtocol
 import org.apache.kafka.common.utils.{KafkaThread, LogContext, Time}
+import org.apache.kafka.common.{Endpoint, KafkaException, Reconfigurable}
 import org.slf4j.event.Level
 
 import scala.collection._
-import scala.jdk.CollectionConverters._
 import scala.collection.mutable.{ArrayBuffer, Buffer}
+import scala.jdk.CollectionConverters._
 import scala.util.control.ControlThrowable
 
 /**
@@ -71,6 +68,12 @@ import scala.util.control.ControlThrowable
  *      1 Acceptor thread that handles new connections
  *      Acceptor has 1 Processor thread that has its own selector and read requests from the socket.
  *      1 Handler thread that handles requests and produce responses back to the processor thread for writing.
+ *
+ * 实现了Reactor模式 用于处理外部多个Client(可能是Producer 也可能是Consumer或其他Broker)的并发请求
+ * 并负责将结果封装到Response中 返还给客户端
+ * 此组件是Kafka网络通信层中最重要的子模块 其管理的RequestChannel/Acceptor/Processor都是实施网络通信的重要组成部分
+ *
+ * SocketServer类实现了对其他组件的管理 比如 创建和关闭Acceptor线程和Processor线程
  */
 class SocketServer(val config: KafkaConfig,
                    val metrics: Metrics,
@@ -429,6 +432,9 @@ class SocketServer(val config: KafkaConfig,
 
 }
 
+/**
+ * SocketServer伴生对象类 定义常量 指明SocketServer中哪些参数是可以动态修改的
+ */
 object SocketServer {
   val MetricsGroup = "socket-server-metrics"
   val DataPlaneThreadPrefix = "data-plane"
@@ -446,6 +452,7 @@ object SocketServer {
 
 /**
  * A base class with some helper variables and methods
+ * Acceptor和Processor线程的抽象基类 定义了两个线程的公有方法
  */
 private[kafka] abstract class AbstractServerThread(connectionQuotas: ConnectionQuotas) extends Runnable with Logging {
 
@@ -469,7 +476,7 @@ private[kafka] abstract class AbstractServerThread(connectionQuotas: ConnectionQ
   }
 
   /**
-   * Wait for the thread to completely shutdown
+   *
    */
   def awaitShutdown(): Unit = shutdownLatch.await
 
@@ -517,6 +524,8 @@ private[kafka] abstract class AbstractServerThread(connectionQuotas: ConnectionQ
 
 /**
  * Thread that accepts and configures new connections. There is one of these per endpoint.
+ * 接收和创建外部TCP连接的线程 每个SocketServer实例只会创建一个Acceptor线程
+ * 目的是创建连接 并将接收到的Request对象传递给下游的Processor线程处理
  */
 private[kafka] class Acceptor(val endPoint: EndPoint,
                               val sendBufferSize: Int,
@@ -704,7 +713,11 @@ private[kafka] class Acceptor(val endPoint: EndPoint,
 
 }
 
+/**
+ * Processor伴生对象类 仅仅定义了一些与Processor线程相关的常见监控指标和常量
+ */
 private[kafka] object Processor {
+  // Processor线程空闲率
   val IdlePercentMetricName = "IdlePercent"
   val NetworkProcessorMetricTag = "networkProcessor"
   val ListenerMetricTag = "listener"
@@ -715,6 +728,9 @@ private[kafka] object Processor {
 /**
  * Thread that processes all requests from a single connection. There are N of these running in parallel
  * each of which has its own selector
+ * 处理单个TCP连接上所有请求的线程 每个SocketServer默认创建若干个(num.network.threads指定)Processor线程
+ * Processor线程负责将接收到的Request加入到RequestChannel的队列中
+ * 也负责将处理后的Response返还给Request的发送方
  */
 private[kafka] class Processor(val id: Int,
                                time: Time,
@@ -1162,6 +1178,12 @@ private[kafka] class Processor(val id: Int,
   }
 }
 
+/**
+ * 控制连接数配额的类 可以设置单个IP创建Broker连接的最大数量 以及 单个Broker能够允许的最大连接数
+ *
+ * @param config
+ * @param time
+ */
 class ConnectionQuotas(config: KafkaConfig, time: Time) extends Logging {
 
   @volatile private var defaultMaxConnectionsPerIp: Int = config.maxConnectionsPerIp
@@ -1323,4 +1345,10 @@ class ConnectionQuotas(config: KafkaConfig, time: Time) extends Logging {
   }
 }
 
+/**
+ * 异常类 用于标识连接数配额超限情况
+ *
+ * @param ip
+ * @param count
+ */
 class TooManyConnectionsException(val ip: InetAddress, val count: Int) extends KafkaException(s"Too many connections from $ip (maximum = $count)")

@@ -17,13 +17,13 @@
 
 package kafka.server
 
-import kafka.network._
-import kafka.utils._
-import kafka.metrics.KafkaMetricsGroup
-import java.util.concurrent.{CountDownLatch, TimeUnit}
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.{CountDownLatch, TimeUnit}
 
 import com.yammer.metrics.core.Meter
+import kafka.metrics.KafkaMetricsGroup
+import kafka.network._
+import kafka.utils._
 import org.apache.kafka.common.internals.FatalExitError
 import org.apache.kafka.common.utils.{KafkaThread, Time}
 
@@ -93,6 +93,19 @@ class KafkaRequestHandler(id: Int,
 
 }
 
+/**
+ * 定义了若干个IO线程池 用于执行真正的请求处理逻辑
+ * 定义了多个KafkaRequestHandler线程 KafkaRequestHandler线程是真正处理请求逻辑的线程
+ * 与他相比 Acceptor线程和Processor线程只是中介
+ *
+ * @param brokerId
+ * @param requestChannel
+ * @param apis
+ * @param time
+ * @param numThreads
+ * @param requestHandlerAvgIdleMetricName
+ * @param logAndThreadNamePrefix
+ */
 class KafkaRequestHandlerPool(val brokerId: Int,
                               val requestChannel: RequestChannel,
                               val apis: KafkaApis,

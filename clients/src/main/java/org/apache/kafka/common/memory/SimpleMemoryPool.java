@@ -50,6 +50,11 @@ public class SimpleMemoryPool implements MemoryPool {
         this.oomTimeSensor = oomPeriodSensor;
     }
 
+    /**
+     * 为Request对象分配内存
+     * @param sizeBytes size required
+     * @return
+     */
     @Override
     public ByteBuffer tryAllocate(int sizeBytes) {
         if (sizeBytes < 1)
