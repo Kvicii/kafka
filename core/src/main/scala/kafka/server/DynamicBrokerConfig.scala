@@ -1,19 +1,19 @@
 /**
-  * Licensed to the Apache Software Foundation (ASF) under one or more
-  * contributor license agreements.  See the NOTICE file distributed with
-  * this work for additional information regarding copyright ownership.
-  * The ASF licenses this file to You under the Apache License, Version 2.0
-  * (the "License"); you may not use this file except in compliance with
-  * the License.  You may obtain a copy of the License at
-  *
-  * http://www.apache.org/licenses/LICENSE-2.0
-  *
-  * Unless required by applicable law or agreed to in writing, software
-  * distributed under the License is distributed on an "AS IS" BASIS,
-  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-  * See the License for the specific language governing permissions and
-  * limitations under the License.
-  */
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 
 package kafka.server
 
@@ -39,39 +39,39 @@ import scala.collection._
 import scala.jdk.CollectionConverters._
 
 /**
-  * Dynamic broker configurations are stored in ZooKeeper and may be defined at two levels:
-  * <ul>
-  *   <li>Per-broker configs persisted at <tt>/configs/brokers/{brokerId}</tt>: These can be described/altered
-  *       using AdminClient using the resource name brokerId.</li>
-  *   <li>Cluster-wide defaults persisted at <tt>/configs/brokers/&lt;default&gt;</tt>: These can be described/altered
-  *       using AdminClient using an empty resource name.</li>
-  * </ul>
-  * The order of precedence for broker configs is:
-  * <ol>
-  *   <li>DYNAMIC_BROKER_CONFIG: stored in ZK at /configs/brokers/{brokerId}</li>
-  *   <li>DYNAMIC_DEFAULT_BROKER_CONFIG: stored in ZK at /configs/brokers/&lt;default&gt;</li>
-  *   <li>STATIC_BROKER_CONFIG: properties that broker is started up with, typically from server.properties file</li>
-  *   <li>DEFAULT_CONFIG: Default configs defined in KafkaConfig</li>
-  * </ol>
-  * Log configs use topic config overrides if defined and fallback to broker defaults using the order of precedence above.
-  * Topic config overrides may use a different config name from the default broker config.
-  * See [[kafka.log.LogConfig#TopicConfigSynonyms]] for the mapping.
-  * <p>
-  * AdminClient returns all config synonyms in the order of precedence when configs are described with
-  * <code>includeSynonyms</code>. In addition to configs that may be defined with the same name at different levels,
-  * some configs have additional synonyms.
-  * </p>
-  * <ul>
-  *   <li>Listener configs may be defined using the prefix <tt>listener.name.{listenerName}.{configName}</tt>. These may be
-  *       configured as dynamic or static broker configs. Listener configs have higher precedence than the base configs
-  *       that don't specify the listener name. Listeners without a listener config use the base config. Base configs
-  *       may be defined only as STATIC_BROKER_CONFIG or DEFAULT_CONFIG and cannot be updated dynamically.<li>
-  *   <li>Some configs may be defined using multiple properties. For example, <tt>log.roll.ms</tt> and
-  *       <tt>log.roll.hours</tt> refer to the same config that may be defined in milliseconds or hours. The order of
-  *       precedence of these synonyms is described in the docs of these configs in [[kafka.server.KafkaConfig]].</li>
-  * </ul>
-  *
-  */
+ * Dynamic broker configurations are stored in ZooKeeper and may be defined at two levels:
+ * <ul>
+ * <li>Per-broker configs persisted at <tt>/configs/brokers/{brokerId}</tt>: These can be described/altered
+ * using AdminClient using the resource name brokerId.</li>
+ * <li>Cluster-wide defaults persisted at <tt>/configs/brokers/&lt;default&gt;</tt>: These can be described/altered
+ * using AdminClient using an empty resource name.</li>
+ * </ul>
+ * The order of precedence for broker configs is:
+ * <ol>
+ * <li>DYNAMIC_BROKER_CONFIG: stored in ZK at /configs/brokers/{brokerId}</li>
+ * <li>DYNAMIC_DEFAULT_BROKER_CONFIG: stored in ZK at /configs/brokers/&lt;default&gt;</li>
+ * <li>STATIC_BROKER_CONFIG: properties that broker is started up with, typically from server.properties file</li>
+ * <li>DEFAULT_CONFIG: Default configs defined in KafkaConfig</li>
+ * </ol>
+ * Log configs use topic config overrides if defined and fallback to broker defaults using the order of precedence above.
+ * Topic config overrides may use a different config name from the default broker config.
+ * See [[kafka.log.LogConfig#TopicConfigSynonyms]] for the mapping.
+ * <p>
+ * AdminClient returns all config synonyms in the order of precedence when configs are described with
+ * <code>includeSynonyms</code>. In addition to configs that may be defined with the same name at different levels,
+ * some configs have additional synonyms.
+ * </p>
+ * <ul>
+ * <li>Listener configs may be defined using the prefix <tt>listener.name.{listenerName}.{configName}</tt>. These may be
+ * configured as dynamic or static broker configs. Listener configs have higher precedence than the base configs
+ * that don't specify the listener name. Listeners without a listener config use the base config. Base configs
+ * may be defined only as STATIC_BROKER_CONFIG or DEFAULT_CONFIG and cannot be updated dynamically.<li>
+ * <li>Some configs may be defined using multiple properties. For example, <tt>log.roll.ms</tt> and
+ * <tt>log.roll.hours</tt> refer to the same config that may be defined in milliseconds or hours. The order of
+ * precedence of these synonyms is described in the docs of these configs in [[kafka.server.KafkaConfig]].</li>
+ * </ul>
+ *
+ */
 object DynamicBrokerConfig {
 
   private[server] val DynamicSecurityConfigs = SslConfigs.RECONFIGURABLE_CONFIGS.asScala
@@ -129,6 +129,7 @@ object DynamicBrokerConfig {
       if (invalidPropNames.nonEmpty)
         throw new ConfigException(s"$errorMessage: $invalidPropNames")
     }
+
     checkInvalidProps(nonDynamicConfigs(props), "Cannot update these configs dynamically")
     checkInvalidProps(securityConfigsWithoutListenerPrefix(props),
       "These security configs can be dynamically updated only per-listener using the listener prefix")
@@ -141,12 +142,14 @@ object DynamicBrokerConfig {
 
   private def perBrokerConfigs(props: Properties): Set[String] = {
     val configNames = props.asScala.keySet
+
     def perBrokerListenerConfig(name: String): Boolean = {
       name match {
         case ListenerConfigRegex(baseName) => !ClusterLevelListenerConfigs.contains(baseName)
         case _ => false
       }
     }
+
     configNames.intersect(PerBrokerConfigs) ++ configNames.filter(perBrokerListenerConfig)
   }
 
@@ -187,9 +190,10 @@ object DynamicBrokerConfig {
   private[server] def resolveVariableConfigs(propsOriginal: Properties): Properties = {
     val props = new Properties
     val config = new AbstractConfig(new ConfigDef(), propsOriginal, false)
-    config.originals.asScala.filter(!_._1.startsWith(AbstractConfig.CONFIG_PROVIDERS_CONFIG)).foreach {case (key: String, value: Object) => {
+    config.originals.asScala.filter(!_._1.startsWith(AbstractConfig.CONFIG_PROVIDERS_CONFIG)).foreach { case (key: String, value: Object) => {
       props.put(key, value)
-    }}
+    }
+    }
     props
   }
 }
@@ -331,7 +335,7 @@ class DynamicBrokerConfig(private val kafkaConfig: KafkaConfig) extends Logging 
   }
 
   private def maybeCreatePasswordEncoder(secret: Option[Password]): Option[PasswordEncoder] = {
-   secret.map { secret =>
+    secret.map { secret =>
       new PasswordEncoder(secret,
         kafkaConfig.passwordEncoderKeyFactoryAlgorithm,
         kafkaConfig.passwordEncoderCipherAlgorithm,
@@ -354,6 +358,7 @@ class DynamicBrokerConfig(private val kafkaConfig: KafkaConfig) extends Logging 
         props.setProperty(configName, passwordEncoder.encode(new Password(value)))
       }
     }
+
     configProps.asScala.foreach { case (name, value) =>
       if (isPasswordConfig(name))
         encodePassword(name, value)
@@ -367,12 +372,14 @@ class DynamicBrokerConfig(private val kafkaConfig: KafkaConfig) extends Logging 
 
     // Remove all invalid configs from `props`
     removeInvalidConfigs(props, perBrokerConfig)
+
     def removeInvalidProps(invalidPropNames: Set[String], errorMessage: String): Unit = {
       if (invalidPropNames.nonEmpty) {
         invalidPropNames.foreach(props.remove)
         error(s"$errorMessage: $invalidPropNames")
       }
     }
+
     removeInvalidProps(nonDynamicConfigs(props), "Non-dynamic configs configured in ZooKeeper will be ignored")
     removeInvalidProps(securityConfigsWithoutListenerPrefix(props),
       "Security configs can be dynamically updated only using listener prefix, base configs will be ignored")
@@ -493,12 +500,12 @@ class DynamicBrokerConfig(private val kafkaConfig: KafkaConfig) extends Logging 
   }
 
   /**
-    * Updates values in `props` with the new values from `propsOverride`. Synonyms of updated configs
-    * are removed from `props` to ensure that the config with the higher precedence is applied. For example,
-    * if `log.roll.ms` was defined in server.properties and `log.roll.hours` is configured dynamically,
-    * `log.roll.hours` from the dynamic configuration will be used and `log.roll.ms` will be removed from
-    * `props` (even though `log.roll.hours` is secondary to `log.roll.ms`).
-    */
+   * Updates values in `props` with the new values from `propsOverride`. Synonyms of updated configs
+   * are removed from `props` to ensure that the config with the higher precedence is applied. For example,
+   * if `log.roll.ms` was defined in server.properties and `log.roll.hours` is configured dynamically,
+   * `log.roll.hours` from the dynamic configuration will be used and `log.roll.ms` will be removed from
+   * `props` (even though `log.roll.hours` is secondary to `log.roll.ms`).
+   */
   private def overrideProps(props: mutable.Map[String, String], propsOverride: mutable.Map[String, String]): Unit = {
     propsOverride.foreach { case (k, v) =>
       // Remove synonyms of `k` to ensure the right precedence is applied. But disable `matchListenerOverride`
@@ -571,7 +578,7 @@ class DynamicBrokerConfig(private val kafkaConfig: KafkaConfig) extends Logging 
                                             newConfig: KafkaConfig,
                                             customConfigs: util.Map[String, Object],
                                             validateOnly: Boolean,
-                                            reloadOnly:  Boolean): Unit = {
+                                            reloadOnly: Boolean): Unit = {
     val listenerName = listenerReconfigurable.listenerName
     val oldValues = currentConfig.valuesWithPrefixOverride(listenerName.configPrefix)
     val newValues = newConfig.valuesFromThisConfigWithPrefixOverride(listenerName.configPrefix)
@@ -804,6 +811,7 @@ class DynamicMetricsReporters(brokerId: Int, server: KafkaServer) extends Reconf
     configs.get(KafkaConfig.MetricReporterClassesProp).asInstanceOf[util.List[String]].asScala
   }
 }
+
 object DynamicListenerConfig {
 
   val ReconfigurableConfigs = Set(

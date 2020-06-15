@@ -17,13 +17,18 @@
 
 package kafka.cluster
 
-import org.apache.kafka.common.{Endpoint => JEndpoint, KafkaException}
 import org.apache.kafka.common.network.ListenerName
 import org.apache.kafka.common.security.auth.SecurityProtocol
 import org.apache.kafka.common.utils.Utils
+import org.apache.kafka.common.{KafkaException, Endpoint => JEndpoint}
 
 import scala.collection.Map
 
+/**
+ * Kafka中使用Broker端参数listeners和advertised.listeners配置监听器
+ * Broker 端参数 listener.security.protocol.map 用于指定不同名字的监听器都使用哪种安全协议
+ * 监听器
+ */
 object EndPoint {
 
   private val uriParseExp = """^(.*)://\[?([0-9a-zA-Z\-%._:]*)\]?:(-?[0-9]+)""".r
@@ -61,17 +66,25 @@ object EndPoint {
 
 /**
  * Part of the broker definition - matching host/port pair to a protocol
+ *
+ * @param host             主机名
+ * @param port             端口号
+ * @param listenerName     监听器名称 目前预定义的名称包括 PLAINTEXT SSL SASL_PLAINTEXT 和 SASL_SSL Kafka 允许自定义其他监听器名称 如 CONTROLLER INTERNAL 等
+ * @param securityProtocol 监听器协议 Kafka 支持 4 种安全协议 分别是 PLAINTEXT SSL SASL_PLAINTEXT 和 SASL_SSL
  */
 case class EndPoint(host: String, port: Int, listenerName: ListenerName, securityProtocol: SecurityProtocol) {
+  // 构造完整端监听器连接字符串 格式为 监听器名称://主机名:端口 例如PLAINTEXT://kafka-host:9092
   def connectionString: String = {
     val hostport =
       if (host == null)
-        ":"+port
+        ":" + port
       else
         Utils.formatAddress(host, port)
     listenerName.value + "://" + hostport
   }
 
+  // clients工程下有一个Java版本的Endpoint类供clients端代码使用
+  // 此方法是构造Java版本的Endpoint类实例
   def toJava: JEndpoint = {
     new JEndpoint(listenerName.value, securityProtocol, host, port)
   }
