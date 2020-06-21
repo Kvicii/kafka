@@ -28,6 +28,7 @@ import org.apache.kafka.clients.NodeApiVersions;
 import org.apache.kafka.clients.consumer.ConsumerRebalanceListener;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.LogTruncationException;
+import org.apache.kafka.clients.consumer.OffsetAndMetadata;
 import org.apache.kafka.clients.consumer.OffsetAndTimestamp;
 import org.apache.kafka.clients.consumer.OffsetOutOfRangeException;
 import org.apache.kafka.clients.consumer.OffsetResetStrategy;
@@ -1190,7 +1191,7 @@ public class FetcherTest {
         assertEquals(0, fetcher.fetchedRecords().size());
         assertTrue(subscriptions.isOffsetResetNeeded(tp0));
         assertNull(subscriptions.validPosition(tp0));
-        assertNotNull(subscriptions.position(tp0));
+        assertNull(subscriptions.position(tp0));
     }
 
     @Test
@@ -3855,15 +3856,17 @@ public class FetcherTest {
         }, new OffsetsForLeaderEpochResponse(singletonMap(tp0, epochEndOffset)));
         consumerClient.poll(time.timer(Duration.ZERO));
 
-        assertEquals(initialOffset, subscriptions.position(tp0).offset);
-
         if (offsetResetStrategy == OffsetResetStrategy.NONE) {
-            OffsetOutOfRangeException thrown =
-                assertThrows(OffsetOutOfRangeException.class, () -> fetcher.validateOffsetsIfNeeded());
+            LogTruncationException thrown =
+                assertThrows(LogTruncationException.class, () -> fetcher.validateOffsetsIfNeeded());
+            assertEquals(singletonMap(tp0, initialOffset), thrown.offsetOutOfRangePartitions());
 
-            // If epoch offset is valid, we are testing for the log truncation case.
-            if (!epochEndOffset.hasUndefinedEpochOrOffset()) {
-                assertTrue(thrown instanceof LogTruncationException);
+            if (epochEndOffset.hasUndefinedEpochOrOffset()) {
+                assertEquals(Collections.emptyMap(), thrown.divergentOffsets());
+            } else {
+                OffsetAndMetadata expectedDivergentOffset = new OffsetAndMetadata(
+                    epochEndOffset.endOffset(), Optional.of(epochEndOffset.leaderEpoch()), "");
+                assertEquals(singletonMap(tp0, expectedDivergentOffset), thrown.divergentOffsets());
             }
             assertTrue(subscriptions.awaitingValidation(tp0));
         } else {
@@ -3967,6 +3970,35 @@ public class FetcherTest {
         client.prepareResponse(resp);
         consumerClient.pollNoWakeup();
         assertFalse("Expected validation to succeed with latest epoch", subscriptions.awaitingValidation(tp0));
+    }
+
+    @Test
+    public void testSkipValidationForOlderApiVersion() {
+        buildFetcher();
+        assignFromUser(singleton(tp0));
+
+        Map<String, Integer> partitionCounts = new HashMap<>();
+        partitionCounts.put(tp0.topic(), 4);
+
+        apiVersions.update("0", NodeApiVersions.create(ApiKeys.OFFSET_FOR_LEADER_EPOCH.id, (short) 0, (short) 2));
+
+        // Start with metadata, epoch=1
+        metadata.updateWithCurrentRequestVersion(TestUtils.metadataUpdateWith("dummy", 1,
+                Collections.emptyMap(), partitionCounts, tp -> 1), false, 0L);
+
+        // Request offset reset
+        subscriptions.requestOffsetReset(tp0, OffsetResetStrategy.LATEST);
+
+        // Since we have no position due to reset, no fetch is sent
+        assertEquals(0, fetcher.sendFetches());
+
+        // Still no position, ensure offset validation logic did not transition us to FETCHING state
+        assertEquals(0, fetcher.sendFetches());
+
+        // Complete reset and now we can fetch
+        fetcher.resetOffsetIfNeeded(tp0, OffsetResetStrategy.LATEST,
+                new Fetcher.ListOffsetData(100, 1L, Optional.empty()));
+        assertEquals(1, fetcher.sendFetches());
     }
 
     @Test

@@ -689,6 +689,11 @@ class LogSegment private[log](val log: FileRecords, // 实际保存Kafka消息�
   def lastModified = log.file.lastModified
 
   /**
+   * The largest timestamp this segment contains, if maxTimestampSoFar >= 0, otherwise None.
+   */
+  def largestRecordTimestamp: Option[Long] = if (maxTimestampSoFar >= 0) Some(maxTimestampSoFar) else None
+
+  /**
    * The largest timestamp this segment contains.
    */
   def largestTimestamp = if (maxTimestampSoFar >= 0) maxTimestampSoFar else lastModified
