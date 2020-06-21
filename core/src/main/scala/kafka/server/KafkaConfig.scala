@@ -338,6 +338,7 @@ object KafkaConfig {
   val BrokerIdProp = "broker.id"
   val MessageMaxBytesProp = "message.max.bytes"
   val NumNetworkThreadsProp = "num.network.threads"
+  // IO线程池的大小 即 KafkaRequestHandlerPool 请求处理线程池
   val NumIoThreadsProp = "num.io.threads"
   val BackgroundThreadsProp = "background.threads"
   val NumReplicaAlterLogDirsThreadsProp = "num.replica.alter.log.dirs.threads"

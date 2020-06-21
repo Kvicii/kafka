@@ -704,7 +704,8 @@ private[kafka] class Acceptor(val endPoint: EndPoint, // 定义的Kafka Broker�
                       // 更新Processor线程序号
                       // 最终的效果就是Processor线程池中的每个线程以轮询的方式处理这些等待建立的Socket连接
                       currentProcessorIndex += 1
-                    } while (!assignNewConnection(socketChannel, processor, retriesLeft == 0)) // 另Processor线程创建与发送方的连接
+                    } while (!assignNewConnection(socketChannel, processor, retriesLeft == 0)) // 令Processor线程创建与发送方的连接
+                    // assignNewConnection方法的作用是将新建的SocketChannel对象存入Processor线程的newConnection队列中 后续Processor线程不断轮询该队列中待处理的Channel 并向这些Channel注册基于Java NIO的Selector 用于真正获取和响应发送IO操作
                   }
                 } else
                   throw new IllegalStateException("Unrecognized key state for acceptor thread.")

@@ -281,6 +281,7 @@ object RequestChannel extends Logging {
 
   /**
    * Response抽象基类 有5个具体实现类 每个Response对象都包含对应的Request对象
+   *
    * @param request
    */
   abstract class Response(val request: Request) {
@@ -291,6 +292,7 @@ object RequestChannel extends Logging {
 
     /**
      * 实现每一种Response被处理后需要执行的回调逻辑
+     *
      * @return
      */
     def onComplete: Option[Send => Unit] = None
@@ -320,6 +322,7 @@ object RequestChannel extends Logging {
 
   /**
    * 某些Request对象执行完之后不需要执行额外的回调
+   *
    * @param request
    */
   class NoOpResponse(request: Request) extends Response(request) {
@@ -330,6 +333,7 @@ object RequestChannel extends Logging {
   /**
    * 用于出错后需要关闭TCP连接的场景
    * 此时返回CloseConnectionResponse给Request发送方 显式地通知其关闭TCP连接
+   *
    * @param request
    */
   class CloseConnectionResponse(request: Request) extends Response(request) {
@@ -339,6 +343,7 @@ object RequestChannel extends Logging {
 
   /**
    * 通知Broker的SocketServer组件某个TCP连接通信通道开始被限流
+   *
    * @param request
    */
   class StartThrottlingResponse(request: Request) extends Response(request) {
@@ -348,6 +353,7 @@ object RequestChannel extends Logging {
 
   /**
    * 通知Broker的SocketServer组件某个TCP连接通信通道限流已结束
+   *
    * @param request
    */
   class EndThrottlingResponse(request: Request) extends Response(request) {
@@ -359,6 +365,7 @@ object RequestChannel extends Logging {
 
 /**
  * 实现了 KafkaMetricsGroup trait 后者封装了许多实用的指标监控方法
+ *
  * @param queueSize requestQueue的最大长度 当Broker启动时 SocketServer组件会创建RequestChannel对象 并把Broker端参数queued.max.requests赋值给queueSize 默认500
  * @param metricNamePrefix
  * @param time
@@ -388,6 +395,7 @@ class RequestChannel(val queueSize: Int, val metricNamePrefix: String, time: Tim
 
   /**
    * 每当 Broker 启动时 它都会调用 addProcessor 方法 向 RequestChannel 对象添加 num.network.threads 个 Processor 线程
+   *
    * @param processor
    */
   def addProcessor(processor: Processor): Unit = {
@@ -407,8 +415,8 @@ class RequestChannel(val queueSize: Int, val metricNamePrefix: String, time: Tim
   }
 
   /**
-   *  Send a request to be handled, potentially blocking until there is room in the queue for the request
-   *  发送Request 仅仅是将 Request 对象放置在 Request 队列中
+   * Send a request to be handled, potentially blocking until there is room in the queue for the request
+   * 发送Request 仅仅是将 Request 对象放置在 Request 队列中
    */
   def sendRequest(request: RequestChannel.Request): Unit = {
     requestQueue.put(request)
@@ -416,7 +424,7 @@ class RequestChannel(val queueSize: Int, val metricNamePrefix: String, time: Tim
 
   /**
    * Send a response back to the socket server to be sent over the network
-   * 发送Response 将Response添加到Respooonse队列
+   * 发送Response 将Response添加到Response队列
    */
   def sendResponse(response: RequestChannel.Response): Unit = {
 
@@ -453,7 +461,7 @@ class RequestChannel(val queueSize: Int, val metricNamePrefix: String, time: Tim
     val processor = processors.get(response.processor)
     // The processor may be null if it was shutdown. In this case, the connections
     // are closed, so the response is dropped.
-    if (processor != null) {  // 将Response放入对应processor线程的Response队列中等待发送
+    if (processor != null) { // 将Response放入对应processor线程的Response队列中等待发送
       processor.enqueueResponse(response)
     }
   }
@@ -487,6 +495,9 @@ class RequestChannel(val queueSize: Int, val metricNamePrefix: String, time: Tim
     metrics.close()
   }
 
+  /**
+   * 将shutdownRequest写入到请求队列
+   */
   def sendShutdownRequest(): Unit = requestQueue.put(ShutdownRequest)
 
 }
