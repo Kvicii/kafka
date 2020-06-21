@@ -69,11 +69,20 @@ import scala.util.control.ControlThrowable
  * Acceptor has 1 Processor thread that has its own selector and read requests from the socket.
  * 1 Handler thread that handles requests and produce responses back to the processor thread for writing.
  *
+ * Broker端参数 control.plane.listener.name 就是用于设置Control Plane监听器的地方 该参数默认为Null Null的意思是告知Kafka不要启用请求优先级区分机制 但是如果设置了该参数 Kafka就会利用它去listeners中寻找对应的监听器
+ *
  * 实现了Reactor模式 用于处理外部多个Client(可能是Producer 也可能是Consumer或其他Broker)的并发请求
  * 并负责将结果封装到Response中 返还给客户端
  * 此组件是Kafka网络通信层中最重要的子模块 其管理的RequestChannel/Acceptor/Processor都是实施网络通信的重要组成部分
  *
  * SocketServer类实现了对其他组件的管理 比如 创建和关闭Acceptor线程和Processor线程
+ *
+ * 关于 Control Plane 和 Data Plane 两种类型请求优先级的说明:
+ * Kafka 没有为请求设置数值型的优先级 因此并不能把所有请求按照所谓的优先级进行排序 到目前为止Kafka 仅仅实现了粗粒度的优先级处理
+ * 即整体上把请求分为数据类请求和控制类请求两类 而且没有为这两类定义可相互比较的优先级
+ *
+ * 社区定义了多套监听器以及底层处理线程的方式来区分这两大类请求 虽然很难直接比较这两大类请求的优先级
+ * 但在实际应用中 由于数据类请求的数量要远多于控制类请求 因此为控制类请求单独定义处理资源的做法 实际上就等同于拔高了控制类请求的优先处理权
  */
 class SocketServer(val config: KafkaConfig,
                    val metrics: Metrics,
@@ -188,14 +197,18 @@ class SocketServer(val config: KafkaConfig,
    * listener before other listeners. This allows authorization metadata for other listeners to be
    * stored in Kafka topics in this cluster.
    *
+   * 启动Acceptor和Processor线程
+   *
    * @param authorizerFutures Future per [[EndPoint]] used to wait before starting the processor
    *                          corresponding to the [[EndPoint]]
    */
   def startProcessingRequests(authorizerFutures: Map[Endpoint, CompletableFuture[Void]] = Map.empty): Unit = {
     info("Starting socket server acceptors and processors")
     this.synchronized {
-      if (!startedProcessingRequests) {
+      if (!startedProcessingRequests) { // 是否是首次启动 Broker启动时该变量默认为false
+        // 启动处理控制类请求的Processor线程和Acceptor线程
         startControlPlaneProcessorAndAcceptor(authorizerFutures)
+        // 启动处理数据类请求的Processor线程和Acceptor线程
         startDataPlaneProcessorsAndAcceptors(authorizerFutures)
         startedProcessingRequests = true
       } else {
@@ -232,11 +245,13 @@ class SocketServer(val config: KafkaConfig,
 
   /**
    * Starts processors of all the data-plane acceptors and all the acceptors of this server.
+   * 启动数据类请求的Processor和Acceptor线程
    *
    * We start inter-broker listener before other listeners. This allows authorization metadata for
    * other listeners to be stored in Kafka topics in this cluster.
    */
   private def startDataPlaneProcessorsAndAcceptors(authorizerFutures: Map[Endpoint, CompletableFuture[Void]]): Unit = {
+    // 获取Broker间通讯所用的监听器 默认是PLAINTEXT
     val interBrokerListener = dataPlaneAcceptors.asScala.keySet
       .find(_.listenerName == config.interBrokerListenerName)
       .getOrElse(throw new IllegalStateException(s"Inter-broker listener ${config.interBrokerListenerName} not found, endpoints=${dataPlaneAcceptors.keySet}"))
@@ -244,12 +259,13 @@ class SocketServer(val config: KafkaConfig,
       dataPlaneAcceptors.asScala.filter { case (k, _) => k != interBrokerListener }.values
     orderedAcceptors.foreach { acceptor =>
       val endpoint = acceptor.endPoint
-      startAcceptorAndProcessors(DataPlaneThreadPrefix, endpoint, acceptor, authorizerFutures)
+      startAcceptorAndProcessors(DataPlaneThreadPrefix, endpoint, acceptor, authorizerFutures) // 真正的启动Acceptor线程和Processor线程
     }
   }
 
   /**
    * Start the processor of control-plane acceptor and the acceptor of this server.
+   * 启动控制类请求的Processor和Acceptor线程
    */
   private def startControlPlaneProcessorAndAcceptor(authorizerFutures: Map[Endpoint, CompletableFuture[Void]]): Unit = {
     controlPlaneAcceptorOpt.foreach { controlPlaneAcceptor =>
@@ -260,28 +276,51 @@ class SocketServer(val config: KafkaConfig,
 
   private def endpoints = config.listeners.map(l => l.listenerName -> l).toMap
 
+  /**
+   * 为Data Plane创建所需资源
+   * 可以有多套Data Plane监听器
+   *
+   * @param dataProcessorsPerListener
+   * @param endpoints
+   */
   private def createDataPlaneAcceptorsAndProcessors(dataProcessorsPerListener: Int,
                                                     endpoints: Seq[EndPoint]): Unit = {
+    // 遍历endpoint监听器集合
     endpoints.foreach { endpoint =>
+      // 将监听器纳入到连接配额管理之下
       connectionQuotas.addListener(config, endpoint.listenerName)
+      // 为监听器创建对应的Acceptor线程
       val dataPlaneAcceptor = createAcceptor(endpoint, DataPlaneMetricPrefix)
+      // 为监听器创建多个Processor线程 具体数目由Broker端参数num.networks.threads决定
       addDataPlaneProcessors(dataPlaneAcceptor, endpoint, dataProcessorsPerListener)
+      // 将 <监听器, Acceptor线程> 放入Acceptor线程池统一管理
       dataPlaneAcceptors.put(endpoint, dataPlaneAcceptor)
       info(s"Created data-plane acceptor and processors for endpoint : ${endpoint.listenerName}")
     }
   }
 
+  /**
+   * 为Control Plane创建所需资源
+   * Kafka目前规定只能有一套Control Plane监听器
+   *
+   * @param endpointOpt
+   */
   private def createControlPlaneAcceptorAndProcessor(endpointOpt: Option[EndPoint]): Unit = {
     endpointOpt.foreach { endpoint =>
+      // 将监听器纳入到连接配额管理之下
       connectionQuotas.addListener(config, endpoint.listenerName)
+      // 为监听器创建Acceptor线程
       val controlPlaneAcceptor = createAcceptor(endpoint, ControlPlaneMetricPrefix)
+      // 为监听器创建Processor线程
       val controlPlaneProcessor = newProcessor(nextProcessorId, controlPlaneRequestChannelOpt.get, connectionQuotas, endpoint.listenerName, endpoint.securityProtocol, memoryPool)
       controlPlaneAcceptorOpt = Some(controlPlaneAcceptor)
       controlPlaneProcessorOpt = Some(controlPlaneProcessor)
       val listenerProcessors = new ArrayBuffer[Processor]()
+      // 将Processor线程添加到控制类请求专属的RequestChannel中 即添加到RequestChannel实例保存的Processor线程池中
       listenerProcessors += controlPlaneProcessor
       controlPlaneRequestChannelOpt.foreach(_.addProcessor(controlPlaneProcessor))
       nextProcessorId += 1
+      // 将Processor对象添加到Acceptor线程管理的Processor线程池中
       controlPlaneAcceptor.addProcessors(listenerProcessors, ControlPlaneThreadPrefix)
       info(s"Created control-plane acceptor and processor for endpoint : ${endpoint.listenerName}")
     }
