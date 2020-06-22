@@ -185,7 +185,7 @@ public enum ApiKeys {
     CREATE_ACLS(30, "CreateAcls", CreateAclsRequestData.SCHEMAS, CreateAclsResponseData.SCHEMAS),
     DELETE_ACLS(31, "DeleteAcls", DeleteAclsRequestData.SCHEMAS, DeleteAclsResponseData.SCHEMAS),
     DESCRIBE_CONFIGS(32, "DescribeConfigs", DescribeConfigsRequestData.SCHEMAS,
-             DescribeConfigsResponseData.SCHEMAS),
+            DescribeConfigsResponseData.SCHEMAS),
     ALTER_CONFIGS(33, "AlterConfigs", AlterConfigsRequestData.SCHEMAS,
             AlterConfigsResponseData.SCHEMAS),
     ALTER_REPLICA_LOG_DIRS(34, "AlterReplicaLogDirs", AlterReplicaLogDirsRequestData.SCHEMAS,

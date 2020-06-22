@@ -86,6 +86,26 @@ import scala.util.{Failure, Success, Try}
 
 /**
  * Logic to handle the various Kafka requests
+ * KafkaApis 是 Kafka 最重要的源码入口
+ *
+ * @param requestChannel   请求通道
+ * @param replicaManager   副本管理器
+ * @param adminManager     主题 | 分区 | 配置等方面的管理器
+ * @param groupCoordinator 消费者协调器组件
+ * @param txnCoordinator   事务管理器组件
+ * @param controller       控制器组件
+ * @param zkClient         ZK客户端程序 Kafka依赖于该类实现与ZK交互
+ * @param brokerId         broker.id参数值
+ * @param config           Kafka配置类
+ * @param metadataCache    元数据缓存类
+ * @param metrics
+ * @param authorizer
+ * @param quotas           配额管理器组件
+ * @param fetchManager
+ * @param brokerTopicStats
+ * @param clusterId
+ * @param time
+ * @param tokenManager
  */
 class KafkaApis(val requestChannel: RequestChannel,
                 val replicaManager: ReplicaManager,
@@ -118,11 +138,17 @@ class KafkaApis(val requestChannel: RequestChannel,
 
   /**
    * Top-level method that handles all requests and multiplexes to the right api
+   * 总方法入口
    */
   def handle(request: RequestChannel.Request): Unit = {
     try {
       trace(s"Handling request:${request.requestDesc(true)} from connection ${request.context.connectionId};" +
         s"securityProtocol:${request.context.securityProtocol},principal:${request.context.principal}")
+      // 根据请求头信息中的apiKey字段判断属于哪类请求 然后调用相应的 handleXxx方法
+      // 如果需要新增RPC协议类型 做以下3件事：
+      // 1.添加新的apiKey标识请求类型
+      // 2.添加新的case分支
+      // 3.添加对应的 handleXxx方法
       request.header.apiKey match {
         case ApiKeys.PRODUCE => handleProduceRequest(request)
         case ApiKeys.FETCH => handleFetchRequest(request)
@@ -176,12 +202,13 @@ class KafkaApis(val requestChannel: RequestChannel,
         case ApiKeys.ALTER_CLIENT_QUOTAS => handleAlterClientQuotasRequest(request)
       }
     } catch {
-      case e: FatalExitError => throw e
-      case e: Throwable => handleError(request, e)
+      case e: FatalExitError => throw e // 如果是严重错误 抛出异常
+      case e: Throwable => handleError(request, e) // 普通异常 记录下错误日志
     } finally {
       // The local completion time may be set while processing the request. Only record it if it's unset.
       if (request.apiLocalCompleteTimeNanos < 0)
-        request.apiLocalCompleteTimeNanos = time.nanoseconds
+      // 记录请求完成的本地时间 即Broker端完成该请求的时间
+      request.apiLocalCompleteTimeNanos = time.nanoseconds
     }
   }
 
@@ -3094,6 +3121,13 @@ class KafkaApis(val requestChannel: RequestChannel,
 
   // Throttle the channel if the request quota is enabled but has been violated. Regardless of throttling, send the
   // response immediately.
+  /**
+   * 发送普通类型的Response而受到限流限制的约束
+   *
+   * @param request
+   * @param createResponse
+   * @param onComplete
+   */
   private def sendResponseMaybeThrottle(request: RequestChannel.Request,
                                         createResponse: Int => AbstractResponse,
                                         onComplete: Option[Send => Unit] = None): Unit = {
@@ -3102,6 +3136,12 @@ class KafkaApis(val requestChannel: RequestChannel,
     sendResponse(request, Some(createResponse(throttleTimeMs)), onComplete)
   }
 
+  /**
+   * 发送携带错误信息的Response但受到限流限制的约束
+   *
+   * @param request
+   * @param error
+   */
   private def sendErrorResponseMaybeThrottle(request: RequestChannel.Request, error: Throwable): Unit = {
     val throttleTimeMs = maybeRecordAndGetThrottleTimeMs(request)
     quotas.request.throttle(request, throttleTimeMs, requestChannel.sendResponse)
@@ -3114,6 +3154,13 @@ class KafkaApis(val requestChannel: RequestChannel,
     throttleTimeMs
   }
 
+  /**
+   * 发送普通类型的Response而不受限流的限制
+   *
+   * @param request
+   * @param response
+   * @param onComplete
+   */
   private def sendResponseExemptThrottle(request: RequestChannel.Request,
                                          response: AbstractResponse,
                                          onComplete: Option[Send => Unit] = None): Unit = {
@@ -3121,6 +3168,12 @@ class KafkaApis(val requestChannel: RequestChannel,
     sendResponse(request, Some(response), onComplete)
   }
 
+  /**
+   * 发送携带错误信息的Response而不受限流的限制
+   *
+   * @param request
+   * @param error
+   */
   private def sendErrorResponseExemptThrottle(request: RequestChannel.Request, error: Throwable): Unit = {
     quotas.request.maybeRecordExempt(request)
     sendErrorOrCloseConnection(request, error, 0)
@@ -3135,6 +3188,12 @@ class KafkaApis(val requestChannel: RequestChannel,
       sendResponse(request, Some(response), None)
   }
 
+  /**
+   * 发送NoopResponse类型的Response而不受通道上限流(throttling)的限制
+   * NoopResponse指的是Processor线程取出该类型的Response后不进行真正的IO发送操作
+   *
+   * @param request
+   */
   private def sendNoOpResponseExemptThrottle(request: RequestChannel.Request): Unit = {
     quotas.request.maybeRecordExempt(request)
     sendResponse(request, None, None)
@@ -3149,6 +3208,8 @@ class KafkaApis(val requestChannel: RequestChannel,
 
   /**
    * 将Request处理结果Response发送出去
+   * 最底层的sendResponse方法 调用了SocketServer组件中的RequestChannel的sendResponse方法
+   * RequestChannel中的sendResponse方法会把待发送的Response放入到对应的Processor线程中的Response队列中 然后交由Processor线程完成网络间数据传输
    *
    * @param request
    * @param responseOpt
@@ -3162,7 +3223,7 @@ class KafkaApis(val requestChannel: RequestChannel,
 
     val response = responseOpt match {
       case Some(response) =>
-        val responseSend = request.context.buildResponse(response)
+        val responseSend = request.context.buildResponse(response) // 构造出Response
         val responseString =
           if (RequestChannel.isRequestLoggingEnabled) Some(response.toString(request.context.apiVersion))
           else None
