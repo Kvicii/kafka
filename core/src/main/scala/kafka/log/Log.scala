@@ -876,7 +876,7 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径 To
       var truncated = false
       // 遍历这些unflushed日志段对象
       while (unflushed.hasNext && !truncated) {
-        val segment = unflushed.next
+        val segment = unflushed.next()
         info(s"Recovering unflushed segment ${segment.baseOffset}")
         val truncatedBytes =
           try {
@@ -2418,7 +2418,7 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径 To
 
     if (asyncDelete) {
       info(s"Scheduling segments for deletion ${segments.mkString(",")}")
-      scheduler.schedule("delete-file", () => deleteSegments, delay = config.fileDeleteDelayMs)
+      scheduler.schedule("delete-file", () => deleteSegments(), delay = config.fileDeleteDelayMs)
     } else {
       deleteSegments()
     }
