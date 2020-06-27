@@ -19,8 +19,8 @@ package org.apache.kafka.common.requests;
 import org.apache.kafka.common.Node;
 import org.apache.kafka.common.message.LeaderAndIsrRequestData;
 import org.apache.kafka.common.message.LeaderAndIsrRequestData.LeaderAndIsrLiveLeader;
-import org.apache.kafka.common.message.LeaderAndIsrRequestData.LeaderAndIsrTopicState;
 import org.apache.kafka.common.message.LeaderAndIsrRequestData.LeaderAndIsrPartitionState;
+import org.apache.kafka.common.message.LeaderAndIsrRequestData.LeaderAndIsrTopicState;
 import org.apache.kafka.common.message.LeaderAndIsrResponseData;
 import org.apache.kafka.common.message.LeaderAndIsrResponseData.LeaderAndIsrPartitionError;
 import org.apache.kafka.common.protocol.ApiKeys;
@@ -55,16 +55,16 @@ public class LeaderAndIsrRequest extends AbstractControlRequest {
         @Override
         public LeaderAndIsrRequest build(short version) {
             List<LeaderAndIsrLiveLeader> leaders = liveLeaders.stream().map(n -> new LeaderAndIsrLiveLeader()
-                .setBrokerId(n.id())
-                .setHostName(n.host())
-                .setPort(n.port())
+                    .setBrokerId(n.id())
+                    .setHostName(n.host())
+                    .setPort(n.port())
             ).collect(Collectors.toList());
 
             LeaderAndIsrRequestData data = new LeaderAndIsrRequestData()
-                .setControllerId(controllerId)
-                .setControllerEpoch(controllerEpoch)
-                .setBrokerEpoch(brokerEpoch)
-                .setLiveLeaders(leaders);
+                    .setControllerId(controllerId)
+                    .setControllerEpoch(controllerEpoch)
+                    .setBrokerEpoch(brokerEpoch)
+                    .setLiveLeaders(leaders);
 
             if (version >= 2) {
                 Map<String, LeaderAndIsrTopicState> topicStatesMap = groupByTopic(partitionStates);
@@ -82,7 +82,7 @@ public class LeaderAndIsrRequest extends AbstractControlRequest {
             // the generated code if version >= 2
             for (LeaderAndIsrPartitionState partition : partitionStates) {
                 LeaderAndIsrTopicState topicState = topicStates.computeIfAbsent(partition.topicName(),
-                    t -> new LeaderAndIsrTopicState().setTopicName(partition.topicName()));
+                        t -> new LeaderAndIsrTopicState().setTopicName(partition.topicName()));
                 topicState.partitionStates().add(partition);
             }
             return topicStates;
@@ -92,12 +92,12 @@ public class LeaderAndIsrRequest extends AbstractControlRequest {
         public String toString() {
             StringBuilder bld = new StringBuilder();
             bld.append("(type=LeaderAndIsRequest")
-                .append(", controllerId=").append(controllerId)
-                .append(", controllerEpoch=").append(controllerEpoch)
-                .append(", brokerEpoch=").append(brokerEpoch)
-                .append(", partitionStates=").append(partitionStates)
-                .append(", liveLeaders=(").append(Utils.join(liveLeaders, ", ")).append(")")
-                .append(")");
+                    .append(", controllerId=").append(controllerId)
+                    .append(", controllerEpoch=").append(controllerEpoch)
+                    .append(", brokerEpoch=").append(brokerEpoch)
+                    .append(", partitionStates=").append(partitionStates)
+                    .append(", liveLeaders=(").append(Utils.join(liveLeaders, ", ")).append(")")
+                    .append(")");
             return bld.toString();
 
         }
@@ -141,9 +141,9 @@ public class LeaderAndIsrRequest extends AbstractControlRequest {
         List<LeaderAndIsrPartitionError> partitions = new ArrayList<>();
         for (LeaderAndIsrPartitionState partition : partitionStates()) {
             partitions.add(new LeaderAndIsrPartitionError()
-                .setTopicName(partition.topicName())
-                .setPartitionIndex(partition.partitionIndex())
-                .setErrorCode(error.code()));
+                    .setTopicName(partition.topicName())
+                    .setPartitionIndex(partition.partitionIndex())
+                    .setErrorCode(error.code()));
         }
         responseData.setPartitionErrors(partitions);
         return new LeaderAndIsrResponse(responseData);
@@ -167,7 +167,7 @@ public class LeaderAndIsrRequest extends AbstractControlRequest {
     public Iterable<LeaderAndIsrPartitionState> partitionStates() {
         if (version() >= 2)
             return () -> new FlattenedIterator<>(data.topicStates().iterator(),
-                topicState -> topicState.partitionStates().iterator());
+                    topicState -> topicState.partitionStates().iterator());
         return data.ungroupedPartitionStates();
     }
 

@@ -20,8 +20,8 @@ import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.message.StopReplicaRequestData;
 import org.apache.kafka.common.message.StopReplicaRequestData.StopReplicaPartitionState;
 import org.apache.kafka.common.message.StopReplicaRequestData.StopReplicaPartitionV0;
-import org.apache.kafka.common.message.StopReplicaRequestData.StopReplicaTopicV1;
 import org.apache.kafka.common.message.StopReplicaRequestData.StopReplicaTopicState;
+import org.apache.kafka.common.message.StopReplicaRequestData.StopReplicaTopicV1;
 import org.apache.kafka.common.message.StopReplicaResponseData;
 import org.apache.kafka.common.message.StopReplicaResponseData.StopReplicaPartitionError;
 import org.apache.kafka.common.protocol.ApiKeys;
@@ -52,30 +52,30 @@ public class StopReplicaRequest extends AbstractControlRequest {
 
         public StopReplicaRequest build(short version) {
             StopReplicaRequestData data = new StopReplicaRequestData()
-                .setControllerId(controllerId)
-                .setControllerEpoch(controllerEpoch)
-                .setBrokerEpoch(brokerEpoch);
+                    .setControllerId(controllerId)
+                    .setControllerEpoch(controllerEpoch)
+                    .setBrokerEpoch(brokerEpoch);
 
             if (version >= 3) {
                 data.setTopicStates(topicStates);
             } else if (version >= 1) {
                 data.setDeletePartitions(deletePartitions);
                 List<StopReplicaTopicV1> topics = topicStates.stream().map(topic ->
-                    new StopReplicaTopicV1()
-                        .setName(topic.topicName())
-                        .setPartitionIndexes(topic.partitionStates().stream()
-                            .map(StopReplicaPartitionState::partitionIndex)
-                            .collect(Collectors.toList())))
-                    .collect(Collectors.toList());
+                        new StopReplicaTopicV1()
+                                .setName(topic.topicName())
+                                .setPartitionIndexes(topic.partitionStates().stream()
+                                        .map(StopReplicaPartitionState::partitionIndex)
+                                        .collect(Collectors.toList())))
+                        .collect(Collectors.toList());
                 data.setTopics(topics);
             } else {
                 data.setDeletePartitions(deletePartitions);
                 List<StopReplicaPartitionV0> partitions = topicStates.stream().flatMap(topic ->
-                    topic.partitionStates().stream().map(partition ->
-                        new StopReplicaPartitionV0()
-                            .setTopicName(topic.topicName())
-                            .setPartitionIndex(partition.partitionIndex())))
-                    .collect(Collectors.toList());
+                        topic.partitionStates().stream().map(partition ->
+                                new StopReplicaPartitionV0()
+                                        .setTopicName(topic.topicName())
+                                        .setPartitionIndex(partition.partitionIndex())))
+                        .collect(Collectors.toList());
                 data.setUngroupedPartitions(partitions);
             }
 
@@ -86,12 +86,12 @@ public class StopReplicaRequest extends AbstractControlRequest {
         public String toString() {
             StringBuilder bld = new StringBuilder();
             bld.append("(type=StopReplicaRequest").
-                append(", controllerId=").append(controllerId).
-                append(", controllerEpoch=").append(controllerEpoch).
-                append(", brokerEpoch=").append(brokerEpoch).
-                append(", deletePartitions=").append(deletePartitions).
-                append(", topicStates=").append(Utils.join(topicStates, ",")).
-                append(")");
+                    append(", controllerId=").append(controllerId).
+                    append(", controllerEpoch=").append(controllerEpoch).
+                    append(", brokerEpoch=").append(brokerEpoch).
+                    append(", deletePartitions=").append(deletePartitions).
+                    append(", topicStates=").append(Utils.join(topicStates, ",")).
+                    append(")");
             return bld.toString();
         }
     }
@@ -118,9 +118,9 @@ public class StopReplicaRequest extends AbstractControlRequest {
         for (StopReplicaTopicState topic : topicStates()) {
             for (StopReplicaPartitionState partition : topic.partitionStates()) {
                 partitions.add(new StopReplicaPartitionError()
-                    .setTopicName(topic.topicName())
-                    .setPartitionIndex(partition.partitionIndex())
-                    .setErrorCode(error.code()));
+                        .setTopicName(topic.topicName())
+                        .setPartitionIndex(partition.partitionIndex())
+                        .setErrorCode(error.code()));
             }
         }
         data.setPartitionErrors(partitions);
@@ -131,7 +131,7 @@ public class StopReplicaRequest extends AbstractControlRequest {
     /**
      * Note that this method has allocation overhead per iterated element, so callers should copy the result into
      * another collection if they need to iterate more than once.
-     *
+     * <p>
      * Implementation note: we should strive to avoid allocation overhead per element, see
      * `UpdateMetadataRequest.partitionStates()` for the preferred approach. That's not possible in this case and
      * StopReplicaRequest should be relatively rare in comparison to other request types.
@@ -141,21 +141,21 @@ public class StopReplicaRequest extends AbstractControlRequest {
             Map<String, StopReplicaTopicState> topicStates = new HashMap<>();
             for (StopReplicaPartitionV0 partition : data.ungroupedPartitions()) {
                 StopReplicaTopicState topicState = topicStates.computeIfAbsent(partition.topicName(),
-                    topic -> new StopReplicaTopicState().setTopicName(topic));
+                        topic -> new StopReplicaTopicState().setTopicName(topic));
                 topicState.partitionStates().add(new StopReplicaPartitionState()
-                    .setPartitionIndex(partition.partitionIndex())
-                    .setDeletePartition(data.deletePartitions()));
+                        .setPartitionIndex(partition.partitionIndex())
+                        .setDeletePartition(data.deletePartitions()));
             }
             return topicStates.values();
         } else if (version() < 3) {
             return () -> new MappedIterator<>(data.topics().iterator(), topic ->
-                new StopReplicaTopicState()
-                    .setTopicName(topic.name())
-                    .setPartitionStates(topic.partitionIndexes().stream()
-                        .map(partition -> new StopReplicaPartitionState()
-                            .setPartitionIndex(partition)
-                            .setDeletePartition(data.deletePartitions()))
-                        .collect(Collectors.toList())));
+                    new StopReplicaTopicState()
+                            .setTopicName(topic.name())
+                            .setPartitionStates(topic.partitionIndexes().stream()
+                                    .map(partition -> new StopReplicaPartitionState()
+                                            .setPartitionIndex(partition)
+                                            .setDeletePartition(data.deletePartitions()))
+                                    .collect(Collectors.toList())));
         } else {
             return data.topicStates();
         }
@@ -167,27 +167,27 @@ public class StopReplicaRequest extends AbstractControlRequest {
         if (version() < 1) {
             for (StopReplicaPartitionV0 partition : data.ungroupedPartitions()) {
                 partitionStates.put(
-                    new TopicPartition(partition.topicName(), partition.partitionIndex()),
-                    new StopReplicaPartitionState()
-                        .setPartitionIndex(partition.partitionIndex())
-                        .setDeletePartition(data.deletePartitions()));
+                        new TopicPartition(partition.topicName(), partition.partitionIndex()),
+                        new StopReplicaPartitionState()
+                                .setPartitionIndex(partition.partitionIndex())
+                                .setDeletePartition(data.deletePartitions()));
             }
         } else if (version() < 3) {
             for (StopReplicaTopicV1 topic : data.topics()) {
                 for (Integer partitionIndex : topic.partitionIndexes()) {
                     partitionStates.put(
-                        new TopicPartition(topic.name(), partitionIndex),
-                        new StopReplicaPartitionState()
-                            .setPartitionIndex(partitionIndex)
-                            .setDeletePartition(data.deletePartitions()));
+                            new TopicPartition(topic.name(), partitionIndex),
+                            new StopReplicaPartitionState()
+                                    .setPartitionIndex(partitionIndex)
+                                    .setDeletePartition(data.deletePartitions()));
                 }
             }
         } else {
             for (StopReplicaTopicState topicState : data.topicStates()) {
-                for (StopReplicaPartitionState partitionState: topicState.partitionStates()) {
+                for (StopReplicaPartitionState partitionState : topicState.partitionStates()) {
                     partitionStates.put(
-                        new TopicPartition(topicState.topicName(), partitionState.partitionIndex()),
-                        partitionState);
+                            new TopicPartition(topicState.topicName(), partitionState.partitionIndex()),
+                            partitionState);
                 }
             }
         }

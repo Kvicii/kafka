@@ -1443,12 +1443,15 @@ class KafkaApis(val requestChannel: RequestChannel,
       )
     }
 
+    // 调用GroupCoordinator的handleListGroups方法获取所有消费者组的信息
     val (error, groups) = groupCoordinator.handleListGroups(states)
+    // 权限校验 Client是否具备CLUSTER资源的DESCRIBE权限
     if (authorize(request.context, DESCRIBE, CLUSTER, CLUSTER_NAME))
     // With describe cluster access all groups are returned. We keep this alternative for backward compatibility.
-    sendResponseMaybeThrottle(request, requestThrottleMs =>
-      createResponse(requestThrottleMs, groups, error))
-      else {
+    // 如果具备权限 直接将拿到的消费者组信息封装到Response中进行发送
+    sendResponseMaybeThrottle(request, requestThrottleMs => createResponse(requestThrottleMs, groups, error))
+    // 找出Clients对哪些Group有GROUP资源的DESCRIBE权限 返回这些Group信息
+    else {
       val filteredGroups = groups.filter(group => authorize(request.context, DESCRIBE, GROUP, group.groupId))
       sendResponseMaybeThrottle(request, requestThrottleMs =>
         createResponse(requestThrottleMs, filteredGroups, error))
@@ -1743,12 +1746,15 @@ class KafkaApis(val requestChannel: RequestChannel,
       createTopicsRequest.data.topics.forEach { topic =>
         results.add(new CreatableTopicResult().setName(topic.name))
       }
+      // 是否具有CLUSTER资源的create权限
       val hasClusterAuthorization = authorize(request.context, CREATE, CLUSTER, CLUSTER_NAME,
         logIfDenied = false)
       val topics = createTopicsRequest.data.topics.asScala.map(_.name)
+      // 如果有CLUSTER的create权限则创建Topic 否则还需要判断是否具有TOPIC的create权限
       val authorizedTopics =
         if (hasClusterAuthorization) topics.toSet
         else filterByAuthorized(request.context, CREATE, TOPIC, topics)(identity)
+      // 是否具有TOPIC资源的DESCRIBE_COONFIGS权限
       val authorizedForDescribeConfigs = filterByAuthorized(request.context, DESCRIBE_CONFIGS, TOPIC,
         topics, logIfDenied = false)(identity).map(name => name -> results.find(name)).toMap
 
@@ -1757,10 +1763,12 @@ class KafkaApis(val requestChannel: RequestChannel,
           topic.setErrorCode(Errors.INVALID_REQUEST.code)
           topic.setErrorMessage("Found multiple entries for this topic.")
         } else if (!authorizedTopics.contains(topic.name)) {
+          // 如果不具备CLUSTER资源的create权限或TOPIC资源的create权限 认证失败
           topic.setErrorCode(Errors.TOPIC_AUTHORIZATION_FAILED.code)
           topic.setErrorMessage("Authorization failed.")
         }
         if (!authorizedForDescribeConfigs.contains(topic.name)) {
+          // 如果不具备TOPIC资源的DESCRIBE_CONFIGS权限 设置主题配置错误码
           topic.setTopicConfigErrorCode(Errors.TOPIC_AUTHORIZATION_FAILED.code)
         }
       })
@@ -2996,7 +3004,12 @@ class KafkaApis(val requestChannel: RequestChannel,
     }
   }
 
-  // private package for testing
+  /**
+   * private package for testing
+   * 做授权检验的方法
+   * 目前Kafka所有的RPC请求都要求发送者(Broker或Client)必须具备特定的权限 所有请求在处理前 都需要调用 authorize 方法做权限校验 以保证请求能够被继续执行
+   * 其中authorize是可插拔接口 可以通过设置Broker端参数 authorizer.class.name 指定鉴权实现类 默认是 kafka.security.authorizer.AclAuthorizer#authorize()
+   */
   private[server] def authorize(requestContext: RequestContext,
                                 operation: AclOperation,
                                 resourceType: ResourceType,
@@ -3005,8 +3018,10 @@ class KafkaApis(val requestChannel: RequestChannel,
                                 logIfDenied: Boolean = true,
                                 refCount: Int = 1): Boolean = {
     authorizer.forall { authZ =>
+      // 获取待鉴权的资源类型 常见的资源类型如TOPIC | GROUP | CLUSTER等
       val resource = new ResourcePattern(resourceType, resourceName, PatternType.LITERAL)
       val actions = Collections.singletonList(new Action(operation, resource, refCount, logIfAllowed, logIfDenied))
+      // 返回授权结果 ALLOWED或DEFIED
       authZ.authorize(requestContext, actions).get(0) == AuthorizationResult.ALLOWED
     }
   }
@@ -3245,5 +3260,4 @@ class KafkaApis(val requestChannel: RequestChannel,
       brokerEpochInRequest < controller.brokerEpoch
     }
   }
-
 }

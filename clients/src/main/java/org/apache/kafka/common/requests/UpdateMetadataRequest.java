@@ -69,7 +69,7 @@ public class UpdateMetadataRequest extends AbstractControlRequest {
                         if (broker.endpoints().stream().anyMatch(endpoint -> !endpoint.listener().isEmpty() &&
                                 !endpoint.listener().equals(listenerNameFromSecurityProtocol(endpoint)))) {
                             throw new UnsupportedVersionException("UpdateMetadataRequest v0-v3 does not support custom " +
-                                "listeners, request version: " + version + ", endpoints: " + broker.endpoints());
+                                    "listeners, request version: " + version + ", endpoints: " + broker.endpoints());
                         }
                     }
                 }
@@ -97,7 +97,7 @@ public class UpdateMetadataRequest extends AbstractControlRequest {
                 // We don't null out the topic name in UpdateMetadataTopicState since it's ignored by the generated
                 // code if version >= 5
                 UpdateMetadataTopicState topicState = topicStates.computeIfAbsent(partition.topicName(),
-                    t -> new UpdateMetadataTopicState().setTopicName(partition.topicName()));
+                        t -> new UpdateMetadataTopicState().setTopicName(partition.topicName()));
                 topicState.partitionStates().add(partition);
             }
             return topicStates;
@@ -107,12 +107,12 @@ public class UpdateMetadataRequest extends AbstractControlRequest {
         public String toString() {
             StringBuilder bld = new StringBuilder();
             bld.append("(type: UpdateMetadataRequest=").
-                append(", controllerId=").append(controllerId).
-                append(", controllerEpoch=").append(controllerEpoch).
-                append(", brokerEpoch=").append(brokerEpoch).
-                append(", partitionStates=").append(partitionStates).
-                append(", liveBrokers=").append(Utils.join(liveBrokers, ", ")).
-                append(")");
+                    append(", controllerId=").append(controllerId).
+                    append(", controllerEpoch=").append(controllerEpoch).
+                    append(", brokerEpoch=").append(brokerEpoch).
+                    append(", partitionStates=").append(partitionStates).
+                    append(", liveBrokers=").append(Utils.join(liveBrokers, ", ")).
+                    append(")");
             return bld.toString();
         }
     }
@@ -137,10 +137,10 @@ public class UpdateMetadataRequest extends AbstractControlRequest {
                 if (version() == 0 && liveBroker.endpoints().isEmpty()) {
                     SecurityProtocol securityProtocol = SecurityProtocol.PLAINTEXT;
                     liveBroker.setEndpoints(singletonList(new UpdateMetadataEndpoint()
-                        .setHost(liveBroker.v0Host())
-                        .setPort(liveBroker.v0Port())
-                        .setSecurityProtocol(securityProtocol.id)
-                        .setListener(ListenerName.forSecurityProtocol(securityProtocol).value())));
+                            .setHost(liveBroker.v0Host())
+                            .setPort(liveBroker.v0Port())
+                            .setSecurityProtocol(securityProtocol.id)
+                            .setListener(ListenerName.forSecurityProtocol(securityProtocol).value())));
                 } else {
                     for (UpdateMetadataEndpoint endpoint : liveBroker.endpoints()) {
                         // Set listener so that callers can rely on it always being present
@@ -195,7 +195,7 @@ public class UpdateMetadataRequest extends AbstractControlRequest {
     public Iterable<UpdateMetadataPartitionState> partitionStates() {
         if (version() >= 5) {
             return () -> new FlattenedIterator<>(data.topicStates().iterator(),
-                topicState -> topicState.partitionStates().iterator());
+                    topicState -> topicState.partitionStates().iterator());
         }
         return data.ungroupedPartitionStates();
     }
