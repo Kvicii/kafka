@@ -6,7 +6,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
  *
- *    http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -19,10 +19,24 @@ package kafka.controller
 
 import scala.collection.Seq
 
+/**
+ * Controller 总共定义了 25 类事件和 17 种状态
+ * 多个 ControllerEvent 可能归属于相同的 ControllerState
+ */
 sealed abstract class ControllerState {
 
+  /**
+   * Controller的状态序号 从0开始
+   *
+   * @return
+   */
   def value: Byte
 
+  /**
+   * 用于构造Controller状态速率的监控指标名称
+   *
+   * @return
+   */
   def rateAndTimeMetricName: Option[String] =
     if (hasRateAndTimeMetric) Some(s"${toString}RateAndTimeMs") else None
 
@@ -36,6 +50,7 @@ object ControllerState {
 
   case object Idle extends ControllerState {
     def value = 0
+
     override protected def hasRateAndTimeMetric: Boolean = false
   }
 
@@ -45,6 +60,7 @@ object ControllerState {
 
   case object BrokerChange extends ControllerState {
     def value = 2
+
     // The LeaderElectionRateAndTimeMs metric existed before `ControllerState` was introduced and we keep the name
     // for backwards compatibility. The alternative would be to have the same metric under two different names.
     override def rateAndTimeMetricName = Some("LeaderElectionRateAndTimeMs")

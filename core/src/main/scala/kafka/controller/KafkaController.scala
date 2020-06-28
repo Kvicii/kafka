@@ -28,12 +28,12 @@ import kafka.utils._
 import kafka.zk.KafkaZkClient.UpdateLeaderAndIsrResult
 import kafka.zk._
 import kafka.zookeeper.{StateChangeHandler, ZNodeChangeHandler, ZNodeChildChangeHandler}
-import org.apache.kafka.common.{ElectionType, KafkaException, TopicPartition}
 import org.apache.kafka.common.errors.{BrokerNotAvailableException, ControllerMovedException, StaleBrokerEpochException}
 import org.apache.kafka.common.metrics.Metrics
 import org.apache.kafka.common.protocol.Errors
 import org.apache.kafka.common.requests.{AbstractControlRequest, ApiError, LeaderAndIsrResponse, UpdateMetadataResponse}
 import org.apache.kafka.common.utils.Time
+import org.apache.kafka.common.{ElectionType, KafkaException, TopicPartition}
 import org.apache.zookeeper.KeeperException
 import org.apache.zookeeper.KeeperException.Code
 
@@ -2041,8 +2041,11 @@ private[controller] class ControllerStats extends KafkaMetricsGroup {
 
 }
 
+/**
+ * Controller事件 在事件队列中被处理的对象
+ */
 sealed trait ControllerEvent {
-  def state: ControllerState
+  def state: ControllerState  // 每个 ControllerEvent 都定义了一个状态  Controller 在处理具体的事件时会对状态进行相应的变更 该状态是由ControllerState.scale定义的
 }
 
 case object ControllerChange extends ControllerEvent {
