@@ -41,6 +41,9 @@ import scala.collection.mutable.ArrayBuffer
 import scala.collection.{Map, Seq, Set, immutable, mutable}
 import scala.util.{Failure, Try}
 
+/**
+ * 选举触发器 并不是Controller选举 而是Topic分区副本的选举 即为哪些分区选择Leader副本
+ */
 sealed trait ElectionTrigger
 
 final case object AutoTriggered extends ElectionTrigger
@@ -49,6 +52,9 @@ final case object ZkTriggered extends ElectionTrigger
 
 final case object AdminClientTriggered extends ElectionTrigger
 
+/**
+ * KafkaController伴生对象 定义了一些常量和回调函数类型
+ */
 object KafkaController extends Logging {
   val InitialControllerEpoch = 0
   val InitialControllerEpochZkVersion = 0
@@ -69,14 +75,16 @@ object KafkaController extends Logging {
  *
  * 3.UpdateMetadataRequest: 该请求会更新 Broker 上的元数据缓存 集群上的所有元数据变更都首先发生在 Controller 端 然后再经由这个请求广播给集群上的所有 Broker
  *
- * @param config
- * @param zkClient
- * @param time
- * @param metrics
- * @param initialBrokerInfo
- * @param initialBrokerEpoch
- * @param tokenManager
- * @param threadNamePrefix
+ * 在Kafka集群中 某段时间内只能有一个Broker被选为Controller 随着时间推移 可能有不同的Broker被当选为Controller 但在某一个时刻只能有一个Broker当选Controller
+ *
+ * @param config             Kafka配置信息 可以通过它拿到Broker端所有参数的值
+ * @param zkClient           ZK客户端 Controller与Zookeeper的所有交互都通过该属性完成
+ * @param time               提供时间服务(如获取当前时间)的工具类
+ * @param metrics            实现指标监控服务(如创建监控指标)的工具类
+ * @param initialBrokerInfo  Broker节点信息 包括主机名 端口号 所用监听器
+ * @param initialBrokerEpoch Broker Epoch值 隔离老Broker发送的请求
+ * @param tokenManager       实现Delegation token管理的工具类 Delegation token是一种轻量级的认证机制
+ * @param threadNamePrefix   Controller端事件处理线程名字前缀
  */
 class KafkaController(val config: KafkaConfig,
                       zkClient: KafkaZkClient,
@@ -86,7 +94,7 @@ class KafkaController(val config: KafkaConfig,
                       initialBrokerEpoch: Long,
                       tokenManager: DelegationTokenManager,
                       threadNamePrefix: Option[String] = None)
-  extends ControllerEventProcessor with Logging with KafkaMetricsGroup {
+  extends ControllerEventProcessor with Logging with KafkaMetricsGroup { // 实现了ControllerEventProcessor接口 即实现了处理Controller事件的process方法
 
   this.logIdent = s"[Controller id=${config.brokerId}] "
 
@@ -94,46 +102,72 @@ class KafkaController(val config: KafkaConfig,
   @volatile private var _brokerEpoch = initialBrokerEpoch
 
   private val stateChangeLogger = new StateChangeLogger(config.brokerId, inControllerContext = true, None)
+  // 集群元数据类 保存集群所有元数据
   val controllerContext = new ControllerContext
+  // Controller端通道管理器类 用于Controller向Broker发送请求
   var controllerChannelManager = new ControllerChannelManager(controllerContext, config, time, metrics,
     stateChangeLogger, threadNamePrefix)
 
   // have a separate scheduler for the controller to be able to start and stop independently of the kafka server
   // visible for testing
+  // Kafka线程调度器 当前唯一的职责是负责定期执行分区重平衡Leader选举
   private[controller] val kafkaScheduler = new KafkaScheduler(1)
 
   // visible for testing
+  // Controller事件管理器 负责管理事件处理线程
   private[controller] val eventManager = new ControllerEventManager(config.brokerId, this, time,
     controllerContext.stats.rateAndTimeMetrics)
 
   private val brokerRequestBatch = new ControllerBrokerRequestBatch(config, controllerChannelManager,
     eventManager, controllerContext, stateChangeLogger)
+  // 副本状态机 负责副本状态转换
   val replicaStateMachine: ReplicaStateMachine = new ZkReplicaStateMachine(config, stateChangeLogger, controllerContext, zkClient,
     new ControllerBrokerRequestBatch(config, controllerChannelManager, eventManager, controllerContext, stateChangeLogger))
+  // 分区状态去 负责分区状态转换
   val partitionStateMachine: PartitionStateMachine = new ZkPartitionStateMachine(config, stateChangeLogger, controllerContext, zkClient,
     new ControllerBrokerRequestBatch(config, controllerChannelManager, eventManager, controllerContext, stateChangeLogger))
+  // Topic删除管理器 负责删除Topic和日志
   val topicDeletionManager = new TopicDeletionManager(config, controllerContext, replicaStateMachine,
     partitionStateMachine, new ControllerDeletionClient(this, zkClient))
 
+  // Controller节点的ZK监听器 监听/controller节点的变更(包括创建 | 删除 | 数据变更)
   private val controllerChangeHandler = new ControllerChangeHandler(eventManager)
+  // Broker数量变化ZK监听器
   private val brokerChangeHandler = new BrokerChangeHandler(eventManager)
+  // Broker数据变更ZK监听器
   private val brokerModificationsHandlers: mutable.Map[Int, BrokerModificationsHandler] = mutable.Map.empty
+  // Topic数量变化ZK监听器
   private val topicChangeHandler = new TopicChangeHandler(eventManager)
+  // Topic删除ZK监听器 用于监听/admin/delete_topics的子节点数量变更
   private val topicDeletionHandler = new TopicDeletionHandler(eventManager)
+  // Topic分区数据变更ZK监听器 如增加了副本 | 分区更换了Leader副本
   private val partitionModificationsHandlers: mutable.Map[String, PartitionModificationsHandler] = mutable.Map.empty
+  // 分区副本重分配任务ZK监听器 一旦发现新提交的任务 就为目标分区执行副本重分配
   private val partitionReassignmentHandler = new PartitionReassignmentHandler(eventManager)
+  // Preferred Leader选举任务ZK监听器 一旦发现新提交的任务 就为目标Topic执行Preferred Leader选举
   private val preferredReplicaElectionHandler = new PreferredReplicaElectionHandler(eventManager)
+  // ISR 副本集合变更ZK监听器 一旦被触发就需要获取 ISR 发生变更的分区列表 然后更新 Controller 端对应的 Leader 和 ISR 缓存元数据
   private val isrChangeNotificationHandler = new IsrChangeNotificationHandler(eventManager)
+  // 日志路径变更ZK监听器 一旦被触发 需要获取受影响的 Broker 列表 然后处理这些 Broker 上失效的日志路径
   private val logDirEventNotificationHandler = new LogDirEventNotificationHandler(eventManager)
 
+  // 当前Controller所在Broker Id
   @volatile private var activeControllerId = -1
+  // 离线分区总数
   @volatile private var offlinePartitionCount = 0
+  // 满足Preferred Leader选举条件的总分区数
   @volatile private var preferredReplicaImbalanceCount = 0
+  // 总Topic数
   @volatile private var globalTopicCount = 0
+  // 总Topic分区数
   @volatile private var globalPartitionCount = 0
+  // 待删除Topic数
   @volatile private var topicsToDeleteCount = 0
+  // 待删除副本数
   @volatile private var replicasToDeleteCount = 0
+  // 暂时无法删除的Topic数
   @volatile private var ineligibleTopicsToDeleteCount = 0
+  // 暂时无法删除的副本数
   @volatile private var ineligibleReplicasToDeleteCount = 0
 
   /* single-thread scheduler to clean expired tokens */
@@ -163,8 +197,12 @@ class KafkaController(val config: KafkaConfig,
    * Invoked when the controller module of a Kafka server is started up. This does not assume that the current broker
    * is the controller. It merely registers the session expiration listener and starts the controller leader
    * elector
+   *
+   * 集群首次启动时 Controller尚未被选举出来 Broker启动后会首先将Startup 这个ControllerEvent写入到事件队列中 然后启动ControllerEventThread和ControllerChangeHandler ZK监听器 之后依赖事件处理线程进行Controller选举
+   * 每个 Broker 都需要做这些事情 并不是说只有 Controller 所在的 Broker 才需要执行这些逻辑
    */
   def startup() = {
+    // 注册ZK状态变更监听器 用于监听Broker和ZK之间的会话是否过期
     zkClient.registerStateChangeHandler(new StateChangeHandler {
       override val name: String = StateChangeHandlers.ControllerHandler
 
@@ -180,7 +218,9 @@ class KafkaController(val config: KafkaConfig,
         queuedEvent.awaitProcessing()
       }
     })
+    // 写入Startup事件到事件队列
     eventManager.put(Startup)
+    // 启动事件处理线程 开始处理事件队列中的Startup事件
     eventManager.start()
   }
 
@@ -297,10 +337,14 @@ class KafkaController(val config: KafkaConfig,
   /**
    * This callback is invoked by the zookeeper leader elector when the current broker resigns as the controller. This is
    * required to clean up internal controller data structures
+   *
+   * Controller卸任方法
+   * 主要用于清空各种数据结构的值 | 取消 ZooKeeper 监听器 | 关闭各种状态机以及管理器等
    */
   private def onControllerResignation(): Unit = {
     debug("Resigning")
     // de-register listeners
+    // 取消ZooKeeper监听器的注册
     zkClient.unregisterZNodeChildChangeHandler(isrChangeNotificationHandler.path)
     zkClient.unregisterZNodeChangeHandler(partitionReassignmentHandler.path)
     zkClient.unregisterZNodeChangeHandler(preferredReplicaElectionHandler.path)
@@ -308,7 +352,9 @@ class KafkaController(val config: KafkaConfig,
     unregisterBrokerModificationsHandler(brokerModificationsHandlers.keySet)
 
     // shutdown leader rebalance scheduler
+    // 关闭Kafka线程调度器(其实就是取消定期的Leader重选举)
     kafkaScheduler.shutdown()
+    // 将统计字段全部清0
     offlinePartitionCount = 0
     preferredReplicaImbalanceCount = 0
     globalTopicCount = 0
@@ -319,21 +365,30 @@ class KafkaController(val config: KafkaConfig,
     ineligibleReplicasToDeleteCount = 0
 
     // stop token expiry check scheduler
+    // 关闭Token过期检查调度器
     if (tokenCleanScheduler.isStarted)
       tokenCleanScheduler.shutdown()
 
     // de-register partition ISR listener for on-going partition reassignment task
+    // 取消分区重分配监听器的注册
     unregisterPartitionReassignmentIsrChangeHandlers()
     // shutdown partition state machine
+    // 关闭分区状态机
     partitionStateMachine.shutdown()
+    // 取消主题变更监听器的注册
     zkClient.unregisterZNodeChildChangeHandler(topicChangeHandler.path)
+    // 取消分区变更监听器的注册
     unregisterPartitionModificationsHandlers(partitionModificationsHandlers.keys.toSeq)
+    // 取消主题删除监听器的注册
     zkClient.unregisterZNodeChildChangeHandler(topicDeletionHandler.path)
     // shutdown replica state machine
+    // 关闭副本状态机
     replicaStateMachine.shutdown()
+    // 取消Broker变更监听器的注册
     zkClient.unregisterZNodeChildChangeHandler(brokerChangeHandler.path)
-
+    // 关闭Controller通道管理器
     controllerChannelManager.shutdown()
+    // 清空集群元数据
     controllerContext.resetContext()
 
     info("Resigned")
@@ -1266,6 +1321,7 @@ class KafkaController(val config: KafkaConfig,
   }
 
   private def processStartup(): Unit = {
+    // 注册ControllerChangeHandler监听器
     zkClient.registerZNodeChangeHandlerAndCheckExistence(controllerChangeHandler)
     elect()
   }
@@ -1335,10 +1391,14 @@ class KafkaController(val config: KafkaConfig,
   }
 
   private def maybeResign(): Unit = {
+    // 判断是否需要执行卸任逻辑的重要依据 判断该Broker之前是否是Controller
     val wasActiveBeforeChange = isActive
+    // 注册ControllerChangeHandler监听器
     zkClient.registerZNodeChangeHandlerAndCheckExistence(controllerChangeHandler)
+    // 获取当前集群Controller所在的Broker ID 如果没有返回-1
     activeControllerId = zkClient.getControllerId.getOrElse(-1)
     if (wasActiveBeforeChange && !isActive) {
+      // 如果该节点之前是Broker现在不是 执行卸任逻辑
       onControllerResignation()
     }
   }
@@ -1818,12 +1878,12 @@ class KafkaController(val config: KafkaConfig,
   }
 
   private def processControllerChange(): Unit = {
-    maybeResign()
+    maybeResign() // 如果是ControllerChange事件 仅执行卸任逻辑即可
   }
 
   private def processReelect(): Unit = {
     maybeResign()
-    elect()
+    elect() // 如果是Reelect事件除了执行卸任逻辑还需要执行elect方法参与新一轮的选举
   }
 
   private def processRegisterBrokerAndReelect(): Unit = {
@@ -1839,6 +1899,7 @@ class KafkaController(val config: KafkaConfig,
 
   override def process(event: ControllerEvent): Unit = {
     try {
+      // 对Controller事件进行匹配
       event match {
         case event: MockEvent =>
           // Used only in test cases
@@ -1866,8 +1927,10 @@ class KafkaController(val config: KafkaConfig,
         case BrokerModifications(brokerId) =>
           processBrokerModification(brokerId)
         case ControllerChange =>
+          // ControllerChange事件 执行Broker卸任逻辑
           processControllerChange()
         case Reelect =>
+          // Reelect事件  执行Broker卸任逻辑 同时要求Broker参与到重选举中
           processReelect()
         case RegisterBrokerAndReelect =>
           processRegisterBrokerAndReelect()
@@ -1892,11 +1955,14 @@ class KafkaController(val config: KafkaConfig,
         case IsrChangeNotification =>
           processIsrChangeNotification()
         case Startup =>
+          // 处理Startup事件
           processStartup()
       }
     } catch {
+      // 如果Controller换成了其他的Broker
       case e: ControllerMovedException =>
         info(s"Controller moved to another broker when processing $event.", e)
+        // 执行Controller的卸任事件逻辑
         maybeResign()
       case e: Throwable =>
         error(s"Error processing event $event", e)
@@ -1991,13 +2057,37 @@ class PreferredReplicaElectionHandler(eventManager: ControllerEventManager) exte
   override def handleCreation(): Unit = eventManager.put(ReplicaLeaderElection(None, ElectionType.PREFERRED, ZkTriggered))
 }
 
+/**
+ * 用于监听 Controller 的变更的监听器
+ * 三个方法都是监听/controller节点的 但实现细节稍微不同
+ *
+ * ControllerChange事件只需要当前执行Broker卸任Controller逻辑
+ * Reelect事件除了执行Broker的卸任逻辑还要求Broker参与到重选举中
+ *
+ * @param eventManager
+ */
 class ControllerChangeHandler(eventManager: ControllerEventManager) extends ZNodeChangeHandler {
+  // ZK中Controller节点的路径 即/controller
   override val path: String = ControllerZNode.path
 
+  /**
+   * 向事件队列中写入ControllerChange事件
+   */
   override def handleCreation(): Unit = eventManager.put(ControllerChange)
 
+  /**
+   * 向事件队列中写入Reelect事件
+   * Deletion表示/controller节点不存在了 即Kafka集群中的Controller暂时空缺了 所以他和Creation和DataChange是不同的状态 需要区别对待 即Reelect事件做的事情比ControllerChange事件多
+   * Broker 检测到 /controller 节点消失时 意味着此时整个集群中没有 Controller 因此所有检测到 /controller 节点消失的 Broker都会立即调用 elect 方法执行竞选逻辑
+   */
   override def handleDeletion(): Unit = eventManager.put(Reelect)
 
+  /**
+   * 向事件队列中写入ControllerChange事件
+   * Broker 检测到 /controller 节点数据发生变化 通常表明Controller"易主" 分为两种情况:
+   * 1.如果Broker之前是Controller 那么该Broker首先需要执行卸任操作 然后再尝试竞选
+   * 2.如果Broker之前不是Controller 那么该Broker直接参与竞选Controller
+   */
   override def handleDataChange(): Unit = eventManager.put(ControllerChange)
 }
 
@@ -2045,7 +2135,7 @@ private[controller] class ControllerStats extends KafkaMetricsGroup {
  * Controller事件 在事件队列中被处理的对象
  */
 sealed trait ControllerEvent {
-  def state: ControllerState  // 每个 ControllerEvent 都定义了一个状态  Controller 在处理具体的事件时会对状态进行相应的变更 该状态是由ControllerState.scale定义的
+  def state: ControllerState // 每个 ControllerEvent 都定义了一个状态  Controller 在处理具体的事件时会对状态进行相应的变更 该状态是由ControllerState.scale定义的
 }
 
 case object ControllerChange extends ControllerEvent {

@@ -29,7 +29,7 @@ import org.apache.kafka.common.utils.Time
 import scala.collection._
 
 /**
- * 用于保存字符串属性 如线程名称等
+ * 用于保存字符串常量(如线程名称)
  */
 object ControllerEventManager {
   val ControllerEventThreadName = "controller-event-thread"
@@ -147,12 +147,24 @@ class ControllerEventManager(controllerId: Int,
     }
   }
 
+  /**
+   * 向事件队列中写入Controller事件
+   *
+   * @param event
+   * @return
+   */
   def put(event: ControllerEvent): QueuedEvent = inLock(putLock) {
     val queuedEvent = new QueuedEvent(event, time.milliseconds())
     queue.put(queuedEvent)
     queuedEvent
   }
 
+  /**
+   * 向事件队列中写入Controller事件 和put不同 该方法会先执行高优先级的抢占事件 之后清空事件队列 最后向事件队列中写入事件
+   *
+   * @param event
+   * @return
+   */
   def clearAndPut(event: ControllerEvent): QueuedEvent = inLock(putLock) {
     queue.forEach(_.preempt(processor))
     queue.clear()
@@ -162,30 +174,34 @@ class ControllerEventManager(controllerId: Int,
   def isEmpty: Boolean = queue.isEmpty
 
   /**
-   * 专属的事件处理线程 唯一的作用是处理不同种类的ControllerEvent
+   * 专属的事件处理线程 唯一的作用是处理不同种类的ControllerEvent 从事件队列中读取Controller事件
+   * ShutdownableThread是Kafka为很多线程类定义的公共父类 其父类是是 Java Thread 类
    *
-   * @param name
+   * @param name 由ControllerEventManager对象定义的
    */
   class ControllerEventThread(name: String) extends ShutdownableThread(name = name, isInterruptible = false) {
     logIdent = s"[ControllerEventThread controllerId=$controllerId] "
 
     override def doWork(): Unit = {
+      // 从事件队列中获取Controller事件 如果事件队列为空 将一直阻塞
       val dequeued = queue.take()
       dequeued.event match {
+        // 当ControllerEventManager关闭时会向事件队列中写入ShutdownEventThread事件显示通知ControllerEventThread线程关闭 此处什么也不需要做 因为关闭ControllerEventThread的逻辑是由外部调用的
         case ShutdownEventThread => // The shutting down of the thread has been initiated at this point. Ignore this event.
+        // 其他事件调用process方法进行处理
         case controllerEvent =>
           _state = controllerEvent.state
-
+          // 更新对应的事件在事件队列中保存的时间
           eventQueueTimeHist.update(time.milliseconds() - dequeued.enqueueTimeMs)
 
           try {
-            def process(): Unit = dequeued.process(processor)
-
+            def process(): Unit = dequeued.process(processor) // 调用QueueEvent的process方法
+            // 处理Controller事件 同时计算处理速率
             rateAndTimeMetrics.get(state) match {
               case Some(timer) => timer.time {
                 process()
               }
-              case None => process()
+              case None => process() // 该方法首先调用QueueEvent的process方法判断是否已经被处理过 如果被处理过直接返回 如果没被处理调用ControllerEventProcessor的process方法进行处理
             }
           } catch {
             case e: Throwable => error(s"Uncaught error processing event $controllerEvent", e)
