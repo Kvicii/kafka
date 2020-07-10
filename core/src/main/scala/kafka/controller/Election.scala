@@ -52,17 +52,16 @@ object Election {
   /**
    * Elect leaders for new or offline partitions.
    *
-   * @param controllerContext Context with the current state of the cluster
+   * @param controllerContext                        Context with the current state of the cluster
    * @param partitionsWithUncleanLeaderElectionState A sequence of tuples representing the partitions
    *                                                 that need election, their leader/ISR state, and whether
    *                                                 or not unclean leader election is enabled
-   *
    * @return The election results
    */
   def leaderForOffline(
-    controllerContext: ControllerContext,
-    partitionsWithUncleanLeaderElectionState: Seq[(TopicPartition, Option[LeaderAndIsr], Boolean)]
-  ): Seq[ElectionResult] = {
+                        controllerContext: ControllerContext,
+                        partitionsWithUncleanLeaderElectionState: Seq[(TopicPartition, Option[LeaderAndIsr], Boolean)]
+                      ): Seq[ElectionResult] = {
     partitionsWithUncleanLeaderElectionState.map {
       case (partition, leaderAndIsrOpt, uncleanLeaderElectionEnabled) =>
         leaderForOffline(partition, leaderAndIsrOpt, uncleanLeaderElectionEnabled, controllerContext)
@@ -84,9 +83,8 @@ object Election {
    * Elect leaders for partitions that are undergoing reassignment.
    *
    * @param controllerContext Context with the current state of the cluster
-   * @param leaderAndIsrs A sequence of tuples representing the partitions that need election
-   *                                     and their respective leader/ISR states
-   *
+   * @param leaderAndIsrs     A sequence of tuples representing the partitions that need election
+   *                          and their respective leader/ISR states
    * @return The election results
    */
   def leaderForReassign(controllerContext: ControllerContext,
@@ -111,9 +109,8 @@ object Election {
    * Elect preferred leaders.
    *
    * @param controllerContext Context with the current state of the cluster
-   * @param leaderAndIsrs A sequence of tuples representing the partitions that need election
-   *                                     and their respective leader/ISR states
-   *
+   * @param leaderAndIsrs     A sequence of tuples representing the partitions that need election
+   *                          and their respective leader/ISR states
    * @return The election results
    */
   def leaderForPreferredReplica(controllerContext: ControllerContext,
@@ -142,9 +139,8 @@ object Election {
    * Elect leaders for partitions whose current leaders are shutting down.
    *
    * @param controllerContext Context with the current state of the cluster
-   * @param leaderAndIsrs A sequence of tuples representing the partitions that need election
-   *                                     and their respective leader/ISR states
-   *
+   * @param leaderAndIsrs     A sequence of tuples representing the partitions that need election
+   *                          and their respective leader/ISR states
    * @return The election results
    */
   def leaderForControlledShutdown(controllerContext: ControllerContext,

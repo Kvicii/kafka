@@ -263,8 +263,8 @@ class ControllerChannelManager(controllerContext: ControllerContext,
     // 再从ControllerBrokerStateInfo中获取RequestSendThread线程对象
     val requestThread = brokerStateInfo(brokerId).requestSendThread
     if (requestThread.getState == Thread.State.NEW)
-      // 启动RequestSendThread线程
-      requestThread.start()
+    // 启动RequestSendThread线程
+    requestThread.start()
   }
 }
 
@@ -273,7 +273,7 @@ class ControllerChannelManager(controllerContext: ControllerContext,
  * 每个QueueItem实例保存的都是 LeaderAndIsrRequest | StopReplicaRequest | UpdateMetadataRequest 三类请求中的一类
  *
  * @param apiKey        标识请求类型
- * @param request       <: // 是上边界的意思 即request字段必须是AbstractControlRequest的子类
+ * @param request       // 是上边界的意思 即request字段必须是AbstractControlRequest的子类
  * @param callback      回调方法
  * @param enqueueTimeMs 请求被放置到请求队列的时间戳
  */
@@ -407,6 +407,15 @@ class RequestSendThread(val controllerId: Int,
   }
 }
 
+/**
+ * 主要的功能是将给定的 Request 发送给指定的 Broker
+ *
+ * @param config
+ * @param controllerChannelManager
+ * @param controllerEventManager
+ * @param controllerContext
+ * @param stateChangeLogger
+ */
 class ControllerBrokerRequestBatch(config: KafkaConfig,
                                    controllerChannelManager: ControllerChannelManager,
                                    controllerEventManager: ControllerEventManager,
@@ -462,6 +471,14 @@ abstract class AbstractControllerBrokerRequestBatch(config: KafkaConfig,
     updateMetadataRequestPartitionInfoMap.clear()
   }
 
+  /**
+   *
+   * @param brokerIds
+   * @param topicPartition
+   * @param leaderIsrAndControllerEpoch
+   * @param replicaAssignment
+   * @param isNew
+   */
   def addLeaderAndIsrRequestForBrokers(brokerIds: Seq[Int],
                                        topicPartition: TopicPartition,
                                        leaderIsrAndControllerEpoch: LeaderIsrAndControllerEpoch,

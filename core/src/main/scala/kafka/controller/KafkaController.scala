@@ -13,6 +13,10 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
+ * 每个 Broker 启动时 都会创建(Controller实例)对应的分区状态机和副本状态机实例
+ * 但只有 Controller 所在的 Broker 才会启动它们 如果 Controller 变更到其他 Broker
+ * 老 Controller 所在的 Broker 要调用这些状态机的 shutdown 方法关闭它们
+ * 新 Controller 所在的 Broker 调用状态机的 startup 方法启动它们
  */
 package kafka.controller
 
@@ -123,7 +127,7 @@ class KafkaController(val config: KafkaConfig,
   // 副本状态机 负责副本状态转换
   val replicaStateMachine: ReplicaStateMachine = new ZkReplicaStateMachine(config, stateChangeLogger, controllerContext, zkClient,
     new ControllerBrokerRequestBatch(config, controllerChannelManager, eventManager, controllerContext, stateChangeLogger))
-  // 分区状态去 负责分区状态转换
+  // 分区状态机 负责分区状态转换
   val partitionStateMachine: PartitionStateMachine = new ZkPartitionStateMachine(config, stateChangeLogger, controllerContext, zkClient,
     new ControllerBrokerRequestBatch(config, controllerChannelManager, eventManager, controllerContext, stateChangeLogger))
   // Topic删除管理器 负责删除Topic和日志
@@ -275,6 +279,8 @@ class KafkaController(val config: KafkaConfig,
    * 4. Starts the partition state machine
    * If it encounters any unexpected exception/error while becoming controller, it resigns as the current controller.
    * This ensures another controller election will be triggered and there will always be an actively serving controller
+   *
+   * 当 Broker 被成功推举为 Controller 后 onControllerFailover 方法会被调用 进而启动该 Broker 早已创建好的副本状态机和分区状态机
    */
   private def onControllerFailover(): Unit = {
     info("Registering handlers")
@@ -304,8 +310,8 @@ class KafkaController(val config: KafkaConfig,
     info("Sending update metadata request")
     sendUpdateMetadataRequest(controllerContext.liveOrShuttingDownBrokerIds.toSeq, Set.empty)
 
-    replicaStateMachine.startup()
-    partitionStateMachine.startup()
+    replicaStateMachine.startup() // 启动副本状态机
+    partitionStateMachine.startup() // 启动分区状态机
 
     info(s"Ready to serve as the new controller with epoch $epoch")
 

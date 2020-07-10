@@ -133,7 +133,7 @@ class ControllerDeletionClient(controller: KafkaController, zkClient: KafkaZkCli
  * @param controllerContext     集群元数据
  * @param replicaStateMachine   副本状态机 用于设置副本状态
  * @param partitionStateMachine 分区状态机 用于设置分区状态
- * @param client                DeletionClient接口 实现主题删除
+ * @param client                DeletionClient接口 实现Topic删除
  */
 class TopicDeletionManager(config: KafkaConfig,
                            controllerContext: ControllerContext,
@@ -335,7 +335,7 @@ class TopicDeletionManager(config: KafkaConfig,
       partitionStateMachine.handleStateChanges(unseenPartitionsForDeletion.toSeq, NonExistentPartition)
       // adding of unseenTopicsForDeletion to topics with deletion started must be done after the partition
       // state changes to make sure the offlinePartitionCount metric is properly updated
-      // 把这些Topic加到"已开启删除操作" Topic列表中
+      // 把这些Topic加到"已开启删除操作"Topic列表中
       controllerContext.beginTopicDeletion(unseenTopicsForDeletion)
     }
 
@@ -391,7 +391,7 @@ class TopicDeletionManager(config: KafkaConfig,
   }
 
   /**
-   * 重启主题删除操作过程的方法
+   * 重启Topic删除操作过程的方法
    */
   private def resumeDeletions(): Unit = {
     // 从元数据缓存中获取要删除的Topic列表

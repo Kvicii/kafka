@@ -29,7 +29,7 @@ import org.apache.zookeeper.KeeperException.Code
 import scala.collection.{Seq, mutable}
 
 /**
- * 负责定义 Kafka 副本状态 | 合法的状态转换 以及管理状态之间的转换
+ * 副本状态机抽象类 负责定义 Kafka 副本状态 | 合法的状态转换 以及管理状态之间的转换
  *
  * @param controllerContext
  */
@@ -90,13 +90,27 @@ abstract class ReplicaStateMachine(controllerContext: ControllerContext) extends
  * Valid previous state are NewReplica, OnlineReplica or OfflineReplica
  * 3. OfflineReplica    : If a replica dies, it moves to this state. This happens when the broker hosting the replica
  * is down. Valid previous state are NewReplica, OnlineReplica
- * 4. ReplicaDeletionStarted: If replica deletion starts, it is moved to this state. Valid previous state is OfflineReplica
+ * 4. ReplicaDeletionStarted: If replica deletion starts, it is moved to this state. Valid previous state is OfflineReplic
  * 5. ReplicaDeletionSuccessful: If replica responds with no error code in response to a delete replica request, it is
  * moved to this state. Valid previous state is ReplicaDeletionStarted
  * 6. ReplicaDeletionIneligible: If replica deletion fails, it is moved to this state. Valid previous states are
  * ReplicaDeletionStarted and OfflineReplica
  * 7. NonExistentReplica: If a replica is deleted successfully, it is moved to this state. Valid previous state is
  * ReplicaDeletionSuccessful
+ * 副本状态机具体实现类 重写了 handleStateChanges 方法 实现了副本状态之间的状态转换
+ * 目前ZkReplicaStateMachine 是唯一的 ReplicaStateMachine 子类
+ *
+ * 即使Broker 没有被选举为 Controller也会构建 KafkaController 对象实例
+ * 所有 Broker 在启动时都会创建 KafkaController 实例 因而也会创建 ZKReplicaStateMachine 实例
+ *
+ * 每个 Broker 都会创建这些实例并不代表每个 Broker 都会启动副本状态机
+ * 只有在 Controller 所在的 Broker 上副本状态机才会被启动 具体的启动代码位于 KafkaController 的 onControllerFailover 方法
+ *
+ * @param config
+ * @param stateChangeLogger
+ * @param controllerContext
+ * @param zkClient                     负责与 ZooKeeper 进行交互
+ * @param controllerBrokerRequestBatch 用于给集群Broker发送控制类请求
  */
 class ZkReplicaStateMachine(config: KafkaConfig,
                             stateChangeLogger: StateChangeLogger,
@@ -108,16 +122,26 @@ class ZkReplicaStateMachine(config: KafkaConfig,
   private val controllerId = config.brokerId
   this.logIdent = s"[ReplicaStateMachine controllerId=$controllerId] "
 
+  /**
+   * 处理状态的变更 是对外提供状态转换操作的入口方法
+   *
+   * @param replicas    一组副本对象 每个副本对象都封装了它们各自所属的主题 | 分区以及副本所在的 Broker ID 数据
+   * @param targetState 这组副本对象要转换成的目标状态
+   */
   override def handleStateChanges(replicas: Seq[PartitionAndReplica], targetState: ReplicaState): Unit = {
     if (replicas.nonEmpty) {
       try {
+        // 清空Controller待发送请求集合
         controllerBrokerRequestBatch.newBatch()
+        // 所有副本对象按照Broker进行分组 依次执行状态转换操作
         replicas.groupBy(_.replica).foreach { case (replicaId, replicas) =>
           doHandleStateChanges(replicaId, replicas, targetState)
         }
+        // 发送对应的Controller请求给Broker
         controllerBrokerRequestBatch.sendRequestsToBrokers(controllerContext.epoch)
       } catch {
         case e: ControllerMovedException =>
+          // 如果Controller易主 则记录错误日志然后抛出异常
           error(s"Controller moved to another broker when moving some replicas to $targetState state", e)
           throw e
         case e: Throwable => error(s"Error while moving some replicas to $targetState state", e)
@@ -155,6 +179,7 @@ class ZkReplicaStateMachine(config: KafkaConfig,
    *
    * ReplicaDeletionSuccessful -> NonExistentReplica
    * -- remove the replica from the in memory partition replica assignment cache
+   * 执行状态变更和转换操作的主力方法
    *
    * @param replicaId   The replica for which the state transition is invoked
    * @param replicas    The partitions on this replica for which the state transition is invoked
@@ -163,22 +188,36 @@ class ZkReplicaStateMachine(config: KafkaConfig,
   private def doHandleStateChanges(replicaId: Int, replicas: Seq[PartitionAndReplica], targetState: ReplicaState): Unit = {
     val stateLogger = stateChangeLogger.withControllerEpoch(controllerContext.epoch)
     val traceEnabled = stateLogger.isTraceEnabled
+    // 遍历所有副本
+    // 尝试获取给定副本对象在 Controller 端元数据缓存中的当前状态 如果没有保存某个副本对象的状态 代码会将其初始化为 NonExistentReplica 状态
     replicas.foreach(replica => controllerContext.putReplicaStateIfNotExists(replica, NonExistentReplica))
+    // 代码根据不同 ReplicaState 中定义的合法前置状态集合以及传入的目标状态(targetState) 将给定的副本对象集合划分成两部分:
+    // 1.能够合法转换的副本对象集合
+    // 2.执行非法状态转换的副本对象集合
     val (validReplicas, invalidReplicas) = controllerContext.checkValidReplicaStateChange(replicas, targetState)
     invalidReplicas.foreach(replica => logInvalidTransition(replica, targetState))
-
+    // 代码携带能够执行合法转换的副本对象集合 进入到不同的代码分支
     targetState match {
       case NewReplica =>
+        // 遍历所有能够执行转换的副本对象
         validReplicas.foreach { replica =>
+          // 获取该副本对象的分区对象 即<主题名，分区号>数据
           val partition = replica.topicPartition
+          // 获取副本对象的当前状态
           val currentState = controllerContext.replicaState(replica)
-
+          // 尝试从元数据缓存中获取该分区当前信息 包括Leader是谁 | ISR都有哪些副本等数据
           controllerContext.partitionLeadershipInfo(partition) match {
+            // 如果成功拿到分区数据信息
             case Some(leaderIsrAndControllerEpoch) =>
+              // 如果该副本是Leader副本
               if (leaderIsrAndControllerEpoch.leaderAndIsr.leader == replicaId) {
                 val exception = new StateChangeFailedException(s"Replica $replicaId for partition $partition cannot be moved to NewReplica state as it is being requested to become leader")
+                // 记录错误日志 Leader副本不能被设置成NewReplica状态
                 logFailedStateChange(replica, currentState, OfflineReplica, exception)
               } else {
+                // 给该副本所在的Broker发送LeaderAndIsrRequest
+                // 向它同步该分区的数据 之后给集群当前所有Broker发送
+                // UpdateMetadataRequest通知它们该分区数据发生变更
                 controllerBrokerRequestBatch.addLeaderAndIsrRequestForBrokers(Seq(replicaId),
                   replica.topicPartition,
                   leaderIsrAndControllerEpoch,
@@ -186,29 +225,41 @@ class ZkReplicaStateMachine(config: KafkaConfig,
                   isNew = true)
                 if (traceEnabled)
                   logSuccessfulTransition(stateLogger, replicaId, partition, currentState, NewReplica)
+                // 更新元数据缓存中该副本对象的当前状态为NewReplica
                 controllerContext.putReplicaState(replica, NewReplica)
               }
+            // 如果没有相应数据
             case None =>
               if (traceEnabled)
                 logSuccessfulTransition(stateLogger, replicaId, partition, currentState, NewReplica)
+              // 仅仅更新元数据缓存中该副本对象的当前状态为NewReplica即可
               controllerContext.putReplicaState(replica, NewReplica)
           }
         }
       case OnlineReplica =>
         validReplicas.foreach { replica =>
+          // 获取副本所在分区
           val partition = replica.topicPartition
+          // 获取副本当前状态
           val currentState = controllerContext.replicaState(replica)
 
           currentState match {
+            // 如果当前状态是NewReplica
             case NewReplica =>
+              // 从元数据缓存中拿到分区副本列表
               val assignment = controllerContext.partitionFullReplicaAssignment(partition)
+              // 如果副本列表不包含当前副本 视为异常情况
               if (!assignment.replicas.contains(replicaId)) {
                 error(s"Adding replica ($replicaId) that is not part of the assignment $assignment")
+                // 将该副本加入到副本列表中 并更新元数据缓存中该分区的副本列表
                 val newAssignment = assignment.copy(replicas = assignment.replicas :+ replicaId)
                 controllerContext.updatePartitionFullReplicaAssignment(partition, newAssignment)
               }
+            // 如果当前状态是其他状态
             case _ =>
+              // 尝试获取该分区当前信息数据
               controllerContext.partitionLeadershipInfo(partition) match {
+                // 如果存在分区信息 向该副本对象所在Broker发送请求 令其同步该分区数据
                 case Some(leaderIsrAndControllerEpoch) =>
                   controllerBrokerRequestBatch.addLeaderAndIsrRequestForBrokers(Seq(replicaId),
                     replica.topicPartition,
@@ -219,20 +270,28 @@ class ZkReplicaStateMachine(config: KafkaConfig,
           }
           if (traceEnabled)
             logSuccessfulTransition(stateLogger, replicaId, partition, currentState, OnlineReplica)
+          // 将该副本对象设置成OnlineReplica状态
           controllerContext.putReplicaState(replica, OnlineReplica)
         }
       case OfflineReplica =>
+        // 向副本所在Broker发送StopReplicaRequest请求 停止对应副本
         validReplicas.foreach { replica =>
           controllerBrokerRequestBatch.addStopReplicaRequestForBrokers(Seq(replicaId), replica.topicPartition, deletePartition = false)
         }
+        // 将副本对象集合划分成有Leader信息的副本集合和无Leader信息的副本集合
         val (replicasWithLeadershipInfo, replicasWithoutLeadershipInfo) = validReplicas.partition { replica =>
           controllerContext.partitionLeadershipInfo(replica.topicPartition).isDefined
         }
+        // 对于有Leader信息的副本集合而言从它们对应的所有分区中移除该副本对象并更新ZooKeeper节点
         val updatedLeaderIsrAndControllerEpochs = removeReplicasFromIsr(replicaId, replicasWithLeadershipInfo.map(_.topicPartition))
+        // 遍历每个更新过的分区信息
         updatedLeaderIsrAndControllerEpochs.foreach { case (partition, leaderIsrAndControllerEpoch) =>
           stateLogger.info(s"Partition $partition state changed to $leaderIsrAndControllerEpoch after removing replica $replicaId from the ISR as part of transition to $OfflineReplica")
+          // 如果分区对应Topic并未被删除
           if (!controllerContext.isTopicQueuedUpForDeletion(partition.topic)) {
+            // 获取该分区除给定副本以外的其他副本所在的Broker
             val recipients = controllerContext.partitionReplicaAssignment(partition).filterNot(_ == replicaId)
+            // 向这些Broker发送请求更新该分区更新过的分区LeaderAndIsr数据
             controllerBrokerRequestBatch.addLeaderAndIsrRequestForBrokers(recipients,
               partition,
               leaderIsrAndControllerEpoch,
@@ -242,14 +301,17 @@ class ZkReplicaStateMachine(config: KafkaConfig,
           val currentState = controllerContext.replicaState(replica)
           if (traceEnabled)
             logSuccessfulTransition(stateLogger, replicaId, partition, currentState, OfflineReplica)
+          // 设置该分区给定副本的状态为OfflineReplica
           controllerContext.putReplicaState(replica, OfflineReplica)
         }
-
+        // 遍历无Leader信息的所有副本对象
         replicasWithoutLeadershipInfo.foreach { replica =>
           val currentState = controllerContext.replicaState(replica)
           if (traceEnabled)
             logSuccessfulTransition(stateLogger, replicaId, replica.topicPartition, currentState, OfflineReplica)
+          // 向集群所有Broker发送请求 更新对应分区的元数据
           controllerBrokerRequestBatch.addUpdateMetadataRequestForBrokers(controllerContext.liveOrShuttingDownBrokerIds.toSeq, Set(replica.topicPartition))
+          // 设置该分区给定副本的状态为OfflineReplica
           controllerContext.putReplicaState(replica, OfflineReplica)
         }
       case ReplicaDeletionStarted =>
@@ -275,15 +337,20 @@ class ZkReplicaStateMachine(config: KafkaConfig,
           controllerContext.putReplicaState(replica, ReplicaDeletionSuccessful)
         }
       case NonExistentReplica =>
+        // 遍历所有能够执行状态转换操作的副本
         validReplicas.foreach { replica =>
+          // 获取副本当前的状态
           val currentState = controllerContext.replicaState(replica)
+          // 所在分区的完整副本列表
           val newAssignedReplicas = controllerContext
             .partitionFullReplicaAssignment(replica.topicPartition)
+            // 将该副本从副本列表中移除
             .removeReplica(replica.replica)
-
+          // 将得到的新副本列表更新到Controller元数据缓存中
           controllerContext.updatePartitionFullReplicaAssignment(replica.topicPartition, newAssignedReplicas)
           if (traceEnabled)
             logSuccessfulTransition(stateLogger, replicaId, replica.topicPartition, currentState, NonExistentReplica)
+          // 将该副本从状态机中移除
           controllerContext.removeReplicaState(replica)
         }
     }
@@ -292,6 +359,8 @@ class ZkReplicaStateMachine(config: KafkaConfig,
   /**
    * Repeatedly attempt to remove a replica from the isr of multiple partitions until there are no more remaining partitions
    * to retry.
+   *
+   * 将给定的副本对象从给定分区 ISR 中移除的功能
    *
    * @param replicaId  The replica being removed from isr of multiple partitions
    * @param partitions The partitions from which we're trying to remove the replica from isr
@@ -322,6 +391,8 @@ class ZkReplicaStateMachine(config: KafkaConfig,
   /**
    * Try to remove a replica from the isr of multiple partitions.
    * Removing a replica from isr updates partition state in zookeeper.
+   *
+   * 把给定的副本对象从给定分区 ISR 中移除
    *
    * @param replicaId  The replica being removed from isr of multiple partitions
    * @param partitions The partitions from which we're trying to remove the replica from isr
@@ -380,6 +451,7 @@ class ZkReplicaStateMachine(config: KafkaConfig,
 
   /**
    * Gets the partition state from zookeeper
+   * 从 ZooKeeper 中获取指定分区的状态信息 包括每个分区的 Leader 副本 | ISR 集合等数据
    *
    * @param partitions the partitions whose state we want from zookeeper
    * @return A tuple of two values:
@@ -430,11 +502,26 @@ class ZkReplicaStateMachine(config: KafkaConfig,
     (result.toMap, partitionsWithNoLeaderAndIsrInZk)
   }
 
+  /**
+   * 记录一次成功的状态转换操作
+   *
+   * @param logger
+   * @param replicaId
+   * @param partition
+   * @param currState
+   * @param targetState
+   */
   private def logSuccessfulTransition(logger: StateChangeLogger, replicaId: Int, partition: TopicPartition,
                                       currState: ReplicaState, targetState: ReplicaState): Unit = {
     logger.trace(s"Changed state of replica $replicaId for partition $partition from $currState to $targetState")
   }
 
+  /**
+   * 同样也是记录错误之用 记录一次非法的状态转换
+   *
+   * @param replica
+   * @param targetState
+   */
   private def logInvalidTransition(replica: PartitionAndReplica, targetState: ReplicaState): Unit = {
     val currState = controllerContext.replicaState(replica)
     val e = new IllegalStateException(s"Replica $replica should be in the ${targetState.validPreviousStates.mkString(",")} " +
@@ -442,6 +529,14 @@ class ZkReplicaStateMachine(config: KafkaConfig,
     logFailedStateChange(replica, currState, targetState, e)
   }
 
+  /**
+   * 仅仅是记录一条错误日志 表明执行了一次无效的状态变更
+   *
+   * @param replica
+   * @param currState
+   * @param targetState
+   * @param t
+   */
   private def logFailedStateChange(replica: PartitionAndReplica, currState: ReplicaState, targetState: ReplicaState, t: Throwable): Unit = {
     stateChangeLogger.withControllerEpoch(controllerContext.epoch)
       .error(s"Controller $controllerId epoch ${controllerContext.epoch} initiated state change of replica ${replica.replica} " +
@@ -449,42 +544,53 @@ class ZkReplicaStateMachine(config: KafkaConfig,
   }
 }
 
+/**
+ * ReplicaState接口 副本状态集合
+ * Kafka 目前共定义了 7 种副本状态
+ */
 sealed trait ReplicaState {
   def state: Byte
 
-  def validPreviousStates: Set[ReplicaState]
+  def validPreviousStates: Set[ReplicaState] // 定义合法的前置状态
 }
 
+// 副本被创建之后所处的状态
 case object NewReplica extends ReplicaState {
   val state: Byte = 1
   val validPreviousStates: Set[ReplicaState] = Set(NonExistentReplica)
 }
 
+// 副本正常提供服务时所处的状态
 case object OnlineReplica extends ReplicaState {
   val state: Byte = 2
   val validPreviousStates: Set[ReplicaState] = Set(NewReplica, OnlineReplica, OfflineReplica, ReplicaDeletionIneligible)
 }
 
+// 副本服务下线时所处的状态
 case object OfflineReplica extends ReplicaState {
   val state: Byte = 3
   val validPreviousStates: Set[ReplicaState] = Set(NewReplica, OnlineReplica, OfflineReplica, ReplicaDeletionIneligible)
 }
 
+// 副本被删除时所处的状态
 case object ReplicaDeletionStarted extends ReplicaState {
   val state: Byte = 4
   val validPreviousStates: Set[ReplicaState] = Set(OfflineReplica)
 }
 
+// 副本被成功删除后所处的状态
 case object ReplicaDeletionSuccessful extends ReplicaState {
   val state: Byte = 5
   val validPreviousStates: Set[ReplicaState] = Set(ReplicaDeletionStarted)
 }
 
+// 开启副本删除 但副本暂时无法被删除时所处的状态
 case object ReplicaDeletionIneligible extends ReplicaState {
   val state: Byte = 6
   val validPreviousStates: Set[ReplicaState] = Set(OfflineReplica, ReplicaDeletionStarted)
 }
 
+// 副本从副本状态机被移除前所处的状态
 case object NonExistentReplica extends ReplicaState {
   val state: Byte = 7
   val validPreviousStates: Set[ReplicaState] = Set(ReplicaDeletionSuccessful)
