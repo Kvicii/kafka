@@ -304,8 +304,6 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径 To
    * Log类的初始化逻辑
    */
   locally {
-    val startMs = time.milliseconds
-
     // create the log directory if it doesn't exist
     // 1.创建分区日志路径 保存Log对象磁盘文件
     Files.createDirectories(dir.toPath)
@@ -330,9 +328,6 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径 To
     if (!producerStateManager.isEmpty)
       throw new IllegalStateException("Producer state must be empty during log initialization")
     loadProducerState(logEndOffset, reloadFromCleanShutdown = hasCleanShutdownFile)
-
-    info(s"Completed load of log with ${segments.size} segments, log start offset $logStartOffset and " +
-      s"log end offset $logEndOffset in ${time.milliseconds() - startMs} ms")
   }
 
   def dir: File = _dir
