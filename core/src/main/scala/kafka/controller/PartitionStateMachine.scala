@@ -59,6 +59,13 @@ abstract class PartitionStateMachine(controllerContext: ControllerContext) exten
   /**
    * This API invokes the OnlinePartition state change on all partitions in either the NewPartition or OfflinePartition
    * state. This is called on a successful controller election and on broker changes
+   *
+   * 将一组给定的Topic分区的状态变更到Online状态 在执行变更前必须要判断这些分区所属的Topic当前没有被执行删除操作 另外除了要变更状态之外该方法还会为这些分区执行Leader选举
+   *
+   * 触发时机的话有如下几个入口:
+   * 1.选举Controller成功之后
+   * 2.Broker启动或下线时
+   * 3.Unclean Leader选举时
    */
   def triggerOnlinePartitionStateChange(): Unit = {
     val partitions = controllerContext.partitionsInStates(Set(OfflinePartition, NewPartition))
@@ -168,9 +175,9 @@ class ZkPartitionStateMachine(config: KafkaConfig,
    * 同时还可能需要用 leaderElectionStrategy 策略为 partitions 选举新的 Leader
    * 最终将 partitions 的 Leader 信息返回
    *
-   * @param partitions                         The partitions
-   * @param targetState                        The state
-   * @param partitionLeaderElectionStrategyOpt The leader election strategy if a leader election is required.
+   * @param partitions                         The partitions. 待执行状态变更的目标分区列表
+   * @param targetState                        The state. 目标状态
+   * @param partitionLeaderElectionStrategyOpt The leader election strategy if a leader election is required. 可选项 如果传入了表示要执行 Leader 选举
    * @return A map of failed and successful elections when targetState is OnlinePartitions. The keys are the
    *         topic partitions and the corresponding values are either the exception that was thrown or new
    *         leader & ISR.
@@ -239,11 +246,9 @@ class ZkPartitionStateMachine(config: KafkaConfig,
    *         topic partitions and the corresponding values are either the exception that was thrown or new
    *         leader & ISR.
    */
-  private def doHandleStateChanges(
-                                    partitions: Seq[TopicPartition],
-                                    targetState: PartitionState,
-                                    partitionLeaderElectionStrategyOpt: Option[PartitionLeaderElectionStrategy]
-                                  ): Map[TopicPartition, Either[Throwable, LeaderAndIsr]] = {
+  private def doHandleStateChanges(partitions: Seq[TopicPartition],
+                                   targetState: PartitionState,
+                                   partitionLeaderElectionStrategyOpt: Option[PartitionLeaderElectionStrategy]): Map[TopicPartition, Either[Throwable, LeaderAndIsr]] = {
     val stateChangeLog = stateChangeLogger.withControllerEpoch(controllerContext.epoch)
     val traceEnabled = stateChangeLog.isTraceEnabled
     // 不在元数据缓存中的所有分区的状态 会被初始化为 NonExistentPartition
@@ -418,6 +423,7 @@ class ZkPartitionStateMachine(config: KafkaConfig,
   /**
    * Try to elect leaders for multiple partitions.
    * Electing a leader for a partition updates partition state in zookeeper.
+   *
    * 副本进行Leader选举的核心步骤
    *
    * @param partitions                      The partitions that we're trying to elect leaders for.
@@ -629,7 +635,11 @@ object PartitionLeaderElectionAlgorithms {
    * @param controllerContext
    * @return
    */
-  def offlinePartitionLeaderElection(assignment: Seq[Int], isr: Seq[Int], liveReplicas: Set[Int], uncleanLeaderElectionEnabled: Boolean, controllerContext: ControllerContext): Option[Int] = {
+  def offlinePartitionLeaderElection(assignment: Seq[Int],
+                                     isr: Seq[Int],
+                                     liveReplicas: Set[Int],
+                                     uncleanLeaderElectionEnabled: Boolean,
+                                     controllerContext: ControllerContext): Option[Int] = {
     // 从当前分区副本列表中寻找首个处于存活状态的ISR副本(副本必须是存活状态 并且副本在ISR列表中)
     assignment.find(id => liveReplicas.contains(id) && isr.contains(id)).orElse {
       // 如果找不到满足条件的副本 查看是否允许Unclean Leader选举(即Broker端参数unclean.leader.election.enable是否等于true)
