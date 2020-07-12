@@ -88,7 +88,7 @@ public class OffsetsForLeaderEpochRequest extends AbstractRequest {
 
     public static Schema[] schemaVersions() {
         return new Schema[]{OFFSET_FOR_LEADER_EPOCH_REQUEST_V0, OFFSET_FOR_LEADER_EPOCH_REQUEST_V1,
-            OFFSET_FOR_LEADER_EPOCH_REQUEST_V2, OFFSET_FOR_LEADER_EPOCH_REQUEST_V3};
+                OFFSET_FOR_LEADER_EPOCH_REQUEST_V2, OFFSET_FOR_LEADER_EPOCH_REQUEST_V3};
     }
 
     private final Map<TopicPartition, PartitionData> epochsByPartition;
@@ -211,7 +211,7 @@ public class OffsetsForLeaderEpochRequest extends AbstractRequest {
         Map<TopicPartition, EpochEndOffset> errorResponse = new HashMap<>();
         for (TopicPartition tp : epochsByPartition.keySet()) {
             errorResponse.put(tp, new EpochEndOffset(
-                error, EpochEndOffset.UNDEFINED_EPOCH, EpochEndOffset.UNDEFINED_EPOCH_OFFSET));
+                    error, EpochEndOffset.UNDEFINED_EPOCH, EpochEndOffset.UNDEFINED_EPOCH_OFFSET));
         }
         return new OffsetsForLeaderEpochResponse(throttleTimeMs, errorResponse);
     }
@@ -229,8 +229,8 @@ public class OffsetsForLeaderEpochRequest extends AbstractRequest {
         public String toString() {
             StringBuilder bld = new StringBuilder();
             bld.append("(currentLeaderEpoch=").append(currentLeaderEpoch).
-                append(", leaderEpoch=").append(leaderEpoch).
-                append(")");
+                    append(", leaderEpoch=").append(leaderEpoch).
+                    append(")");
             return bld.toString();
         }
     }

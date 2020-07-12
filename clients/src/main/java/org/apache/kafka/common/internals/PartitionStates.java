@@ -32,24 +32,28 @@ import java.util.stream.Stream;
  * round-robin to ensure fairness and some level of determinism given the existence of a limit on the fetch response
  * size. Because the serialization of fetch requests is more efficient if all partitions for the same topic are grouped
  * together, we do such grouping in the method `set`.
- *
+ * <p>
  * As partitions are moved to the end, the same topic may be repeated more than once. In the optimal case, a single
  * topic would "wrap around" and appear twice. However, as partitions are fetched in different orders and partition
  * leadership changes, we will deviate from the optimal. If this turns out to be an issue in practice, we can improve
  * it by tracking the partitions per node or calling `set` every so often.
- *
+ * <p>
  * Note that this class is not thread-safe with the exception of {@link #size()} which returns the number of
  * partitions currently tracked.
+ * <p>
+ * PartitionStates 类用轮询的方式来处理要读取的多个分区
  */
 public class PartitionStates<S> {
 
+    // 依靠 LinkedHashMap 数据结构来保存所有Topic分区 LinkedHashMap 中的元素有明确的迭代顺序 通常就是元素被插入的顺序
     private final LinkedHashMap<TopicPartition, S> map = new LinkedHashMap<>();
     private final Set<TopicPartition> partitionSetView = Collections.unmodifiableSet(map.keySet());
 
     /* the number of partitions that are currently assigned available in a thread safe manner */
     private volatile int size = 0;
 
-    public PartitionStates() {}
+    public PartitionStates() {
+    }
 
     public void moveToEnd(TopicPartition topicPartition) {
         S state = map.remove(topicPartition);
@@ -57,6 +61,14 @@ public class PartitionStates<S> {
             map.put(topicPartition, state);
     }
 
+    /**
+     * Kafka 要读取 5 个分区上的消息: A | B | C | D | E
+     * 如果插入顺序就是 ABCDE 那么首先读取分区 A
+     * 一旦 A 被读取之后 为了确保各个分区都有同等机会被读取到 代码需要将 A 插入到分区列表的最后一位
+     *
+     * @param topicPartition
+     * @param state
+     */
     public void updateAndMoveToEnd(TopicPartition topicPartition, S state) {
         map.remove(topicPartition);
         map.put(topicPartition, state);
@@ -182,5 +194,4 @@ public class PartitionStates<S> {
             return "PartitionState(" + topicPartition + "=" + value + ')';
         }
     }
-
 }

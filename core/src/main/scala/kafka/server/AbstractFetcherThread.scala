@@ -6,7 +6,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
  *
- *    http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -20,34 +20,40 @@ package kafka.server
 import java.nio.ByteBuffer
 import java.util
 import java.util.Optional
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.locks.ReentrantLock
 
 import kafka.cluster.BrokerEndPoint
+import kafka.common.ClientIdAndBroker
+import kafka.log.LogAppendInfo
+import kafka.metrics.KafkaMetricsGroup
+import kafka.server.AbstractFetcherThread.{ReplicaFetch, ResultWithPartitions}
+import kafka.utils.CoreUtils.inLock
 import kafka.utils.{DelayedItem, Pool, ShutdownableThread}
 import org.apache.kafka.common.errors._
-import org.apache.kafka.common.requests.EpochEndOffset._
-import kafka.common.ClientIdAndBroker
-import kafka.metrics.KafkaMetricsGroup
-import kafka.utils.CoreUtils.inLock
-import org.apache.kafka.common.protocol.Errors
-
-import scala.collection.{mutable, Map, Set}
-import scala.jdk.CollectionConverters._
-import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicLong
-
-import kafka.log.LogAppendInfo
-import kafka.server.AbstractFetcherThread.ReplicaFetch
-import kafka.server.AbstractFetcherThread.ResultWithPartitions
-import org.apache.kafka.common.{InvalidRecordException, TopicPartition}
 import org.apache.kafka.common.internals.PartitionStates
+import org.apache.kafka.common.protocol.Errors
 import org.apache.kafka.common.record.{FileRecords, MemoryRecords, Records}
+import org.apache.kafka.common.requests.EpochEndOffset._
 import org.apache.kafka.common.requests._
+import org.apache.kafka.common.{InvalidRecordException, TopicPartition}
 
+import scala.collection.{Map, Set, mutable}
+import scala.jdk.CollectionConverters._
 import scala.math._
 
 /**
- *  Abstract class for fetching data from multiple partitions from the same broker.
+ * Abstract class for fetching data from multiple partitions from the same broker.
+ * 从 Broker 获取多个分区的消息数据 至于获取之后如何对这些数据进行处理 则交由子类来实现
+ *
+ * @param name             线程名字
+ * @param clientId
+ * @param sourceBroker     源 Broker 节点信息(源 Broker 是指此线程要从哪个 Broker 上读取数据)
+ * @param failedPartitions 线程处理过程报错的分区集合
+ * @param fetchBackOffMs   当获取分区数据出错后的等待重试间隔(默认是 Broker 端参数 replica.fetch.backoff.ms 值)
+ * @param isInterruptible
+ * @param brokerTopicStats Broker 端主题的各类监控指标 常见的有 MessagesInPerSec、BytesInPerSec 等
  */
 abstract class AbstractFetcherThread(name: String,
                                      clientId: String,
@@ -58,9 +64,14 @@ abstract class AbstractFetcherThread(name: String,
                                      val brokerTopicStats: BrokerTopicStats) //BrokerTopicStats's lifecycle managed by ReplicaManager
   extends ShutdownableThread(name, isInterruptible) {
 
+  // 类似于一个快捷方式:
+  // 以后凡是源码中需要用到 FetchResponse.PartitionData[Records]的地方 都可以简单地使用 FetchData 替换掉
   type FetchData = FetchResponse.PartitionData[Records]
   type EpochData = OffsetsForLeaderEpochRequest.PartitionData
 
+  // 表征分区读取状态 保存的是分区的已读取位移值和对应的副本状态
+  // 状态有两个: 一个是分区读取状态 一个是副本读取状态
+  // 副本读取状态由 ReplicaState 接口表示
   private val partitionStates = new PartitionStates[PartitionFetchState]
   protected val partitionMapLock = new ReentrantLock
   private val partitionMapCond = partitionMapLock.newCondition()
@@ -70,16 +81,37 @@ abstract class AbstractFetcherThread(name: String,
   val fetcherLagStats = new FetcherLagStats(metricId)
 
   /* callbacks to be defined in subclass */
-
-  // process fetched data
+  /**
+   * process fetched data
+   * 用于处理读取回来的消息集合 它是一个抽象方法 因此需要子类实现它的逻辑
+   * 具体到 Follower 副本而言  是由 ReplicaFetcherThread 类实现的
+   *
+   * @param topicPartition 读取哪个分区的数据
+   * @param fetchOffset    读取到的最新位移值
+   * @param partitionData  读取到的分区消息数据
+   * @return 写入已读取消息数据前的元数据 对于 Follower 副本读消息写入日志而言 可以忽略这里的 Option 因为肯定会返回具体的 LogAppendInfo 实例而不会是 None
+   *         LogAppendInfo封装了很多消息数据被写入到日志前的重要元数据信息 比如首条消息的位移值 | 最后一条消息位移值 |最大时间戳等
+   */
   protected def processPartitionData(topicPartition: TopicPartition,
                                      fetchOffset: Long,
                                      partitionData: FetchData): Option[LogAppendInfo]
 
+  /**
+   *
+   * @param topicPartition  要对哪个分区下副本执行截断操作
+   * @param truncationState 位移值 + 截断完成与否的布尔值状态 主要作用是告诉 Kafka 要把指定分区下副本截断到哪个位移值
+   */
   protected def truncate(topicPartition: TopicPartition, truncationState: OffsetTruncationState): Unit
 
   protected def truncateFullyAndStartAt(topicPartition: TopicPartition, offset: Long): Unit
 
+  /**
+   * 为指定分区构建对应的 FetchRequest.Builder 对象 该对象是构建 FetchRequest 的核心组件
+   * Kafka 中任何类型的消息读取 都是通过给指定 Broker 发送 FetchRequest 请求来完成的
+   *
+   * @param partitionMap key 一组要读取的分区列表 是否被读取取决于PartitionFetchState的状态
+   * @return
+   */
   protected def buildFetch(partitionMap: Map[TopicPartition, PartitionFetchState]): ResultWithPartitions[Option[ReplicaFetch]]
 
   protected def latestEpoch(topicPartition: TopicPartition): Option[Int]
@@ -112,31 +144,52 @@ abstract class AbstractFetcherThread(name: String,
     fetcherLagStats.unregister()
   }
 
+  /**
+   * 串联processPartitionData | truncate | buildFetch的主要入口方法
+   *
+   * AbstractFetcherThread 线程只要一直处于运行状态 就会不断地重复这两个操作
+   */
   override def doWork(): Unit = {
-    maybeTruncate()
-    maybeFetch()
+    // 需要截断的原因: 分区的 Leader 可能会随时发生变化
+    // 每当有新 Leader 产生时 Follower 副本就必须主动执行截断操作 将自己的本地日志裁剪成与 Leader 一模一样的消息序列 甚至Leader 副本本身也需要执行截断操作 将 LEO 调整到分区高水位处
+    maybeTruncate() // 执行副本截断操作
+    maybeFetch() // 执行消息获取操作
   }
 
   private def maybeFetch(): Unit = {
     val fetchRequestOpt = inLock(partitionMapLock) {
+      // 为partitionStates中的分区构造FetchRequest(即FetchRequest.Builder 对象 构造了该对象后 通过调用build方法就能创建出所需的 FetchRequest 请求对象)
+      // partitionStates中保存的是要去获取消息的分区以及对应的状态
+      // 这一步的输出结果是两个对象:
+      // 1.ReplicaFetch 要读取的分区核心信息 + FetchRequest.Builder 对象(核心信息: 就是指要读取哪个分区 从哪个位置开始读 最多读多少字节等
+      // 2.另一个对象是一组出错分区
       val ResultWithPartitions(fetchRequestOpt, partitionsWithError) = buildFetch(partitionStates.partitionStateMap.asScala)
-
+      // 处理出错的分区 处理方式主要是将这个分区加入到有序Map末尾 等待后续重试
       handlePartitionsWithErrors(partitionsWithError, "maybeFetch")
 
+      // 如果当前没有可读取的分区 则等待fetchBackOffMs时间等候后续重试
       if (fetchRequestOpt.isEmpty) {
         trace(s"There are no active partitions. Back off for $fetchBackOffMs ms before sending a fetch request")
         partitionMapCond.await(fetchBackOffMs, TimeUnit.MILLISECONDS)
       }
-
       fetchRequestOpt
     }
-
+    // 发送FETCH请求给Leader副本 并处理Response
     fetchRequestOpt.foreach { case ReplicaFetch(sessionPartitions, fetchRequest) =>
       processFetchRequest(sessionPartitions, fetchRequest)
     }
   }
 
-  // deal with partitions with errors, potentially due to leadership changes
+  /**
+   * deal with partitions with errors, potentially due to leadership changes
+   *
+   * 接收一组分区 为它们调用delayPartitions方法执行延时处理
+   * delayPartitions方法会遍历每个给定的分区 并把这些分区依次加入到待读取分区列表的末端 从而实现延时重试操作
+   * 即Kafka处理出错分区的思路就是将这些分区放入到轮询名单的末尾期待稍后重试
+   *
+   * @param partitions
+   * @param methodName
+   */
   private def handlePartitionsWithErrors(partitions: Iterable[TopicPartition], methodName: String): Unit = {
     if (partitions.nonEmpty) {
       debug(s"Handling errors in $methodName for partitions $partitions")
@@ -166,12 +219,17 @@ abstract class AbstractFetcherThread(name: String,
     (partitionsWithEpochs, partitionsWithoutEpochs)
   }
 
+  /**
+   * 当分区存在 Leader Epoch 值时 会将副本的本地日志截断到 Leader Epoch 对应的最新位移值处(即方法 truncateToEpochEndOffsets 的逻辑实现)
+   * 如果分区不存在对应的 Leader Epoch 记录 那么依然使用原来的高水位机制(调用方法 truncateToHighWatermark 将日志调整到高水位值处)
+   */
   private def maybeTruncate(): Unit = {
+    // 将所有处于截断中状态的分区依据有无Leader Epoch值进行分组
     val (partitionsWithEpochs, partitionsWithoutEpochs) = fetchTruncatingPartitions()
-    if (partitionsWithEpochs.nonEmpty) {
+    if (partitionsWithEpochs.nonEmpty) { // 对于有Leader Epoch值的分区 将日志截断到Leader Epoch值对应的位移值处
       truncateToEpochEndOffsets(partitionsWithEpochs)
     }
-    if (partitionsWithoutEpochs.nonEmpty) {
+    if (partitionsWithoutEpochs.nonEmpty) { // 对于没有Leader Epoch值的分区 将日志截断到高水位值处
       truncateToHighWatermark(partitionsWithoutEpochs)
     }
   }
@@ -195,14 +253,14 @@ abstract class AbstractFetcherThread(name: String,
   }
 
   /**
-    * - Build a leader epoch fetch based on partitions that are in the Truncating phase
-    * - Send OffsetsForLeaderEpochRequest, retrieving the latest offset for each partition's
-    *   leader epoch. This is the offset the follower should truncate to ensure
-    *   accurate log replication.
-    * - Finally truncate the logs for partitions in the truncating phase and mark the
-    *   truncation complete. Do this within a lock to ensure no leadership changes can
-    *   occur during truncation.
-    */
+   * - Build a leader epoch fetch based on partitions that are in the Truncating phase
+   * - Send OffsetsForLeaderEpochRequest, retrieving the latest offset for each partition's
+   * leader epoch. This is the offset the follower should truncate to ensure
+   * accurate log replication.
+   * - Finally truncate the logs for partitions in the truncating phase and mark the
+   * truncation complete. Do this within a lock to ensure no leadership changes can
+   * occur during truncation.
+   */
   private def truncateToEpochEndOffsets(latestEpochsForPartitions: Map[TopicPartition, EpochData]): Unit = {
     val endOffsets = fetchEpochEndOffsets(latestEpochsForPartitions)
     //Ensure we hold a lock during truncation.
@@ -228,18 +286,22 @@ abstract class AbstractFetcherThread(name: String,
   private[server] def truncateToHighWatermark(partitions: Set[TopicPartition]): Unit = inLock(partitionMapLock) {
     val fetchOffsets = mutable.HashMap.empty[TopicPartition, OffsetTruncationState]
 
-    for (tp <- partitions) {
+    for (tp <- partitions) { //  遍历给定的所有分区
+      // 获取分区的分区读取状态
       val partitionState = partitionStates.stateValue(tp)
       if (partitionState != null) {
+        // 取出高水位值 分区的最大可读取位移值就是高水位值
         val highWatermark = partitionState.fetchOffset
+        // 将其保存在分区读取状态类中
         val truncationState = OffsetTruncationState(highWatermark, truncationCompleted = true)
 
         info(s"Truncating partition $tp to local high watermark $highWatermark")
-        if (doTruncate(tp, truncationState))
+        if (doTruncate(tp, truncationState)) { // 执行真正的日志截断操作
           fetchOffsets.put(tp, truncationState)
+        }
       }
     }
-
+    // 将给定的所有分区都执行了对应的操作之后 更新这组分区的分区读取状态
     updateFetchOffsetAndMaybeMarkTruncationComplete(fetchOffsets)
   }
 
@@ -252,7 +314,7 @@ abstract class AbstractFetcherThread(name: String,
       leaderEpochOffset.error match {
         case Errors.NONE =>
           val offsetTruncationState = getOffsetTruncationState(tp, leaderEpochOffset)
-          if(doTruncate(tp, offsetTruncationState))
+          if (doTruncate(tp, offsetTruncationState))
             fetchOffsets.put(tp, offsetTruncationState)
 
         case Errors.FENCED_LEADER_EPOCH =>
@@ -273,6 +335,7 @@ abstract class AbstractFetcherThread(name: String,
 
   /**
    * remove the partition if the partition state is NOT updated. Otherwise, keep the partition active.
+   *
    * @return true if the epoch in this thread is updated. otherwise, false
    */
   private def onPartitionFenced(tp: TopicPartition, requestEpoch: Option[Int]): Boolean = inLock(partitionMapLock) {
@@ -297,6 +360,7 @@ abstract class AbstractFetcherThread(name: String,
 
     try {
       trace(s"Sending fetch request $fetchRequest")
+      // 给Leader发送FETCH请求并阻塞等待Response的返回
       responseData = fetchFromLeader(fetchRequest)
     } catch {
       case t: Throwable =>
@@ -311,7 +375,7 @@ abstract class AbstractFetcherThread(name: String,
           }
         }
     }
-    fetcherStats.requestRate.mark()
+    fetcherStats.requestRate.mark() // 更新FETCH请求发送速率指标
 
     if (responseData.nonEmpty) {
       // process fetched data
@@ -321,15 +385,18 @@ abstract class AbstractFetcherThread(name: String,
             // It's possible that a partition is removed and re-added or truncated when there is a pending fetch request.
             // In this case, we only want to process the fetch response if the partition state is ready for fetch and
             // the current offset is the same as the offset requested.
-            val fetchPartitionData = sessionPartitions.get(topicPartition)
+            val fetchPartitionData = sessionPartitions.get(topicPartition) // 获取分区核心信息
+            // 处理Response的条件:
+            // 1.要获取的位移值和当前AbstractFetcherThread线程缓存的该分区下一条待读取的位移值相等
+            // 2.当前分区处于可获取状态
             if (fetchPartitionData != null && fetchPartitionData.fetchOffset == currentFetchState.fetchOffset && currentFetchState.isReadyForFetch) {
+              // 提取Response中的Leader Epoch值 交由子类实现具体的Response处理(调用 processPartitionData 方法)
               val requestEpoch = if (fetchPartitionData.currentLeaderEpoch.isPresent) Some(fetchPartitionData.currentLeaderEpoch.get().toInt) else None
               partitionData.error match {
                 case Errors.NONE =>
                   try {
                     // Once we hand off the partition data to the subclass, we can't mess with it any more in this thread
-                    val logAppendInfoOpt = processPartitionData(topicPartition, currentFetchState.fetchOffset,
-                      partitionData)
+                    val logAppendInfoOpt = processPartitionData(topicPartition, currentFetchState.fetchOffset, partitionData)
 
                     logAppendInfoOpt.foreach { logAppendInfo =>
                       val validBytes = logAppendInfo.validBytes
@@ -341,12 +408,12 @@ abstract class AbstractFetcherThread(name: String,
                       if (validBytes > 0 && partitionStates.contains(topicPartition)) {
                         // Update partitionStates only if there is no exception during processPartitionData
                         val newFetchState = PartitionFetchState(nextOffset, Some(lag), currentFetchState.currentLeaderEpoch, state = Fetching)
-                        partitionStates.updateAndMoveToEnd(topicPartition, newFetchState)
+                        partitionStates.updateAndMoveToEnd(topicPartition, newFetchState) // 将该分区放置在有序Map读取顺序的末尾 保证公平性
                         fetcherStats.byteRate.mark(validBytes)
                       }
                     }
                   } catch {
-                    case ime@( _: CorruptRecordException | _: InvalidRecordException) =>
+                    case ime@(_: CorruptRecordException | _: InvalidRecordException) =>
                       // we log the error and continue. This ensures two things
                       // 1. If there is a corrupt message in a topic partition, it does not bring the fetcher thread
                       //    down and cause other topic partition to also lag
@@ -365,41 +432,40 @@ abstract class AbstractFetcherThread(name: String,
                         s"at offset ${currentFetchState.fetchOffset}", t)
                       markPartitionFailed(topicPartition)
                   }
-                case Errors.OFFSET_OUT_OF_RANGE =>
-                  if (handleOutOfRangeError(topicPartition, currentFetchState, requestEpoch))
-                    partitionsWithError += topicPartition
-
-                case Errors.UNKNOWN_LEADER_EPOCH =>
+                case Errors.OFFSET_OUT_OF_RANGE => // 如果读取位移值越界 通常是因为Leader发生变更
+                  if (handleOutOfRangeError(topicPartition, currentFetchState, requestEpoch)) { // 调整越界 主要办法是做截断
+                    partitionsWithError += topicPartition // 如果依然不能成功 加入到出错分区列表
+                  }
+                case Errors.UNKNOWN_LEADER_EPOCH => // 如果Leader Epoch值比Leader所在Broker上的Epoch值要新
                   debug(s"Remote broker has a smaller leader epoch for partition $topicPartition than " +
                     s"this replica's current leader epoch of ${currentFetchState.currentLeaderEpoch}.")
-                  partitionsWithError += topicPartition
+                  partitionsWithError += topicPartition // 加入到出错分区列表
 
-                case Errors.FENCED_LEADER_EPOCH =>
+                case Errors.FENCED_LEADER_EPOCH => // 如果Leader Epoch值比Leader所在Broker上的Epoch值要旧
                   if (onPartitionFenced(topicPartition, requestEpoch)) partitionsWithError += topicPartition
 
-                case Errors.NOT_LEADER_FOR_PARTITION =>
+                case Errors.NOT_LEADER_FOR_PARTITION => // 如果Leader发生变更
                   debug(s"Remote broker is not the leader for partition $topicPartition, which could indicate " +
                     "that the partition is being moved")
-                  partitionsWithError += topicPartition
+                  partitionsWithError += topicPartition // 加入到出错分区列表
 
                 case Errors.UNKNOWN_TOPIC_OR_PARTITION =>
                   warn(s"Received ${Errors.UNKNOWN_TOPIC_OR_PARTITION} from the leader for partition $topicPartition. " +
-                       "This error may be returned transiently when the partition is being created or deleted, but it is not " +
-                       "expected to persist.")
-                  partitionsWithError += topicPartition
+                    "This error may be returned transiently when the partition is being created or deleted, but it is not " +
+                    "expected to persist.")
+                  partitionsWithError += topicPartition // 加入到出错分区列表
 
                 case _ =>
                   error(s"Error for partition $topicPartition at offset ${currentFetchState.fetchOffset}",
                     partitionData.error.exception)
-                  partitionsWithError += topicPartition
+                  partitionsWithError += topicPartition // 加入到出错分区列表
               }
             }
           }
         }
       }
     }
-
-    if (partitionsWithError.nonEmpty) {
+    if (partitionsWithError.nonEmpty) { // 处理出错分区列表
       handlePartitionsWithErrors(partitionsWithError, "processFetchRequest")
     }
   }
@@ -449,11 +515,11 @@ abstract class AbstractFetcherThread(name: String,
   }
 
   /**
-    * Loop through all partitions, updating their fetch offset and maybe marking them as
-    * truncation completed if their offsetTruncationState indicates truncation completed
-    *
-    * @param fetchOffsets the partitions to update fetch offset and maybe mark truncation complete
-    */
+   * Loop through all partitions, updating their fetch offset and maybe marking them as
+   * truncation completed if their offsetTruncationState indicates truncation completed
+   *
+   * @param fetchOffsets the partitions to update fetch offset and maybe mark truncation complete
+   */
   private def updateFetchOffsetAndMaybeMarkTruncationComplete(fetchOffsets: Map[TopicPartition, OffsetTruncationState]): Unit = {
     val newStates: Map[TopicPartition, PartitionFetchState] = partitionStates.partitionStateMap.asScala
       .map { case (topicPartition, currentFetchState) =>
@@ -475,22 +541,22 @@ abstract class AbstractFetcherThread(name: String,
    *
    * For each topic partition, the offset to truncate to is calculated based on leader's returned
    * epoch and offset:
-   *  -- If the leader replied with undefined epoch offset, we must use the high watermark. This can
-   *  happen if 1) the leader is still using message format older than KAFKA_0_11_0; 2) the follower
-   *  requested leader epoch < the first leader epoch known to the leader.
-   *  -- If the leader replied with the valid offset but undefined leader epoch, we truncate to
-   *  leader's offset if it is lower than follower's Log End Offset. This may happen if the
-   *  leader is on the inter-broker protocol version < KAFKA_2_0_IV0
-   *  -- If the leader replied with leader epoch not known to the follower, we truncate to the
-   *  end offset of the largest epoch that is smaller than the epoch the leader replied with, and
-   *  send OffsetsForLeaderEpochRequest with that leader epoch. In a more rare case, where the
-   *  follower was not tracking epochs smaller than the epoch the leader replied with, we
-   *  truncate the leader's offset (and do not send any more leader epoch requests).
-   *  -- Otherwise, truncate to min(leader's offset, end offset on the follower for epoch that
-   *  leader replied with, follower's Log End Offset).
+   * -- If the leader replied with undefined epoch offset, we must use the high watermark. This can
+   * happen if 1) the leader is still using message format older than KAFKA_0_11_0; 2) the follower
+   * requested leader epoch < the first leader epoch known to the leader.
+   * -- If the leader replied with the valid offset but undefined leader epoch, we truncate to
+   * leader's offset if it is lower than follower's Log End Offset. This may happen if the
+   * leader is on the inter-broker protocol version < KAFKA_2_0_IV0
+   * -- If the leader replied with leader epoch not known to the follower, we truncate to the
+   * end offset of the largest epoch that is smaller than the epoch the leader replied with, and
+   * send OffsetsForLeaderEpochRequest with that leader epoch. In a more rare case, where the
+   * follower was not tracking epochs smaller than the epoch the leader replied with, we
+   * truncate the leader's offset (and do not send any more leader epoch requests).
+   * -- Otherwise, truncate to min(leader's offset, end offset on the follower for epoch that
+   * leader replied with, follower's Log End Offset).
    *
-   * @param tp                    Topic partition
-   * @param leaderEpochOffset     Epoch end offset received from the leader for this topic partition
+   * @param tp                Topic partition
+   * @param leaderEpochOffset Epoch end offset received from the leader for this topic partition
    */
   private def getOffsetTruncationState(tp: TopicPartition,
                                        leaderEpochOffset: EpochEndOffset): OffsetTruncationState = inLock(partitionMapLock) {
@@ -500,13 +566,13 @@ abstract class AbstractFetcherThread(name: String,
       // replica's truncation offset (when the current replica truncates, it forces future
       // replica's partition state to 'truncating' and sets initial offset to its truncation offset)
       warn(s"Based on replica's leader epoch, leader replied with an unknown offset in $tp. " +
-           s"The initial fetch offset ${partitionStates.stateValue(tp).fetchOffset} will be used for truncation.")
+        s"The initial fetch offset ${partitionStates.stateValue(tp).fetchOffset} will be used for truncation.")
       OffsetTruncationState(partitionStates.stateValue(tp).fetchOffset, truncationCompleted = true)
     } else if (leaderEpochOffset.leaderEpoch == UNDEFINED_EPOCH) {
       // either leader or follower or both use inter-broker protocol version < KAFKA_2_0_IV0
       // (version 0 of OffsetForLeaderEpoch request/response)
       warn(s"Leader or replica is on protocol version where leader epoch is not considered in the OffsetsForLeaderEpoch response. " +
-           s"The leader's offset ${leaderEpochOffset.endOffset} will be used for truncation in $tp.")
+        s"The leader's offset ${leaderEpochOffset.endOffset} will be used for truncation in $tp.")
       OffsetTruncationState(min(leaderEpochOffset.endOffset, logEndOffset(tp)), truncationCompleted = true)
     } else {
       val replicaEndOffset = logEndOffset(tp)
@@ -560,9 +626,9 @@ abstract class AbstractFetcherThread(name: String,
       case _: FencedLeaderEpochException =>
         onPartitionFenced(topicPartition, requestEpoch)
 
-      case e @ (_ : UnknownTopicOrPartitionException |
-                _ : UnknownLeaderEpochException |
-                _ : NotLeaderForPartitionException) =>
+      case e@(_: UnknownTopicOrPartitionException |
+              _: UnknownLeaderEpochException |
+              _: NotLeaderForPartitionException) =>
         info(s"Could not fetch offset for $topicPartition due to error: ${e.getMessage}")
         true
 
@@ -692,6 +758,7 @@ abstract class AbstractFetcherThread(name: String,
 object AbstractFetcherThread {
 
   case class ReplicaFetch(partitionData: util.Map[TopicPartition, FetchRequest.PartitionData], fetchRequest: FetchRequest.Builder)
+
   case class ResultWithPartitions[R](result: R, partitionsWithError: Set[TopicPartition])
 
 }
@@ -763,8 +830,13 @@ case class ClientIdTopicPartition(clientId: String, topicPartition: TopicPartiti
   override def toString: String = s"$clientId-$topicPartition"
 }
 
+// 副本状态
 sealed trait ReplicaState
+
+// 当副本执行截断操作时 副本状态被设置成 Truncating
 case object Truncating extends ReplicaState
+
+// 当副本被读取时 副本状态被设置成 Fetching
 case object Fetching extends ReplicaState
 
 object PartitionFetchState {
@@ -787,12 +859,35 @@ case class PartitionFetchState(fetchOffset: Long,
                                delay: Option[DelayedItem],
                                state: ReplicaState) {
 
+  /**
+   * 分区可获取的条件是副本处于Fetching且未被推迟执行
+   *
+   * @return
+   */
   def isReadyForFetch: Boolean = state == Fetching && !isDelayed
 
+  /**
+   * 副本处于ISR的条件 没有lag 用于副本限流 出镜率不高
+   *
+   * @return
+   */
   def isReplicaInSync: Boolean = lag.isDefined && lag.get <= 0
 
+  /**
+   * 分区处于截断中状态的条件: 副本处于Truncating状态且未被推迟执行
+   *
+   * @return
+   */
   def isTruncating: Boolean = state == Truncating && !isDelayed
 
+  /**
+   * 分区被推迟获取数据的条件: 存在未过期的延迟任务
+   * 用于判断是否需要推迟获取对应分区的消息 源码会不断地调整那些不需要推迟的分区的读取顺序 以保证读取的公平性
+   *
+   * 这个公平性是在 partitionStates 字段的类型 PartitionStates 类中实现的 这个类定义在在 clients 工程中 它本质上会接收一组要读取的Topic分区 然后以轮询的方式依次读取这些分区以确保公平性
+   *
+   * @return
+   */
   def isDelayed: Boolean = delay.exists(_.getDelay(TimeUnit.MILLISECONDS) > 0)
 
   override def toString: String = {
