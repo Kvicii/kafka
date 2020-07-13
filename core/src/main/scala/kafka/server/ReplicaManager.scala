@@ -285,7 +285,7 @@ class ReplicaManager(val config: KafkaConfig,
   // allPartitions就承载了 Broker 上保存的所有分区对象数据
   // allPartitions 是分区 Partition 对象实例的容器 HostedPartition 是代表分区状态的类 allPartitions 会将所有分区对象初始化成 Online 状态
   private val allPartitions = new Pool[TopicPartition, HostedPartition](
-    // Partition 类是表征分区的对象 。一个 Partition 实例定义和管理单个分区
+    // Partition 类是表征分区的对象 一个 Partition 实例定义和管理单个分区
     // 它主要是利用 logManager 帮助它完成对分区底层日志的操作 ReplicaManager 类对于分区的管理都是通过 Partition 对象完成的
     valueFactory = Some(tp => HostedPartition.Online(Partition(tp, time, this)))
   )
