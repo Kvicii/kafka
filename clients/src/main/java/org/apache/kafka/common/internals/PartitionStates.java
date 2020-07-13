@@ -63,7 +63,7 @@ public class PartitionStates<S> {
 
     /**
      * Kafka 要读取 5 个分区上的消息: A | B | C | D | E
-     * 如果插入顺序就是 ABCDE 那么首先读取分区 A
+     * 如果插入顺序就是 A -> B -> C -> D -> E 那么首先读取分区 A
      * 一旦 A 被读取之后 为了确保各个分区都有同等机会被读取到 代码需要将 A 插入到分区列表的最后一位
      *
      * @param topicPartition

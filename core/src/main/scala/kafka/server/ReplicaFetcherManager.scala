@@ -6,7 +6,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
  *
- *    http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -27,14 +27,24 @@ class ReplicaFetcherManager(brokerConfig: KafkaConfig,
                             time: Time,
                             threadNamePrefix: Option[String] = None,
                             quotaManager: ReplicationQuotaManager)
-      extends AbstractFetcherManager[ReplicaFetcherThread](
-        name = "ReplicaFetcherManager on broker " + brokerConfig.brokerId,
-        clientId = "Replica",
-        numFetchers = brokerConfig.numReplicaFetchers) {
+  extends AbstractFetcherManager[ReplicaFetcherThread](
+    name = "ReplicaFetcherManager on broker " + brokerConfig.brokerId,
+    clientId = "Replica",
+    numFetchers = brokerConfig.numReplicaFetchers) {
 
+  /**
+   * 创建 ReplicaFetcherThread 实例 供 Follower 副本使用
+   * 线程的名字是根据 fetcherId 和 Broker ID 来确定的
+   * ReplicaManager 类利用 replicaFetcherManager 字段 对所有 Fetcher 线程进行管理 包括线程的创建 | 启动 | 添加 | 停止和移除
+   *
+   * @param fetcherId
+   * @param sourceBroker
+   * @return
+   */
   override def createFetcherThread(fetcherId: Int, sourceBroker: BrokerEndPoint): ReplicaFetcherThread = {
     val prefix = threadNamePrefix.map(tp => s"$tp:").getOrElse("")
     val threadName = s"${prefix}ReplicaFetcherThread-$fetcherId-${sourceBroker.id}"
+    // 创建ReplicaFetcherThread线程实例并返回
     new ReplicaFetcherThread(threadName, fetcherId, sourceBroker, brokerConfig, failedPartitions, replicaManager,
       metrics, time, quotaManager)
   }

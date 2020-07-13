@@ -97,6 +97,7 @@ abstract class AbstractFetcherThread(name: String,
                                      partitionData: FetchData): Option[LogAppendInfo]
 
   /**
+   * 执行截断操作
    *
    * @param topicPartition  要对哪个分区下副本执行截断操作
    * @param truncationState 位移值 + 截断完成与否的布尔值状态 主要作用是告诉 Kafka 要把指定分区下副本截断到哪个位移值
@@ -151,7 +152,8 @@ abstract class AbstractFetcherThread(name: String,
    */
   override def doWork(): Unit = {
     // 需要截断的原因: 分区的 Leader 可能会随时发生变化
-    // 每当有新 Leader 产生时 Follower 副本就必须主动执行截断操作 将自己的本地日志裁剪成与 Leader 一模一样的消息序列 甚至Leader 副本本身也需要执行截断操作 将 LEO 调整到分区高水位处
+    // 每当有新 Leader 产生时 Follower 副本就必须主动执行截断操作 将自己的本地日志裁剪成与 Leader 一模一样的消息序列
+    // 甚至Leader 副本本身也需要执行截断操作 将 LEO 调整到分区高水位处
     maybeTruncate() // 执行副本截断操作
     maybeFetch() // 执行消息获取操作
   }
@@ -161,7 +163,7 @@ abstract class AbstractFetcherThread(name: String,
       // 为partitionStates中的分区构造FetchRequest(即FetchRequest.Builder 对象 构造了该对象后 通过调用build方法就能创建出所需的 FetchRequest 请求对象)
       // partitionStates中保存的是要去获取消息的分区以及对应的状态
       // 这一步的输出结果是两个对象:
-      // 1.ReplicaFetch 要读取的分区核心信息 + FetchRequest.Builder 对象(核心信息: 就是指要读取哪个分区 从哪个位置开始读 最多读多少字节等
+      // 1.ReplicaFetch 要读取的分区核心信息 + FetchRequest.Builder 对象(核心信息: 就是指要读取哪个分区 从哪个位置开始读 最多读多少字节等)
       // 2.另一个对象是一组出错分区
       val ResultWithPartitions(fetchRequestOpt, partitionsWithError) = buildFetch(partitionStates.partitionStateMap.asScala)
       // 处理出错的分区 处理方式主要是将这个分区加入到有序Map末尾 等待后续重试
@@ -185,7 +187,7 @@ abstract class AbstractFetcherThread(name: String,
    *
    * 接收一组分区 为它们调用delayPartitions方法执行延时处理
    * delayPartitions方法会遍历每个给定的分区 并把这些分区依次加入到待读取分区列表的末端 从而实现延时重试操作
-   * 即Kafka处理出错分区的思路就是将这些分区放入到轮询名单的末尾期待稍后重试
+   * 即Kafka处理出错分区的思路就是将这些分区放入到轮询名单的末尾待稍后重试
    *
    * @param partitions
    * @param methodName
@@ -517,6 +519,9 @@ abstract class AbstractFetcherThread(name: String,
   /**
    * Loop through all partitions, updating their fetch offset and maybe marking them as
    * truncation completed if their offsetTruncationState indicates truncation completed
+   *
+   * 将给定的一组分区去刷新Fetcher线程读取它们的位移值以及设置截断完成与否的状态
+   * 当FetcherThread在执行日志截断操作时需要调用该方法(比如如果截断到高水位值 那么updateFetchOffsetAndMaybeMarkTruncationComplete会将这些分区的读取位移值设置为高水位处)
    *
    * @param fetchOffsets the partitions to update fetch offset and maybe mark truncation complete
    */

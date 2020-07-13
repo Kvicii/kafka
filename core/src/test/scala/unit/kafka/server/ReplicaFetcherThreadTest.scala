@@ -1,19 +1,19 @@
 /**
-  * Licensed to the Apache Software Foundation (ASF) under one or more
-  * contributor license agreements.  See the NOTICE file distributed with
-  * this work for additional information regarding copyright ownership.
-  * The ASF licenses this file to You under the Apache License, Version 2.0
-  * (the "License"); you may not use this file except in compliance with
-  * the License.  You may obtain a copy of the License at
-  *
-  * http://www.apache.org/licenses/LICENSE-2.0
-  *
-  * Unless required by applicable law or agreed to in writing, software
-  * distributed under the License is distributed on an "AS IS" BASIS,
-  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-  * See the License for the specific language governing permissions and
-  * limitations under the License.
-  */
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package kafka.server
 
 import java.nio.charset.StandardCharsets
@@ -37,8 +37,8 @@ import org.easymock.{Capture, CaptureType}
 import org.junit.Assert._
 import org.junit.{After, Test}
 
-import scala.jdk.CollectionConverters._
 import scala.collection.{Map, mutable}
+import scala.jdk.CollectionConverters._
 
 class ReplicaFetcherThreadTest {
 
@@ -72,7 +72,7 @@ class ReplicaFetcherThreadTest {
       brokerConfig = config,
       failedPartitions: FailedPartitions,
       replicaMgr = replicaManager,
-      metrics =  new Metrics(),
+      metrics = new Metrics(),
       time = new SystemTime(),
       quota = UnboundedQuota,
       leaderEndpointBlockingSend = None)
@@ -101,7 +101,7 @@ class ReplicaFetcherThreadTest {
     expect(log.highWatermark).andReturn(0).anyTimes()
     expect(log.latestEpoch).andReturn(Some(leaderEpoch)).once()
     expect(log.latestEpoch).andReturn(Some(leaderEpoch)).once()
-    expect(log.latestEpoch).andReturn(None).once()  // t2p1 doesnt support epochs
+    expect(log.latestEpoch).andReturn(None).once() // t2p1 doesnt support epochs
     expect(log.endOffsetForEpoch(leaderEpoch)).andReturn(
       Some(OffsetAndEpoch(0, leaderEpoch))).anyTimes()
     expect(replicaManager.logManager).andReturn(logManager).anyTimes()
@@ -156,9 +156,9 @@ class ReplicaFetcherThreadTest {
   }
 
   /**
-    * Assert that all partitions' states are as expected
-    *
-    */
+   * Assert that all partitions' states are as expected
+   *
+   */
   def assertPartitionStates(fetcher: AbstractFetcherThread,
                             shouldBeReadyForFetch: Boolean,
                             shouldBeTruncatingLog: Boolean,
@@ -199,7 +199,7 @@ class ReplicaFetcherThreadTest {
       brokerConfig = config,
       failedPartitions: FailedPartitions,
       replicaMgr = replicaManager,
-      metrics =  new Metrics(),
+      metrics = new Metrics(),
       time = new SystemTime(),
       quota = null,
       leaderEndpointBlockingSend = Some(mockBlockingSend))
@@ -322,9 +322,9 @@ class ReplicaFetcherThreadTest {
 
     //We should have truncated to the offsets in the response
     assertTrue("Expected " + t1p0 + " to truncate to offset 156 (truncation offsets: " + truncateToCapture.getValues + ")",
-               truncateToCapture.getValues.asScala.contains(156))
+      truncateToCapture.getValues.asScala.contains(156))
     assertTrue("Expected " + t2p1 + " to truncate to offset 172 (truncation offsets: " + truncateToCapture.getValues + ")",
-               truncateToCapture.getValues.asScala.contains(172))
+      truncateToCapture.getValues.asScala.contains(172))
   }
 
   @Test
@@ -362,7 +362,7 @@ class ReplicaFetcherThreadTest {
 
     //Define the offsets for the OffsetsForLeaderEpochResponse, these are used for truncation
     val offsetsReply = Map(t1p0 -> new EpochEndOffset(leaderEpochAtLeader, 156),
-                           t2p1 -> new EpochEndOffset(leaderEpochAtLeader, 202)).asJava
+      t2p1 -> new EpochEndOffset(leaderEpochAtLeader, 202)).asJava
 
     //Create the thread
     val mockNetwork = new ReplicaFetcherMockBlockingSend(offsetsReply, brokerEndPoint, new SystemTime())
@@ -375,10 +375,10 @@ class ReplicaFetcherThreadTest {
 
     //We should have truncated to the offsets in the response
     assertTrue("Expected " + t1p0 + " to truncate to offset 156 (truncation offsets: " + truncateToCapture.getValues + ")",
-               truncateToCapture.getValues.asScala.contains(156))
+      truncateToCapture.getValues.asScala.contains(156))
     assertTrue("Expected " + t2p1 + " to truncate to offset " + initialLEO +
-               " (truncation offsets: " + truncateToCapture.getValues + ")",
-               truncateToCapture.getValues.asScala.contains(initialLEO))
+      " (truncation offsets: " + truncateToCapture.getValues + ")",
+      truncateToCapture.getValues.asScala.contains(initialLEO))
   }
 
   @Test
@@ -448,9 +448,9 @@ class ReplicaFetcherThreadTest {
 
     //We should have truncated to the offsets in the second response
     assertTrue("Expected " + t1p1 + " to truncate to offset 102 (truncation offsets: " + truncateToCapture.getValues + ")",
-               truncateToCapture.getValues.asScala.contains(102))
+      truncateToCapture.getValues.asScala.contains(102))
     assertTrue("Expected " + t1p0 + " to truncate to offset 101 (truncation offsets: " + truncateToCapture.getValues + ")",
-               truncateToCapture.getValues.asScala.contains(101))
+      truncateToCapture.getValues.asScala.contains(101))
   }
 
   @Test
@@ -506,7 +506,7 @@ class ReplicaFetcherThreadTest {
     assertEquals(1, mockNetwork.epochFetchCount)
     assertEquals(1, mockNetwork.fetchCount)
     assertEquals("OffsetsForLeaderEpochRequest version.",
-                 0, mockNetwork.lastUsedOffsetForLeaderEpochVersion)
+      0, mockNetwork.lastUsedOffsetForLeaderEpochVersion)
 
     //Loop 2 we should not fetch epochs
     thread.doWork()
@@ -515,9 +515,9 @@ class ReplicaFetcherThreadTest {
 
     //We should have truncated to the offsets in the first response
     assertTrue("Expected " + t1p0 + " to truncate to offset 155 (truncation offsets: " + truncateToCapture.getValues + ")",
-               truncateToCapture.getValues.asScala.contains(155))
+      truncateToCapture.getValues.asScala.contains(155))
     assertTrue("Expected " + t1p1 + " to truncate to offset 143 (truncation offsets: " + truncateToCapture.getValues + ")",
-               truncateToCapture.getValues.asScala.contains(143))
+      truncateToCapture.getValues.asScala.contains(143))
   }
 
   @Test
@@ -678,7 +678,7 @@ class ReplicaFetcherThreadTest {
   }
 
   @Test
-  def shouldFilterPartitionsMadeLeaderDuringLeaderEpochRequest(): Unit ={
+  def shouldFilterPartitionsMadeLeaderDuringLeaderEpochRequest(): Unit = {
     val config = KafkaConfig.fromProps(TestUtils.createBrokerConfig(1, "localhost:1234"))
     val truncateToCapture: Capture[Long] = newCapture(CaptureType.ALL)
     val initialLEO = 100
@@ -750,7 +750,7 @@ class ReplicaFetcherThreadTest {
       brokerConfig = config,
       failedPartitions = failedPartitions,
       replicaMgr = replicaManager,
-      metrics =  new Metrics(),
+      metrics = new Metrics(),
       time = new SystemTime(),
       quota = null,
       leaderEndpointBlockingSend = Some(mockBlockingSend))
@@ -803,7 +803,7 @@ class ReplicaFetcherThreadTest {
       brokerConfig = config,
       failedPartitions = failedPartitions,
       replicaMgr = replicaManager,
-      metrics =  new Metrics(),
+      metrics = new Metrics(),
       time = new SystemTime(),
       quota = replicaQuota,
       leaderEndpointBlockingSend = Some(mockBlockingSend))

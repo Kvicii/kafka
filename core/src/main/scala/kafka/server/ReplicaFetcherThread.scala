@@ -41,9 +41,11 @@ import scala.jdk.CollectionConverters._
  * 是 Follower 副本端创建的线程 用于向 Leader 副本拉取消息数据
  *
  * @param name                       线程名字
- * @param fetcherId                  Follower拉取的线程ID(即线程编号) 单台Broker允许存在多个ReplicaFetcherThread线程 Broker 端参数 num.replica.fetchers决定了 Kafka 到底创建多少个 Follower 拉取线程
+ * @param fetcherId                  Follower拉取的线程ID(即线程编号) 单台Broker允许存在多个ReplicaFetcherThread线程
+ *                                   Broker 端参数 num.replica.fetchers决定了 Kafka 到底创建多少个 Follower 拉取线程
  * @param sourceBroker               源 Broker 节点信息(源 Broker 是指此线程要从哪个 Broker 上读取数据)
- * @param brokerConfig               KafkaConfig 类实例  封装了 Broker 端所有的参数信息 ReplicaFetcherThread 类通过它来获取 Broker 端指定参数的值
+ * @param brokerConfig               KafkaConfig 类实例  封装了 Broker 端所有的参数信息
+ *                                   ReplicaFetcherThread 类通过它来获取 Broker 端指定参数的值
  * @param failedPartitions           线程处理过程报错的分区集合
  * @param replicaMgr                 副本管理器 该线程类通过副本管理器来获取分区对象 | 副本对象以及它们下面的日志对象
  * @param metrics
