@@ -875,14 +875,19 @@ class Partition(val topicPartition: TopicPartition,
   private def tryCompleteDelayedRequests(): Unit = delayedOperations.checkAndCompleteAll()
 
   def maybeShrinkIsr(): Unit = {
+    // 判断是否需要执行ISR收缩
     val needsIsrUpdate = inReadLock(leaderIsrUpdateLock) {
       needsShrinkIsr()
     }
     val leaderHWIncremented = needsIsrUpdate && inWriteLock(leaderIsrUpdateLock) {
       leaderLogIfLocal match {
+        // 如果是Leader副本
         case Some(leaderLog) =>
+          // 获取不同步的副本Id列表
           val outOfSyncReplicaIds = getOutOfSyncReplicas(replicaLagTimeMaxMs)
+          // 如果存在不同步的副本Id列表
           if (outOfSyncReplicaIds.nonEmpty) {
+            // 计算收缩之后的ISR列表
             val newInSyncReplicaIds = inSyncReplicaIds -- outOfSyncReplicaIds
             assert(newInSyncReplicaIds.nonEmpty)
             info("Shrinking ISR from %s to %s. Leader: (highWatermark: %d, endOffset: %d). Out of sync replicas: %s."
@@ -897,9 +902,11 @@ class Partition(val topicPartition: TopicPartition,
             )
 
             // update ISR in zk and in cache
+            // 更新ZooKeeper中分区的ISR数据以及Broker的元数据缓存中的数据
             shrinkIsr(newInSyncReplicaIds)
 
             // we may need to increment high watermark since ISR could be down to 1
+            // 尝试更新Leader副本的高水位值
             maybeIncrementLeaderHW(leaderLog)
           } else {
             false
