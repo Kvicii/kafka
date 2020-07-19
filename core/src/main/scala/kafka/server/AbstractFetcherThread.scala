@@ -446,7 +446,7 @@ abstract class AbstractFetcherThread(name: String,
                 case Errors.FENCED_LEADER_EPOCH => // 如果Leader Epoch值比Leader所在Broker上的Epoch值要旧
                   if (onPartitionFenced(topicPartition, requestEpoch)) partitionsWithError += topicPartition
 
-                case Errors.NOT_LEADER_FOR_PARTITION => // 如果Leader发生变更
+                case Errors.NOT_LEADER_OR_FOLLOWER => // 如果Leader发生变更
                   debug(s"Remote broker is not the leader for partition $topicPartition, which could indicate " +
                     "that the partition is being moved")
                   partitionsWithError += topicPartition // 加入到出错分区列表
