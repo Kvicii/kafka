@@ -53,22 +53,22 @@ import static org.apache.kafka.common.requests.FetchMetadata.INVALID_SESSION_ID;
 
 /**
  * This wrapper supports all versions of the Fetch API
- * <p>
+ *
  * Possible error codes:
- * <p>
+ *
  * - {@link Errors#OFFSET_OUT_OF_RANGE} If the fetch offset is out of range for a requested partition
  * - {@link Errors#TOPIC_AUTHORIZATION_FAILED} If the user does not have READ access to a requested topic
- * - {@link Errors#REPLICA_NOT_AVAILABLE} If the request is received by a broker which is not a replica
- * - {@link Errors#NOT_LEADER_FOR_PARTITION} If the broker is not a leader and either the provided leader epoch
- * matches the known leader epoch on the broker or is empty
+ * - {@link Errors#REPLICA_NOT_AVAILABLE} If the request is received by a broker with version < 2.6 which is not a replica
+ * - {@link Errors#NOT_LEADER_OR_FOLLOWER} If the broker is not a leader or follower and either the provided leader epoch
+ *     matches the known leader epoch on the broker or is empty
  * - {@link Errors#FENCED_LEADER_EPOCH} If the epoch is lower than the broker's epoch
  * - {@link Errors#UNKNOWN_LEADER_EPOCH} If the epoch is larger than the broker's epoch
  * - {@link Errors#UNKNOWN_TOPIC_OR_PARTITION} If the broker does not have metadata for a topic or partition
  * - {@link Errors#KAFKA_STORAGE_ERROR} If the log directory for one of the requested partitions is offline
  * - {@link Errors#UNSUPPORTED_COMPRESSION_TYPE} If a fetched topic is using a compression type which is
- * not supported by the fetch request version
+ *     not supported by the fetch request version
  * - {@link Errors#CORRUPT_MESSAGE} If corrupt message encountered, e.g. when the broker scans the log to find
- * the fetch offset after the index lookup
+ *     the fetch offset after the index lookup
  * - {@link Errors#UNKNOWN_SERVER_ERROR} For any unexpected errors
  */
 public class FetchResponse<T extends BaseRecords> extends AbstractResponse {
@@ -190,7 +190,7 @@ public class FetchResponse<T extends BaseRecords> extends AbstractResponse {
             new Field(RESPONSES_KEY_NAME, new ArrayOf(FETCH_RESPONSE_TOPIC_V5)));
 
     // V6 bumped up to indicate that the client supports KafkaStorageException. The KafkaStorageException will
-    // be translated to NotLeaderForPartitionException in the response if version <= 5
+    // be translated to NotLeaderOrFollowerException in the response if version <= 5
     private static final Schema FETCH_RESPONSE_V6 = FETCH_RESPONSE_V5;
 
     // V7 added incremental fetch responses and a top-level error code.
@@ -220,10 +220,10 @@ public class FetchResponse<T extends BaseRecords> extends AbstractResponse {
 
 
     public static Schema[] schemaVersions() {
-        return new Schema[]{FETCH_RESPONSE_V0, FETCH_RESPONSE_V1, FETCH_RESPONSE_V2,
-                FETCH_RESPONSE_V3, FETCH_RESPONSE_V4, FETCH_RESPONSE_V5, FETCH_RESPONSE_V6,
-                FETCH_RESPONSE_V7, FETCH_RESPONSE_V8, FETCH_RESPONSE_V9, FETCH_RESPONSE_V10,
-                FETCH_RESPONSE_V11};
+        return new Schema[] {FETCH_RESPONSE_V0, FETCH_RESPONSE_V1, FETCH_RESPONSE_V2,
+            FETCH_RESPONSE_V3, FETCH_RESPONSE_V4, FETCH_RESPONSE_V5, FETCH_RESPONSE_V6,
+            FETCH_RESPONSE_V7, FETCH_RESPONSE_V8, FETCH_RESPONSE_V9, FETCH_RESPONSE_V10,
+            FETCH_RESPONSE_V11};
     }
 
     public static final long INVALID_HIGHWATERMARK = -1L;
@@ -270,27 +270,13 @@ public class FetchResponse<T extends BaseRecords> extends AbstractResponse {
         }
     }
 
-    /**
-     * PartitionData是客户端 clients 工程中 FetchResponse 类定义的嵌套类
-     * FetchResponse 类封装的是 FETCH 请求的 Response 对象
-     * PartitionData 类是一个 POJO 类 保存的是 Response 中单个分区数据拉取的各项数据 包括从该分区的 Leader 副本拉取回来的消息 | 该分区的高水位值和日志起始位移值等
-     *
-     * @param <T>
-     */
     public static final class PartitionData<T extends BaseRecords> {
-        // 错误码
         public final Errors error;
-        // 高水位值
         public final long highWatermark;
-        // 最新LSO值
         public final long lastStableOffset;
-        // 最新Log Start Offset值
         public final long logStartOffset;
-        // Kakfa2.4之后支持部分Follower副本可以对外提供读服务
         public final Optional<Integer> preferredReadReplica;
-        // 该分区对应的已终止事务列表
         public final List<AbortedTransaction> abortedTransactions;
-        // 消息集合 最重要的字段
         public final T records;
 
         public PartitionData(Errors error,
@@ -371,10 +357,10 @@ public class FetchResponse<T extends BaseRecords> extends AbstractResponse {
      * From version 3 or later, the entries in `responseData` should be in the same order as the entries in
      * `FetchRequest.fetchData`.
      *
-     * @param error          The top-level error code.
-     * @param responseData   The fetched data grouped by partition.
-     * @param throttleTimeMs The time in milliseconds that the response was throttled
-     * @param sessionId      The fetch session id.
+     * @param error             The top-level error code.
+     * @param responseData      The fetched data grouped by partition.
+     * @param throttleTimeMs    The time in milliseconds that the response was throttled
+     * @param sessionId         The fetch session id.
      */
     public FetchResponse(Errors error,
                          LinkedHashMap<TopicPartition, PartitionData<T>> responseData,
@@ -400,7 +386,7 @@ public class FetchResponse<T extends BaseRecords> extends AbstractResponse {
                 long lastStableOffset = partitionResponseHeader.getOrElse(LAST_STABLE_OFFSET, INVALID_LAST_STABLE_OFFSET);
                 long logStartOffset = partitionResponseHeader.getOrElse(LOG_START_OFFSET, INVALID_LOG_START_OFFSET);
                 Optional<Integer> preferredReadReplica = Optional.of(
-                        partitionResponseHeader.getOrElse(PREFERRED_READ_REPLICA, INVALID_PREFERRED_REPLICA_ID)
+                    partitionResponseHeader.getOrElse(PREFERRED_READ_REPLICA, INVALID_PREFERRED_REPLICA_ID)
                 ).filter(Predicate.isEqual(INVALID_PREFERRED_REPLICA_ID).negate());
 
                 BaseRecords baseRecords = partitionResponse.getRecords(RECORD_SET_KEY_NAME);
@@ -474,7 +460,7 @@ public class FetchResponse<T extends BaseRecords> extends AbstractResponse {
     public Map<Errors, Integer> errorCounts() {
         Map<Errors, Integer> errorCounts = new HashMap<>();
         responseData.values().forEach(response ->
-                updateErrorCounts(errorCounts, response.error)
+            updateErrorCounts(errorCounts, response.error)
         );
         return errorCounts;
     }
@@ -544,8 +530,8 @@ public class FetchResponse<T extends BaseRecords> extends AbstractResponse {
     }
 
     private static <T extends BaseRecords> Struct toStruct(short version, int throttleTimeMs, Errors error,
-                                                           Iterator<Map.Entry<TopicPartition, PartitionData<T>>> partIterator,
-                                                           int sessionId) {
+                                                       Iterator<Map.Entry<TopicPartition, PartitionData<T>>> partIterator,
+                                                       int sessionId) {
         Struct struct = new Struct(ApiKeys.FETCH.responseSchema(version));
         struct.setIfExists(THROTTLE_TIME_MS, throttleTimeMs);
         struct.setIfExists(ERROR_CODE, error.code());
@@ -553,7 +539,7 @@ public class FetchResponse<T extends BaseRecords> extends AbstractResponse {
         List<FetchRequest.TopicAndPartitionData<PartitionData<T>>> topicsData =
                 FetchRequest.TopicAndPartitionData.batchByTopic(partIterator);
         List<Struct> topicArray = new ArrayList<>();
-        for (FetchRequest.TopicAndPartitionData<PartitionData<T>> topicEntry : topicsData) {
+        for (FetchRequest.TopicAndPartitionData<PartitionData<T>> topicEntry: topicsData) {
             Struct topicData = struct.instance(RESPONSES_KEY_NAME);
             topicData.set(TOPIC_NAME, topicEntry.topic);
             List<Struct> partitionArray = new ArrayList<>();
@@ -563,9 +549,9 @@ public class FetchResponse<T extends BaseRecords> extends AbstractResponse {
                 // If consumer sends FetchRequest V5 or earlier, the client library is not guaranteed to recognize the error code
                 // for KafkaStorageException. In this case the client library will translate KafkaStorageException to
                 // UnknownServerException which is not retriable. We can ensure that consumer will update metadata and retry
-                // by converting the KafkaStorageException to NotLeaderForPartitionException in the response if FetchRequest version <= 5
+                // by converting the KafkaStorageException to NotLeaderOrFollowerException in the response if FetchRequest version <= 5
                 if (errorCode == Errors.KAFKA_STORAGE_ERROR.code() && version <= 5)
-                    errorCode = Errors.NOT_LEADER_FOR_PARTITION.code();
+                    errorCode = Errors.NOT_LEADER_OR_FOLLOWER.code();
                 Struct partitionData = topicData.instance(PARTITIONS_KEY_NAME);
                 Struct partitionDataHeader = partitionData.instance(PARTITION_HEADER_KEY_NAME);
                 partitionDataHeader.set(PARTITION_ID, partitionEntry.getKey());
@@ -604,9 +590,9 @@ public class FetchResponse<T extends BaseRecords> extends AbstractResponse {
     /**
      * Convenience method to find the size of a response.
      *
-     * @param version      The version of the response to use.
-     * @param partIterator The partition iterator.
-     * @return The response size in bytes.
+     * @param version       The version of the response to use.
+     * @param partIterator  The partition iterator.
+     * @return              The response size in bytes.
      */
     public static <T extends BaseRecords> int sizeOf(short version,
                                                      Iterator<Map.Entry<TopicPartition, PartitionData<T>>> partIterator) {
