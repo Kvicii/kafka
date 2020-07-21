@@ -35,7 +35,7 @@ import kafka.network.SocketServer
 import kafka.security.CredentialProvider
 import kafka.utils._
 import kafka.zk.{BrokerInfo, KafkaZkClient}
-import org.apache.kafka.clients.{ApiVersions, ClientDnsLookup, CommonClientConfigs, ManualMetadataUpdater, NetworkClient, NetworkClientUtils}
+import org.apache.kafka.clients._
 import org.apache.kafka.common.internals.ClusterResourceListeners
 import org.apache.kafka.common.message.ControlledShutdownRequestData
 import org.apache.kafka.common.metrics.{JmxReporter, Metrics, MetricsReporter, _}
@@ -284,7 +284,12 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
         logManager = LogManager(config, initialOfflineDirs, zkClient, brokerState, kafkaScheduler, time, brokerTopicStats, logDirFailureChannel)
         logManager.startup()
 
-        metadataCache = new MetadataCache(config.brokerId)
+        // 一旦实例被成功创建 就会被 Kafka 的 4 个组件使用
+        // 1. KafkaApis: 源码入口类 是执行 Kafka 各类请求逻辑的地方 该类大量使用 MetadataCache 中的Topic分区和 Broker 数据 执行Topic相关的判断与比较 以及获取 Broker 信息
+        // 2. AdminManager: 这是 Kafka 定义的专门用于管理Topic的管理器 里面定义了很多与主题相关的方法 同 KafkaApis 类似 它会用到 MetadataCache 中的主题信息和 Broker 数据 以获取Topic和 Broker 列表
+        // 3. ReplicaManager: 副本管理器 它需要获取Topic分区和 Broker 数据 同时还会更新 MetadataCache
+        // 4. TransactionCoordinator: 管理 Kafka 事务的协调者组件 它需要用到 MetadataCache 中的Topic分区的 Leader 副本所在的 Broker 数据 向指定 Broker 发送事务标记
+        metadataCache = new MetadataCache(config.brokerId) // MetadataCache实例化
         // Enable delegation token cache for all SCRAM mechanisms to simplify dynamic update.
         // This keeps the cache up-to-date if new SCRAM mechanisms are enabled dynamically.
         tokenCache = new DelegationTokenCache(ScramMechanism.mechanismNames)
@@ -317,7 +322,8 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
         kafkaController = new KafkaController(config, zkClient, time, metrics, brokerInfo, brokerEpoch, tokenManager, threadNamePrefix)
         kafkaController.startup()
 
-        adminManager = new AdminManager(config, metrics, metadataCache, zkClient)
+        adminManager = new AdminManager(config, metrics,
+          metadataCache, zkClient)
 
         /* start group coordinator */
         // Hardcode Time.SYSTEM for now as some Streams tests fail otherwise, it would be good to fix the underlying issue
