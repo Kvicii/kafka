@@ -19,7 +19,7 @@ package kafka.controller
 
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.locks.ReentrantLock
-import java.util.concurrent.{CountDownLatch, LinkedBlockingQueue}
+import java.util.concurrent.{CountDownLatch, LinkedBlockingQueue, TimeUnit}
 
 import kafka.metrics.{KafkaMetricsGroup, KafkaTimer}
 import kafka.utils.CoreUtils.inLock
@@ -118,7 +118,8 @@ class QueuedEvent(val event: ControllerEvent, val enqueueTimeMs: Long) {
 class ControllerEventManager(controllerId: Int,
                              processor: ControllerEventProcessor,
                              time: Time,
-                             rateAndTimeMetrics: Map[ControllerState, KafkaTimer]) extends KafkaMetricsGroup {
+                             rateAndTimeMetrics: Map[ControllerState, KafkaTimer],
+                             eventQueueTimeTimeoutMs: Long = 300000) extends KafkaMetricsGroup {
 
   import ControllerEventManager._
 
@@ -183,8 +184,7 @@ class ControllerEventManager(controllerId: Int,
     logIdent = s"[ControllerEventThread controllerId=$controllerId] "
 
     override def doWork(): Unit = {
-      // 从事件队列中获取Controller事件 如果事件队列为空 将一直阻塞
-      val dequeued = queue.take()
+      val dequeued = pollFromEventQueue() // 从事件队列中获取Controller事件 如果事件队列为空将一直阻塞 或者默认阻塞5分钟
       dequeued.event match {
         // 当ControllerEventManager关闭时会向事件队列中写入ShutdownEventThread事件显示通知ControllerEventThread线程关闭 此处什么也不需要做 因为关闭ControllerEventThread的逻辑是由外部调用的
         case ShutdownEventThread => // The shutting down of the thread has been initiated at this point. Ignore this event.
@@ -212,4 +212,18 @@ class ControllerEventManager(controllerId: Int,
     }
   }
 
+  private def pollFromEventQueue(): QueuedEvent = {
+    val count = eventQueueTimeHist.count()
+    if (count != 0) {
+      val event = queue.poll(eventQueueTimeTimeoutMs, TimeUnit.MILLISECONDS)
+      if (event == null) {
+        eventQueueTimeHist.clear()
+        queue.take()
+      } else {
+        event
+      }
+    } else {
+      queue.take()
+    }
+  }
 }
