@@ -6,7 +6,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
  *
- *    http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -28,8 +28,8 @@ import kafka.zk.KafkaZkClient
 import org.apache.kafka.common.TopicPartition
 import org.apache.kafka.common.internals.Topic
 import org.apache.kafka.common.message.JoinGroupResponseData.JoinGroupResponseMember
-import org.apache.kafka.common.metrics.Metrics
 import org.apache.kafka.common.message.LeaveGroupRequestData.MemberIdentity
+import org.apache.kafka.common.metrics.Metrics
 import org.apache.kafka.common.metrics.stats.Meter
 import org.apache.kafka.common.protocol.{ApiKeys, Errors}
 import org.apache.kafka.common.requests._
@@ -58,6 +58,7 @@ class GroupCoordinator(val brokerId: Int,
                        val joinPurgatory: DelayedOperationPurgatory[DelayedJoin],
                        time: Time,
                        metrics: Metrics) extends Logging {
+
   import GroupCoordinator._
 
   type JoinCallback = JoinGroupResult => Unit
@@ -225,10 +226,10 @@ class GroupCoordinator(val brokerId: Int,
         if (group.hasStaticMember(groupInstanceId)) {
           updateStaticMemberAndRebalance(group, newMemberId, groupInstanceId, protocols, responseCallback)
         } else if (requireKnownMemberId) {
-            // If member id required (dynamic membership), register the member in the pending member list
-            // and send back a response to call for another join group request with allocated member id.
+          // If member id required (dynamic membership), register the member in the pending member list
+          // and send back a response to call for another join group request with allocated member id.
           debug(s"Dynamic member with unknown member id joins group ${group.groupId} in " +
-              s"${group.currentState} state. Created a new member id $newMemberId and request the member to rejoin with this id.")
+            s"${group.currentState} state. Created a new member id $newMemberId and request the member to rejoin with this id.")
           group.addPendingMember(newMemberId)
           addPendingMemberExpiration(group, newMemberId, sessionTimeoutMs)
           responseCallback(JoinGroupResult(newMemberId, Errors.MEMBER_ID_REQUIRED))
@@ -278,9 +279,9 @@ class GroupCoordinator(val brokerId: Int,
           // given member id doesn't match with the groupInstanceId. Inform duplicate instance to shut down immediately.
           responseCallback(JoinGroupResult(memberId, Errors.FENCED_INSTANCE_ID))
         } else if (!group.has(memberId) || groupInstanceIdNotFound) {
-            // If the dynamic member trying to register with an unrecognized id, or
-            // the static member joins with unknown group instance id, send the response to let
-            // it reset its member id and retry.
+          // If the dynamic member trying to register with an unrecognized id, or
+          // the static member joins with unknown group instance id, send the response to let
+          // it reset its member id and retry.
           responseCallback(JoinGroupResult(memberId, Errors.UNKNOWN_MEMBER_ID))
         } else {
           val member = group.get(memberId)
@@ -458,7 +459,7 @@ class GroupCoordinator(val brokerId: Int,
       case None =>
         groupManager.getGroup(groupId) match {
           case None =>
-            responseCallback(leaveError(Errors.NONE, leavingMembers.map {leavingMember =>
+            responseCallback(leaveError(Errors.NONE, leavingMembers.map { leavingMember =>
               memberLeaveError(leavingMember, Errors.UNKNOWN_MEMBER_ID)
             }))
           case Some(group) =>
@@ -609,9 +610,9 @@ class GroupCoordinator(val brokerId: Int,
                       responseCallback: Errors => Unit): Unit = {
     validateGroupStatus(groupId, ApiKeys.HEARTBEAT).foreach { error =>
       if (error == Errors.COORDINATOR_LOAD_IN_PROGRESS)
-        // the group is still loading, so respond just blindly
-        responseCallback(Errors.NONE)
-      else
+      // the group is still loading, so respond just blindly
+      responseCallback(Errors.NONE)
+        else
         responseCallback(error)
       return
     }
@@ -639,17 +640,17 @@ class GroupCoordinator(val brokerId: Int,
               responseCallback(Errors.UNKNOWN_MEMBER_ID)
 
             case CompletingRebalance =>
-                responseCallback(Errors.REBALANCE_IN_PROGRESS)
+              responseCallback(Errors.REBALANCE_IN_PROGRESS)
 
             case PreparingRebalance =>
-                val member = group.get(memberId)
-                completeAndScheduleNextHeartbeatExpiration(group, member)
-                responseCallback(Errors.REBALANCE_IN_PROGRESS)
+              val member = group.get(memberId)
+              completeAndScheduleNextHeartbeatExpiration(group, member)
+              responseCallback(Errors.REBALANCE_IN_PROGRESS)
 
             case Stable =>
-                val member = group.get(memberId)
-                completeAndScheduleNextHeartbeatExpiration(group, member)
-                responseCallback(Errors.NONE)
+              val member = group.get(memberId)
+              completeAndScheduleNextHeartbeatExpiration(group, member)
+              responseCallback(Errors.NONE)
 
             case Dead =>
               throw new IllegalStateException(s"Reached unexpected condition for Dead group $groupId")
@@ -967,8 +968,8 @@ class GroupCoordinator(val brokerId: Int,
   }
 
   /**
-    * Add pending member expiration to heartbeat purgatory
-    */
+   * Add pending member expiration to heartbeat purgatory
+   */
   private def addPendingMemberExpiration(group: GroupMetadata, pendingMemberId: String, timeoutMs: Long): Unit = {
     val pendingMemberKey = MemberKey(group.groupId, pendingMemberId)
     val delayedHeartbeat = new DelayedHeartbeat(this, group, pendingMemberId, isPending = true, timeoutMs)
@@ -1384,4 +1385,4 @@ case class LeaveMemberResponse(memberId: String,
                                error: Errors)
 
 case class LeaveGroupResult(topLevelError: Errors,
-                            memberResponses : List[LeaveMemberResponse])
+                            memberResponses: List[LeaveMemberResponse])

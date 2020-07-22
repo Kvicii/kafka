@@ -127,7 +127,9 @@ class GroupMetadataManager(brokerId: Int,
 
   recreateGauge("NumOffsets",
     () => groupMetadataCache.values.map { group =>
-      group.inLock { group.numOffsets }
+      group.inLock {
+        group.numOffsets
+      }
     }.sum
   )
 
@@ -182,9 +184,13 @@ class GroupMetadataManager(brokerId: Int,
 
   def currentGroups: Iterable[GroupMetadata] = groupMetadataCache.values
 
-  def isPartitionOwned(partition: Int) = inLock(partitionLock) { ownedPartitions.contains(partition) }
+  def isPartitionOwned(partition: Int) = inLock(partitionLock) {
+    ownedPartitions.contains(partition)
+  }
 
-  def isPartitionLoading(partition: Int) = inLock(partitionLock) { loadingPartitions.contains(partition) }
+  def isPartitionLoading(partition: Int) = inLock(partitionLock) {
+    loadingPartitions.contains(partition)
+  }
 
   def partitionFor(groupId: String): Int = Utils.abs(groupId.hashCode) % groupMetadataTopicPartitionCount
 
@@ -192,7 +198,9 @@ class GroupMetadataManager(brokerId: Int,
 
   def isGroupLoading(groupId: String): Boolean = isPartitionLoading(partitionFor(groupId))
 
-  def isLoading: Boolean = inLock(partitionLock) { loadingPartitions.nonEmpty }
+  def isLoading: Boolean = inLock(partitionLock) {
+    loadingPartitions.nonEmpty
+  }
 
   // return true iff group is owned and the group doesn't exist
   def groupNotExists(groupId: String) = inLock(partitionLock) {
@@ -311,6 +319,7 @@ class GroupMetadataManager(brokerId: Int,
 
           responseCallback(responseError)
         }
+
         appendForGroup(group, groupMetadataRecords, putCacheCallback)
 
       case None =>
@@ -697,7 +706,7 @@ class GroupMetadataManager(brokerId: Int,
         }
 
         val (pendingGroupOffsets, pendingEmptyGroupOffsets) = pendingOffsetsByGroup
-          .partition { case (group, _) => loadedGroups.contains(group)}
+          .partition { case (group, _) => loadedGroups.contains(group) }
 
         loadedGroups.values.foreach { group =>
           val offsets = groupOffsets.getOrElse(group.groupId, Map.empty[TopicPartition, CommitRecordMetadataAndOffset])
@@ -791,12 +800,13 @@ class GroupMetadataManager(brokerId: Int,
   }
 
   /**
-    * This function is used to clean up group offsets given the groups and also a function that performs the offset deletion.
-    * @param groups Groups whose metadata are to be cleaned up
-    * @param selector A function that implements deletion of (all or part of) group offsets. This function is called while
-    *                 a group lock is held, therefore there is no need for the caller to also obtain a group lock.
-    * @return The cumulative number of offsets removed
-    */
+   * This function is used to clean up group offsets given the groups and also a function that performs the offset deletion.
+   *
+   * @param groups   Groups whose metadata are to be cleaned up
+   * @param selector A function that implements deletion of (all or part of) group offsets. This function is called while
+   *                 a group lock is held, therefore there is no need for the caller to also obtain a group lock.
+   * @return The cumulative number of offsets removed
+   */
   def cleanupGroupMetadata(groups: Iterable[GroupMetadata], selector: GroupMetadata => Map[TopicPartition, OffsetAndMetadata]): Int = {
     var offsetsRemoved = 0
 
@@ -811,13 +821,13 @@ class GroupMetadataManager(brokerId: Int,
         (removedOffsets, group.is(Dead), group.generationId)
       }
 
-    val offsetsPartition = partitionFor(groupId)
-    val appendPartition = new TopicPartition(Topic.GROUP_METADATA_TOPIC_NAME, offsetsPartition)
-    getMagic(offsetsPartition) match {
-      case Some(magicValue) =>
-        // We always use CREATE_TIME, like the producer. The conversion to LOG_APPEND_TIME (if necessary) happens automatically.
-        val timestampType = TimestampType.CREATE_TIME
-        val timestamp = time.milliseconds()
+      val offsetsPartition = partitionFor(groupId)
+      val appendPartition = new TopicPartition(Topic.GROUP_METADATA_TOPIC_NAME, offsetsPartition)
+      getMagic(offsetsPartition) match {
+        case Some(magicValue) =>
+          // We always use CREATE_TIME, like the producer. The conversion to LOG_APPEND_TIME (if necessary) happens automatically.
+          val timestampType = TimestampType.CREATE_TIME
+          val timestamp = time.milliseconds()
 
           replicaManager.nonOfflinePartition(appendPartition).foreach { partition =>
             val tombstones = ArrayBuffer.empty[SimpleRecord]
@@ -921,7 +931,7 @@ class GroupMetadataManager(brokerId: Int,
   /*
    * Check if the offset metadata length is valid
    */
-  private def validateOffsetMetadataLength(metadata: String) : Boolean = {
+  private def validateOffsetMetadataLength(metadata: String): Boolean = {
     metadata == null || metadata.length() <= config.maxMetadataSize
   }
 
@@ -945,8 +955,8 @@ class GroupMetadataManager(brokerId: Int,
   /**
    * Check if the replica is local and return the message format version and timestamp
    *
-   * @param   partition  Partition of GroupMetadataTopic
-   * @return  Some(MessageFormatVersion) if replica is local, None otherwise
+   * @param   partition Partition of GroupMetadataTopic
+   * @return Some(MessageFormatVersion) if replica is local, None otherwise
    */
   private def getMagic(partition: Int): Option[Byte] =
     replicaManager.getMagic(new TopicPartition(Topic.GROUP_METADATA_TOPIC_NAME, partition))
@@ -983,13 +993,13 @@ class GroupMetadataManager(brokerId: Int,
  * version is used to evolve the messages within their data types:
  *
  * key version 0:       group consumption offset
- *    -> value version 0:       [offset, metadata, timestamp]
+ * -> value version 0:       [offset, metadata, timestamp]
  *
  * key version 1:       group consumption offset
- *    -> value version 1:       [offset, metadata, commit_timestamp, expire_timestamp]
+ * -> value version 1:       [offset, metadata, commit_timestamp, expire_timestamp]
  *
  * key version 2:       group metadata
- *    -> value version 0:       [protocol_type, generation, protocol, leader, members]
+ * -> value version 0:       [protocol_type, generation, protocol, leader, members]
  */
 object GroupMetadataManager {
   // Metrics names
@@ -1200,7 +1210,7 @@ object GroupMetadataManager {
    * Generates the payload for offset commit message from given offset and metadata
    *
    * @param offsetAndMetadata consumer's current offset and metadata
-   * @param apiVersion the api version
+   * @param apiVersion        the api version
    * @return payload for offset commit message
    */
   def offsetCommitValue(offsetAndMetadata: OffsetAndMetadata,
@@ -1244,8 +1254,8 @@ object GroupMetadataManager {
    * assuming the generation id, selected protocol, leader and member assignment are all available
    *
    * @param groupMetadata current group metadata
-   * @param assignment the assignment for the rebalancing generation
-   * @param apiVersion the api version
+   * @param assignment    the assignment for the rebalancing generation
+   * @param apiVersion    the api version
    * @return payload for offset commit message
    */
   def groupMetadataValue(groupMetadata: GroupMetadata,
@@ -1391,7 +1401,7 @@ object GroupMetadataManager {
    * Decodes the group metadata messages' payload and retrieves its member metadata from it
    *
    * @param buffer input byte-buffer
-   * @param time the time instance to use
+   * @param time   the time instance to use
    * @return a group metadata object from the message
    */
   def readGroupMessageValue(groupId: String, buffer: ByteBuffer, time: Time): GroupMetadata = {
@@ -1577,8 +1587,9 @@ case class GroupTopicPartition(group: String, topicPartition: TopicPartition) {
     "[%s,%s,%d]".format(group, topicPartition.topic, topicPartition.partition)
 }
 
-trait BaseKey{
+trait BaseKey {
   def version: Short
+
   def key: Any
 }
 
