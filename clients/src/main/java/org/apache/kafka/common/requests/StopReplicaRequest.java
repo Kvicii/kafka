@@ -213,8 +213,7 @@ public class StopReplicaRequest extends AbstractControlRequest {
         return new StopReplicaRequest(ApiKeys.STOP_REPLICA.parseRequest(version, buffer), version);
     }
 
-    // Visible for testing
-    StopReplicaRequestData data() {
+    public StopReplicaRequestData data() {
         return data;
     }
 

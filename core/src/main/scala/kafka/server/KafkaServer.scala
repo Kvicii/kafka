@@ -6,7 +6,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *    http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -35,7 +35,7 @@ import kafka.network.SocketServer
 import kafka.security.CredentialProvider
 import kafka.utils._
 import kafka.zk.{BrokerInfo, KafkaZkClient}
-import org.apache.kafka.clients._
+import org.apache.kafka.clients.{ApiVersions, ClientDnsLookup, ManualMetadataUpdater, NetworkClient, NetworkClientUtils, CommonClientConfigs}
 import org.apache.kafka.common.internals.ClusterResourceListeners
 import org.apache.kafka.common.message.ControlledShutdownRequestData
 import org.apache.kafka.common.metrics.{JmxReporter, Metrics, MetricsReporter, _}
@@ -50,8 +50,8 @@ import org.apache.kafka.common.{ClusterResource, Endpoint, Node}
 import org.apache.kafka.server.authorizer.Authorizer
 import org.apache.zookeeper.client.ZKClientConfig
 
-import scala.collection.{Map, Seq, mutable}
 import scala.jdk.CollectionConverters._
+import scala.collection.{Map, Seq, mutable}
 
 object KafkaServer {
   // Copy the subset of properties that are relevant to Logs
@@ -168,6 +168,8 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
 
   var kafkaController: KafkaController = null
 
+  var brokerToControllerChannelManager: BrokerToControllerChannelManager = null
+
   var kafkaScheduler: KafkaScheduler = null
 
   var metadataCache: MetadataCache = null
@@ -196,7 +198,7 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
 
   newGauge("BrokerState", () => brokerState.currentState)
   newGauge("ClusterId", () => clusterId)
-  newGauge("yammer-metrics-count", () => KafkaYammerMetrics.defaultRegistry.allMetrics.size)
+  newGauge("yammer-metrics-count", () =>  KafkaYammerMetrics.defaultRegistry.allMetrics.size)
 
   val linuxIoMetricsCollector = new LinuxIoMetricsCollector("/proc", time, logger.underlying)
 
@@ -243,7 +245,7 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
         if (preloadedBrokerMetadataCheckpoint.clusterId.isDefined && preloadedBrokerMetadataCheckpoint.clusterId.get != clusterId)
           throw new InconsistentClusterIdException(
             s"The Cluster ID ${clusterId} doesn't match stored clusterId ${preloadedBrokerMetadataCheckpoint.clusterId} in meta.properties. " +
-              s"The broker is trying to join the wrong cluster. Configured zookeeper.connect may be wrong.")
+            s"The broker is trying to join the wrong cluster. Configured zookeeper.connect may be wrong.")
 
         /* generate brokerId */
         config.brokerId = getOrGenerateBrokerId(preloadedBrokerMetadataCheckpoint)
@@ -284,12 +286,7 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
         logManager = LogManager(config, initialOfflineDirs, zkClient, brokerState, kafkaScheduler, time, brokerTopicStats, logDirFailureChannel)
         logManager.startup()
 
-        // 一旦实例被成功创建 就会被 Kafka 的 4 个组件使用
-        // 1. KafkaApis: 源码入口类 是执行 Kafka 各类请求逻辑的地方 该类大量使用 MetadataCache 中的Topic分区和 Broker 数据 执行Topic相关的判断与比较 以及获取 Broker 信息
-        // 2. AdminManager: 这是 Kafka 定义的专门用于管理Topic的管理器 里面定义了很多与主题相关的方法 同 KafkaApis 类似 它会用到 MetadataCache 中的主题信息和 Broker 数据 以获取Topic和 Broker 列表
-        // 3. ReplicaManager: 副本管理器 它需要获取Topic分区和 Broker 数据 同时还会更新 MetadataCache
-        // 4. TransactionCoordinator: 管理 Kafka 事务的协调者组件 它需要用到 MetadataCache 中的Topic分区的 Leader 副本所在的 Broker 数据 向指定 Broker 发送事务标记
-        metadataCache = new MetadataCache(config.brokerId) // MetadataCache实例化
+        metadataCache = new MetadataCache(config.brokerId)
         // Enable delegation token cache for all SCRAM mechanisms to simplify dynamic update.
         // This keeps the cache up-to-date if new SCRAM mechanisms are enabled dynamically.
         tokenCache = new DelegationTokenCache(ScramMechanism.mechanismNames)
@@ -298,10 +295,7 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
         // Create and start the socket server acceptor threads so that the bound port is known.
         // Delay starting processors until the end of the initialization sequence to ensure
         // that credentials have been loaded before processing authentications.
-        // 创建SocketServer组件
         socketServer = new SocketServer(config, metrics, time, credentialProvider)
-        // 启动SocketServer 但不启动Processor线程
-        // 不能在启动SocketServer的同时启动Processor线程的原因: 监听器启动完成后还要进行安全认证方面的检查
         socketServer.startup(startProcessingRequests = false)
 
         /* start replica manager */
@@ -315,15 +309,16 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
         checkpointBrokerMetadata(BrokerMetadata(config.brokerId, Some(clusterId)))
 
         /* start token manager */
-        tokenManager = new DelegationTokenManager(config, tokenCache, time, zkClient)
+        tokenManager = new DelegationTokenManager(config, tokenCache, time , zkClient)
         tokenManager.startup()
 
         /* start kafka controller */
         kafkaController = new KafkaController(config, zkClient, time, metrics, brokerInfo, brokerEpoch, tokenManager, threadNamePrefix)
         kafkaController.startup()
 
-        adminManager = new AdminManager(config, metrics,
-          metadataCache, zkClient)
+        brokerToControllerChannelManager = new BrokerToControllerChannelManager(metadataCache, time, metrics, config, threadNamePrefix)
+
+        adminManager = new AdminManager(config, metrics, metadataCache, zkClient)
 
         /* start group coordinator */
         // Hardcode Time.SYSTEM for now as some Streams tests fail otherwise, it would be good to fix the underlying issue
@@ -377,15 +372,14 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
 
         /* start dynamic config manager */
         dynamicConfigHandlers = Map[String, ConfigHandler](ConfigType.Topic -> new TopicConfigHandler(logManager, config, quotaManagers, kafkaController),
-          ConfigType.Client -> new ClientIdConfigHandler(quotaManagers),
-          ConfigType.User -> new UserConfigHandler(quotaManagers, credentialProvider),
-          ConfigType.Broker -> new BrokerConfigHandler(config, quotaManagers))
+                                                           ConfigType.Client -> new ClientIdConfigHandler(quotaManagers),
+                                                           ConfigType.User -> new UserConfigHandler(quotaManagers, credentialProvider),
+                                                           ConfigType.Broker -> new BrokerConfigHandler(config, quotaManagers))
 
         // Create the config manager. start listening to notifications
         dynamicConfigManager = new DynamicConfigManager(zkClient, dynamicConfigHandlers)
         dynamicConfigManager.startup()
 
-        // 启动 Data Plane 和 Control Plane 的所有线程
         socketServer.startProcessingRequests(authorizerFutures)
 
         brokerState.newState(RunningAsBroker)
@@ -419,7 +413,7 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
     }
   }
 
-  private[server] def createKafkaMetricsContext(): KafkaMetricsContext = {
+  private[server] def createKafkaMetricsContext() : KafkaMetricsContext = {
     val contextLabels = new util.HashMap[String, Object]
     contextLabels.put(KAFKA_CLUSTER_ID, clusterId)
     contextLabels.put(KAFKA_BROKER_ID, config.brokerId.toString)
@@ -604,10 +598,10 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
                 else 3
 
               val controlledShutdownRequest = new ControlledShutdownRequest.Builder(
-                new ControlledShutdownRequestData()
-                  .setBrokerId(config.brokerId)
-                  .setBrokerEpoch(kafkaController.brokerEpoch),
-                controlledShutdownApiVersion)
+                  new ControlledShutdownRequestData()
+                    .setBrokerId(config.brokerId)
+                    .setBrokerEpoch(kafkaController.brokerEpoch),
+                    controlledShutdownApiVersion)
               val request = networkClient.newClientRequest(node(prevController).idString, controlledShutdownRequest,
                 time.milliseconds(), true)
               val clientResponse = NetworkClientUtils.sendAndReceive(networkClient, request, time)
@@ -627,7 +621,7 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
                 ioException = true
                 warn("Error during controlled shutdown, possibly because leader movement took longer than the " +
                   s"configured controller.socket.timeout.ms and/or request.timeout.ms: ${ioe.getMessage}")
-              // ignore and try again
+                // ignore and try again
             }
           }
           if (!shutdownSucceeded) {
@@ -796,7 +790,7 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
 
       throw new InconsistentBrokerMetadataException(
         s"BrokerMetadata is not consistent across log.dirs. This could happen if multiple brokers shared a log directory (log.dirs) " +
-          s"or partial data was manually copied from another broker. Found:\n${builder.toString()}"
+        s"or partial data was manually copied from another broker. Found:\n${builder.toString()}"
       )
     } else if (brokerMetadataSet.size == 1)
       (brokerMetadataSet.last, offlineDirs)
@@ -833,21 +827,21 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
     if (brokerId >= 0 && brokerMetadata.brokerId >= 0 && brokerMetadata.brokerId != brokerId)
       throw new InconsistentBrokerIdException(
         s"Configured broker.id $brokerId doesn't match stored broker.id ${brokerMetadata.brokerId} in meta.properties. " +
-          s"If you moved your data, make sure your configured broker.id matches. " +
-          s"If you intend to create a new broker, you should remove all data in your data directories (log.dirs).")
+        s"If you moved your data, make sure your configured broker.id matches. " +
+        s"If you intend to create a new broker, you should remove all data in your data directories (log.dirs).")
     else if (brokerMetadata.brokerId < 0 && brokerId < 0 && config.brokerIdGenerationEnable) // generate a new brokerId from Zookeeper
-    generateBrokerId
-      else if (brokerMetadata.brokerId >= 0) // pick broker.id from meta.properties
-    brokerMetadata.brokerId
-      else
+      generateBrokerId
+    else if (brokerMetadata.brokerId >= 0) // pick broker.id from meta.properties
+      brokerMetadata.brokerId
+    else
       brokerId
   }
 
   /**
-   * Return a sequence id generated by updating the broker sequence id path in ZK.
-   * Users can provide brokerId in the config. To avoid conflicts between ZK generated
-   * sequence id and configured brokerId, we increment the generated sequence id by KafkaConfig.MaxReservedBrokerId.
-   */
+    * Return a sequence id generated by updating the broker sequence id path in ZK.
+    * Users can provide brokerId in the config. To avoid conflicts between ZK generated
+    * sequence id and configured brokerId, we increment the generated sequence id by KafkaConfig.MaxReservedBrokerId.
+    */
   private def generateBrokerId: Int = {
     try {
       zkClient.generateBrokerSequenceId() + config.maxReservedBrokerId
