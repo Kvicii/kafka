@@ -224,12 +224,12 @@ case object SegmentDeletion extends LogStartOffsetIncrementReason {
  *                       - user's DeleteRecordsRequest
  *                       - broker's log retention
  *                       - broker's log truncation
- *                                            The logStartOffset is used to decide the following:
+ *                         The logStartOffset is used to decide the following:
  *                       - Log deletion. LogSegment whose nextOffset <= log's logStartOffset can be deleted.
- *                                            It may trigger log rolling if the active segment is deleted.
+ *                         It may trigger log rolling if the active segment is deleted.
  *                       - Earliest offset of the log in response to ListOffsetRequest. To avoid OffsetOutOfRange exception after user seeks to earliest offset,
- *                                            we make sure that logStartOffset <= log's highWatermark
- *                                            Other activities such as log cleaning are not affected by logStartOffset.
+ *                         we make sure that logStartOffset <= log's highWatermark
+ *                         Other activities such as log cleaning are not affected by logStartOffset.
  * @param recoveryPoint                       The offset at which to begin recovery--i.e. the first offset which has not been flushed to disk
  * @param scheduler                           The thread pool scheduler used for background actions
  * @param brokerTopicStats                    Container for Broker Topic Yammer Metrics
@@ -888,7 +888,9 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径 To
           // we had an invalid message, delete all remaining log
           // 如果有无效的消息导致被截断的字节数不为0 直接删除剩余的日志段对象
           warn(s"Corruption found in segment ${segment.baseOffset}, truncating to offset ${segment.readNextOffset}")
-          removeAndDeleteSegments(unflushed.toList, asyncDelete = true)
+          removeAndDeleteSegments(unflushed.toList,
+            asyncDelete = true,
+            reason = LogRecovery)
           truncated = true
         }
       }
@@ -900,7 +902,9 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径 To
       if (logEndOffset < logStartOffset) {
         warn(s"Deleting all segments because logEndOffset ($logEndOffset) is smaller than logStartOffset ($logStartOffset). " +
           "This could happen if segment files were deleted from the file system.")
-        removeAndDeleteSegments(logSegments, asyncDelete = true)
+        removeAndDeleteSegments(logSegments,
+          asyncDelete = true,
+          reason = LogRecovery)
       }
     }
 
@@ -1828,16 +1832,18 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径 To
    *                  (if there is one) and returns true iff it is deletable
    * @return The number of segments deleted
    */
-  private def deleteOldSegments(predicate: (LogSegment, Option[LogSegment]) => Boolean) = {
+  private def deleteOldSegments(predicate: (LogSegment, Option[LogSegment]) => Boolean,
+                                reason: SegmentDeletionReason): Int = {
     lock synchronized {
       val deletable = deletableSegments(predicate) // 确定哪些日志段可以删除
-      if (deletable.nonEmpty) {
-        deleteSegments(deletable) // 实际删除
-      } else 0
+      if (deletable.nonEmpty)
+        deleteSegments(deletable, reason) // 实际删除
+      else
+        0
     }
   }
 
-  private def deleteSegments(deletable: Iterable[LogSegment]): Int = {
+  private def deleteSegments(deletable: Iterable[LogSegment], reason: SegmentDeletionReason): Int = {
     maybeHandleIOException(s"Error while deleting segments for $topicPartition in dir ${dir.getParent}") {
       val numToDelete = deletable.size
       if (numToDelete > 0) {
@@ -1851,7 +1857,7 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径 To
           // Log Start Offset 值是整个 Log 对象对外可见消息的最小位移值
           // 如果我们删除了日志段对象很有可能对外可见消息的范围发生了变化
           // 此时自然要看一下是否需要更新 Log Start Offset 值 这就是 deleteSegments 方法最后要更新 Log Start Offset 值的原因
-          removeAndDeleteSegments(deletable, asyncDelete = true) // 删除给定的日志段对象以及底层的物理文件
+          removeAndDeleteSegments(deletable, asyncDelete = true, reason) // 删除给定的日志段对象以及底层的物理文件
           maybeIncrementLogStartOffset(segments.firstEntry.getValue.baseOffset, SegmentDeletion) // 尝试更新日志的Log Start Offset值
         }
       }
@@ -1924,58 +1930,35 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径 To
     if (config.retentionMs < 0) return 0
     val startMs = time.milliseconds
 
-    def shouldDelete(segment: LogSegment, nextSegmentOpt: Option[LogSegment]) = {
-      if (startMs - segment.largestTimestamp > config.retentionMs) {
-        segment.largestRecordTimestamp match {
-          case Some(ts) =>
-            info(s"Segment with base offset ${segment.baseOffset} will be deleted due to" +
-              s" retention time ${config.retentionMs}ms breach based on the largest record timestamp from the" +
-              s" segment, which is $ts")
-          case None =>
-            info(s"Segment with base offset ${segment.baseOffset} will be deleted due to" +
-              s" retention time ${config.retentionMs}ms breach based on the last modified timestamp from the" +
-              s" segment, which is ${segment.lastModified}")
-        }
-        true
-      } else {
-        false
-      }
+    def shouldDelete(segment: LogSegment, nextSegmentOpt: Option[LogSegment]): Boolean = {
+      startMs - segment.largestTimestamp > config.retentionMs
     }
 
-    deleteOldSegments(shouldDelete)
+    deleteOldSegments(shouldDelete, RetentionMsBreach)
   }
 
   private def deleteRetentionSizeBreachedSegments(): Int = {
     if (config.retentionSize < 0 || size < config.retentionSize) return 0
     var diff = size - config.retentionSize
 
-    def shouldDelete(segment: LogSegment, nextSegmentOpt: Option[LogSegment]) = {
+    def shouldDelete(segment: LogSegment, nextSegmentOpt: Option[LogSegment]): Boolean = {
       if (diff - segment.size >= 0) {
         diff -= segment.size
-        info(s"Segment with base offset ${segment.baseOffset} will be deleted due to" +
-          s" retention size ${config.retentionSize} bytes breach. Segment size is" +
-          s" ${segment.size} and total log size after deletion will be ${size - diff}")
         true
       } else {
         false
       }
     }
 
-    deleteOldSegments(shouldDelete)
+    deleteOldSegments(shouldDelete, RetentionSizeBreach)
   }
 
   private def deleteLogStartOffsetBreachedSegments(): Int = {
-    def shouldDelete(segment: LogSegment, nextSegmentOpt: Option[LogSegment]) = {
-      if (nextSegmentOpt.exists(_.baseOffset <= logStartOffset)) {
-        info(s"Segment with base offset ${segment.baseOffset} will be deleted due to" +
-          s" startOffset breach. logStartOffset is $logStartOffset")
-        true
-      } else {
-        false
-      }
+    def shouldDelete(segment: LogSegment, nextSegmentOpt: Option[LogSegment]): Boolean = {
+      nextSegmentOpt.exists(_.baseOffset <= logStartOffset)
     }
 
-    deleteOldSegments(shouldDelete)
+    deleteOldSegments(shouldDelete, StartOffsetBreach)
   }
 
   def isFuture: Boolean = dir.getName.endsWith(Log.FutureDirSuffix)
@@ -2066,7 +2049,7 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径 To
               s"=max(provided offset = $expectedNextOffset, LEO = $logEndOffset) while it already " +
               s"exists and is active with size 0. Size of time index: ${activeSegment.timeIndex.entries}," +
               s" size of offset index: ${activeSegment.offsetIndex.entries}.")
-            removeAndDeleteSegments(Seq(activeSegment), asyncDelete = true)
+            removeAndDeleteSegments(Seq(activeSegment), asyncDelete = true, LogRoll)
           } else {
             throw new KafkaException(s"Trying to roll a new log segment for topic partition $topicPartition with start offset $newOffset" +
               s" =max(provided offset = $expectedNextOffset, LEO = $logEndOffset) while it already exists. Existing " +
@@ -2198,7 +2181,7 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径 To
       lock synchronized {
         checkIfMemoryMappedBufferClosed()
         producerExpireCheck.cancel(true)
-        removeAndDeleteSegments(logSegments, asyncDelete = false)
+        removeAndDeleteSegments(logSegments, asyncDelete = false, LogDeletion)
         leaderEpochCache.foreach(_.clear())
         Utils.delete(dir)
         // File handlers will be closed if this log is deleted
@@ -2249,7 +2232,7 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径 To
             truncateFullyAndStartAt(targetOffset)
           } else {
             val deletable = logSegments.filter(segment => segment.baseOffset > targetOffset)
-            removeAndDeleteSegments(deletable, asyncDelete = true)
+            removeAndDeleteSegments(deletable, asyncDelete = true, LogTruncation)
             activeSegment.truncateTo(targetOffset)
             updateLogEndOffset(targetOffset)
             updateLogStartOffset(math.min(targetOffset, this.logStartOffset))
@@ -2272,7 +2255,7 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径 To
       debug(s"Truncate and start at offset $newOffset")
       lock synchronized {
         checkIfMemoryMappedBufferClosed()
-        removeAndDeleteSegments(logSegments, asyncDelete = true)
+        removeAndDeleteSegments(logSegments, asyncDelete = true, LogTruncation)
         addSegment(LogSegment.open(dir,
           baseOffset = newOffset,
           config = config,
@@ -2374,13 +2357,16 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径 To
    * @param segments    The log segments to schedule for deletion
    * @param asyncDelete Whether the segment files should be deleted asynchronously
    */
-  private def removeAndDeleteSegments(segments: Iterable[LogSegment], asyncDelete: Boolean): Unit = {
+  private def removeAndDeleteSegments(segments: Iterable[LogSegment],
+                                      asyncDelete: Boolean,
+                                      reason: SegmentDeletionReason): Unit = {
     if (segments.nonEmpty) {
       lock synchronized {
         // As most callers hold an iterator into the `segments` collection and `removeAndDeleteSegment` mutates it by
         // removing the deleted segment, we should force materialization of the iterator here, so that results of the
         // iteration remain valid and deterministic.
         val toDelete = segments.toList
+        reason.logReason(this, toDelete)
         toDelete.foreach { segment =>
           this.segments.remove(segment.baseOffset)
         }
@@ -2403,18 +2389,16 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径 To
     segments.foreach(_.changeFileSuffixes("", Log.DeletedFileSuffix))
 
     def deleteSegments(): Unit = {
-      info(s"Deleting segments ${segments.mkString(",")}")
+      info(s"Deleting segment files ${segments.mkString(",")}")
       maybeHandleIOException(s"Error while deleting segments for $topicPartition in dir ${dir.getParent}") {
         segments.foreach(_.deleteIfExists())
       }
     }
 
-    if (asyncDelete) {
-      info(s"Scheduling segments for deletion ${segments.mkString(",")}")
+    if (asyncDelete)
       scheduler.schedule("delete-file", () => deleteSegments(), delay = config.fileDeleteDelayMs)
-    } else {
+    else
       deleteSegments()
-    }
   }
 
   /**
@@ -2843,5 +2827,66 @@ object LogMetricNames {
 
   def allMetricNames: List[String] = {
     List(NumLogSegments, LogStartOffset, LogEndOffset, Size)
+  }
+}
+
+sealed trait SegmentDeletionReason {
+  def logReason(log: Log, toDelete: List[LogSegment]): Unit
+}
+
+case object RetentionMsBreach extends SegmentDeletionReason {
+  override def logReason(log: Log, toDelete: List[LogSegment]): Unit = {
+    val retentionMs = log.config.retentionMs
+    toDelete.foreach { segment =>
+      segment.largestRecordTimestamp match {
+        case Some(_) =>
+          log.info(s"Deleting segment $segment due to retention time ${retentionMs}ms breach based on the largest " +
+            s"record timestamp in the segment")
+        case None =>
+          log.info(s"Deleting segment $segment due to retention time ${retentionMs}ms breach based on the " +
+            s"last modified time of the segment")
+      }
+    }
+  }
+}
+
+case object RetentionSizeBreach extends SegmentDeletionReason {
+  override def logReason(log: Log, toDelete: List[LogSegment]): Unit = {
+    var size = log.size
+    toDelete.foreach { segment =>
+      size -= segment.size
+      log.info(s"Deleting segment $segment due to retention size ${log.config.retentionSize} breach. Log size " +
+        s"after deletion will be $size.")
+    }
+  }
+}
+
+case object StartOffsetBreach extends SegmentDeletionReason {
+  override def logReason(log: Log, toDelete: List[LogSegment]): Unit = {
+    log.info(s"Deleting segments due to log start offset ${log.logStartOffset} breach: ${toDelete.mkString(",")}")
+  }
+}
+
+case object LogRecovery extends SegmentDeletionReason {
+  override def logReason(log: Log, toDelete: List[LogSegment]): Unit = {
+    log.info(s"Deleting segments as part of log recovery: ${toDelete.mkString(",")}")
+  }
+}
+
+case object LogTruncation extends SegmentDeletionReason {
+  override def logReason(log: Log, toDelete: List[LogSegment]): Unit = {
+    log.info(s"Deleting segments as part of log truncation: ${toDelete.mkString(",")}")
+  }
+}
+
+case object LogRoll extends SegmentDeletionReason {
+  override def logReason(log: Log, toDelete: List[LogSegment]): Unit = {
+    log.info(s"Deleting segments as part of log roll: ${toDelete.mkString(",")}")
+  }
+}
+
+case object LogDeletion extends SegmentDeletionReason {
+  override def logReason(log: Log, toDelete: List[LogSegment]): Unit = {
+    log.info(s"Deleting segments as the log has been deleted: ${toDelete.mkString(",")}")
   }
 }

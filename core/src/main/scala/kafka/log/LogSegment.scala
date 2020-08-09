@@ -467,7 +467,7 @@ class LogSegment private[log](val log: FileRecords, // 实际保存Kafka消息�
   override def toString: String = "LogSegment(baseOffset=" + baseOffset +
     ", size=" + size +
     ", lastModifiedTime=" + lastModified +
-    ", largestTime=" + largestTimestamp +
+    ", largestRecordTimestamp=" + largestRecordTimestamp +
     ")"
 
   /**

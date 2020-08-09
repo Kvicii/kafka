@@ -354,8 +354,7 @@ object BrokerTopicStats {
 /**
  * 定义Broker端与TOpic相关的监控指标的管理操作
  */
-class BrokerTopicStats {
-
+class BrokerTopicStats extends Logging {
   import BrokerTopicStats._
 
   private val stats = new Pool[String, BrokerTopicMetrics](Some(valueFactory))
@@ -432,6 +431,7 @@ class BrokerTopicStats {
   def close(): Unit = {
     allTopicsStats.close()
     stats.values.foreach(_.close())
-  }
 
+    info("Broker and topic stats closed")
+  }
 }
