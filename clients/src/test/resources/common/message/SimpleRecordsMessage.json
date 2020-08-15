@@ -12,20 +12,15 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-
 {
-  "apiKey": 25,
-  "type": "response",
-  "name": "AddOffsetsToTxnResponse",
-  // Starting in version 1, on quota violation brokers send out responses before throttling.
-  //
-  // Version 2 adds the support for new error code PRODUCER_FENCED.
-  "validVersions": "0-2",
-  "flexibleVersions": "none",
+  "name": "SimpleRecordsMessage",
+  "type": "header",
+  "validVersions": "0-1",
+  "flexibleVersions": "1+",
   "fields": [
-    { "name": "ThrottleTimeMs", "type": "int32", "versions": "0+",
-      "about": "Duration in milliseconds for which the request was throttled due to a quota violation, or zero if the request did not violate any quota." },
-    { "name": "ErrorCode", "type": "int16", "versions": "0+",
-      "about": "The response error code, or 0 if there was no error." }
+      { "name": "Topic", "type": "string", "versions": "0+", "entityType": "topicName",
+        "about": "The topic name." },
+      { "name": "RecordSet", "type": "records", "versions": "0+",
+        "nullableVersions": "0+", "about": "The record data." }
   ]
 }
