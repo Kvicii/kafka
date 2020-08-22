@@ -370,7 +370,9 @@ object RequestChannel extends Logging {
  * @param metricNamePrefix
  * @param time
  */
-class RequestChannel(val queueSize: Int, val metricNamePrefix: String, time: Time) extends KafkaMetricsGroup {
+class RequestChannel(val queueSize: Int,
+                     val metricNamePrefix: String,
+                     time: Time) extends KafkaMetricsGroup {
 
   import RequestChannel._
 

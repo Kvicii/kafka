@@ -84,7 +84,7 @@ object DynamicBrokerConfig {
     DynamicListenerConfig.ReconfigurableConfigs ++
     SocketServer.ReconfigurableConfigs
 
-  private val ClusterLevelListenerConfigs = Set(KafkaConfig.MaxConnectionsProp)
+  private val ClusterLevelListenerConfigs = Set(KafkaConfig.MaxConnectionsProp, KafkaConfig.MaxConnectionCreationRateProp)
   private val PerBrokerConfigs = (DynamicSecurityConfigs ++ DynamicListenerConfig.ReconfigurableConfigs).diff(
     ClusterLevelListenerConfigs)
   private val ListenerMechanismConfigs = Set(KafkaConfig.SaslJaasConfigProp,
@@ -859,7 +859,8 @@ object DynamicListenerConfig {
     KafkaConfig.SaslLoginRefreshBufferSecondsProp,
 
     // Connection limit configs
-    KafkaConfig.MaxConnectionsProp
+    KafkaConfig.MaxConnectionsProp,
+    KafkaConfig.MaxConnectionCreationRateProp
   )
 }
 
