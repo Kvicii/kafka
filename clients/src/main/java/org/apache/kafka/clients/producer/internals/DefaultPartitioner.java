@@ -16,7 +16,9 @@
  */
 package org.apache.kafka.clients.producer.internals;
 
+import org.apache.kafka.clients.producer.Callback;
 import org.apache.kafka.clients.producer.Partitioner;
+import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.Cluster;
 import org.apache.kafka.common.utils.Utils;
 
@@ -28,24 +30,27 @@ import java.util.Map;
  * <li>If a partition is specified in the record, use it
  * <li>If no partition is specified but a key is present choose a partition based on a hash of the key
  * <li>If no partition or key is present choose the sticky partition that changes when the batch is full.
- * 
+ * <p>
  * See KIP-480 for details about sticky partitioning.
+ * <p>
+ * Kafka Producer默认分区器
  */
 public class DefaultPartitioner implements Partitioner {
 
     private final StickyPartitionCache stickyPartitionCache = new StickyPartitionCache();
 
-    public void configure(Map<String, ?> configs) {}
+    public void configure(Map<String, ?> configs) {
+    }
 
     /**
      * Compute the partition for the given record.
      *
-     * @param topic The topic name
-     * @param key The key to partition on (or null if no key)
-     * @param keyBytes serialized key to partition on (or null if no key)
-     * @param value The value to partition on or null
+     * @param topic      The topic name
+     * @param key        The key to partition on (or null if no key)
+     * @param keyBytes   serialized key to partition on (or null if no key)
+     * @param value      The value to partition on or null
      * @param valueBytes serialized value to partition on or null
-     * @param cluster The current cluster metadata
+     * @param cluster    The current cluster metadata
      */
     public int partition(String topic, Object key, byte[] keyBytes, Object value, byte[] valueBytes, Cluster cluster) {
         return partition(topic, key, keyBytes, value, valueBytes, cluster, cluster.partitionsForTopic(topic).size());
@@ -53,28 +58,33 @@ public class DefaultPartitioner implements Partitioner {
 
     /**
      * Compute the partition for the given record.
+     * <p>
+     * 计算选择的分区号:
+     * 1.包含提供了key 与 没有提供key使用轮询的逻辑
+     * 2.如果提供了分区号直接使用的逻辑位于 {@link org.apache.kafka.clients.producer.KafkaProducer#partition(ProducerRecord, byte[], byte[], Cluster)}
      *
-     * @param topic The topic name
+     * @param topic         The topic name
      * @param numPartitions The number of partitions of the given {@code topic}
-     * @param key The key to partition on (or null if no key)
-     * @param keyBytes serialized key to partition on (or null if no key)
-     * @param value The value to partition on or null
-     * @param valueBytes serialized value to partition on or null
-     * @param cluster The current cluster metadata
+     * @param key           The key to partition on (or null if no key)
+     * @param keyBytes      serialized key to partition on (or null if no key)
+     * @param value         The value to partition on or null
+     * @param valueBytes    serialized value to partition on or null
+     * @param cluster       The current cluster metadata
      */
     public int partition(String topic, Object key, byte[] keyBytes, Object value, byte[] valueBytes, Cluster cluster,
                          int numPartitions) {
-        if (keyBytes == null) {
+        if (keyBytes == null) { // 没有提供key 使用轮询方式选择分区
             return stickyPartitionCache.partition(topic, cluster);
         }
         // hash the keyBytes to choose a partition
-        return Utils.toPositive(Utils.murmur2(keyBytes)) % numPartitions;
+        return Utils.toPositive(Utils.murmur2(keyBytes)) % numPartitions;   // 提供了key key的散列值对分区数量取模选择分区
     }
 
-    public void close() {}
-    
+    public void close() {
+    }
+
     /**
-     * If a batch completed for the current sticky partition, change the sticky partition. 
+     * If a batch completed for the current sticky partition, change the sticky partition.
      * Alternately, if no sticky partition has been determined, set one.
      */
     public void onNewBatch(String topic, Cluster cluster, int prevPartition) {

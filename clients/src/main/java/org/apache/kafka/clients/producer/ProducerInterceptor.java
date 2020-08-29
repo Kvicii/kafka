@@ -60,6 +60,9 @@ public interface ProducerInterceptor<K, V> extends Configurable {
      * modify the record and throwing an exception. If one of the interceptors in the list throws an exception from onSend(), the exception
      * is caught, logged, and the next interceptor is called with the record returned by the last successful interceptor in the list,
      * or otherwise the client.
+     * <p>
+     * 封装进KafkaProducer.send方法中 即运行在用户主线程中 Producer确保在消息被序列化以计算分区前调用该方法
+     * 用户可以在该方法中对消息做任何操作 但最好保证不要修改消息所属的topic和分区 否则会影响目标分区的计算
      *
      * @param record the record from client or the record returned by the previous interceptor in the chain of interceptors.
      * @return producer record to send to topic/partition
@@ -77,19 +80,23 @@ public interface ProducerInterceptor<K, V> extends Configurable {
      * <p>
      * This method will generally execute in the background I/O thread, so the implementation should be reasonably fast.
      * Otherwise, sending of messages from other threads could be delayed.
+     * <p>
+     * 会在消息被应答之前或消息发送失败时调用 并且通常都是在Producer回调逻辑触发之前
+     * onAcknowledgement运行在Producer的IO线程中 因此不要在该方法中放入很重的逻辑 否则会拖慢Producer的消息发送效率
      *
-     * @param metadata The metadata for the record that was sent (i.e. the partition and offset).
-     *                 If an error occurred, metadata will contain only valid topic and maybe
-     *                 partition. If partition is not given in ProducerRecord and an error occurs
-     *                 before partition gets assigned, then partition will be set to RecordMetadata.NO_PARTITION.
-     *                 The metadata may be null if the client passed null record to
-     *                 {@link org.apache.kafka.clients.producer.KafkaProducer#send(ProducerRecord)}.
+     * @param metadata  The metadata for the record that was sent (i.e. the partition and offset).
+     *                  If an error occurred, metadata will contain only valid topic and maybe
+     *                  partition. If partition is not given in ProducerRecord and an error occurs
+     *                  before partition gets assigned, then partition will be set to RecordMetadata.NO_PARTITION.
+     *                  The metadata may be null if the client passed null record to
+     *                  {@link org.apache.kafka.clients.producer.KafkaProducer#send(ProducerRecord)}.
      * @param exception The exception thrown during processing of this record. Null if no error occurred.
      */
     public void onAcknowledgement(RecordMetadata metadata, Exception exception);
 
     /**
      * This is called when interceptor is closed
+     * 关闭Interceptor 主要用于执行一些资源清理工作
      */
     public void close();
 }

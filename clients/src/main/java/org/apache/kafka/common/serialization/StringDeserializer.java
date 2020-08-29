@@ -22,8 +22,8 @@ import java.io.UnsupportedEncodingException;
 import java.util.Map;
 
 /**
- *  String encoding defaults to UTF8 and can be customized by setting the property key.deserializer.encoding,
- *  value.deserializer.encoding or deserializer.encoding. The first two take precedence over the last.
+ * String encoding defaults to UTF8 and can be customized by setting the property key.deserializer.encoding,
+ * value.deserializer.encoding or deserializer.encoding. The first two take precedence over the last.
  */
 public class StringDeserializer implements Deserializer<String> {
     private String encoding = "UTF8";

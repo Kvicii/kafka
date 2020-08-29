@@ -21,11 +21,11 @@ public class IntegerSerializer implements Serializer<Integer> {
         if (data == null)
             return null;
 
-        return new byte[] {
-            (byte) (data >>> 24),
-            (byte) (data >>> 16),
-            (byte) (data >>> 8),
-            data.byteValue()
+        return new byte[]{
+                (byte) (data >>> 24),
+                (byte) (data >>> 16),
+                (byte) (data >>> 8),
+                data.byteValue()
         };
     }
 }

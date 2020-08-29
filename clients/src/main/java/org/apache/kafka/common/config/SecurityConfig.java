@@ -23,7 +23,7 @@ public class SecurityConfig {
 
     public static final String SECURITY_PROVIDERS_CONFIG = "security.providers";
     public static final String SECURITY_PROVIDERS_DOC = "A list of configurable creator classes each returning a provider" +
-        " implementing security algorithms. These classes should implement the" +
-        " <code>org.apache.kafka.common.security.auth.SecurityProviderCreator</code> interface.";
+            " implementing security algorithms. These classes should implement the" +
+            " <code>org.apache.kafka.common.security.auth.SecurityProviderCreator</code> interface.";
 
 }

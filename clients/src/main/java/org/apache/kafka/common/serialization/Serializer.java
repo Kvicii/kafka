@@ -23,19 +23,29 @@ import java.util.Map;
 
 /**
  * An interface for converting objects to bytes.
- *
+ * <p>
  * A class that implements this interface is expected to have a constructor with no parameter.
  * <p>
  * Implement {@link org.apache.kafka.common.ClusterResourceListener} to receive cluster metadata once it's available. Please see the class documentation for ClusterResourceListener for more information.
+ * <p>
+ * Kafka Producer 序列化器
+ * <p>
+ * 将对象转换为byte数组的接口
+ * 该接口的实现类需要提供无参构造器
  *
  * @param <T> Type to be serialized from.
+ *            从哪个类型转换
  */
 public interface Serializer<T> extends Closeable {
 
     /**
      * Configure this class.
+     * <p>
+     * 类的配置信息
+     *
      * @param configs configs in key/value pairs
-     * @param isKey whether is for key or value
+     * @param isKey   whether is for key or value
+     *                key的序列化还是value的序列化
      */
     default void configure(Map<String, ?> configs, boolean isKey) {
         // intentionally left blank
@@ -43,19 +53,23 @@ public interface Serializer<T> extends Closeable {
 
     /**
      * Convert {@code data} into a byte array.
+     * <p>
+     * 将对象转换为字节数组
      *
      * @param topic topic associated with data
-     * @param data typed data
-     * @return serialized bytes
+     *              Topic名称
+     * @param data  typed data
+     *              需要转换的对象
+     * @return serialized bytes. 序列化的字节数组
      */
     byte[] serialize(String topic, T data);
 
     /**
      * Convert {@code data} into a byte array.
      *
-     * @param topic topic associated with data
+     * @param topic   topic associated with data
      * @param headers headers associated with the record
-     * @param data typed data
+     * @param data    typed data
      * @return serialized bytes
      */
     default byte[] serialize(String topic, Headers headers, T data) {
@@ -64,6 +78,9 @@ public interface Serializer<T> extends Closeable {
 
     /**
      * Close this serializer.
+     * <p>
+     * 关闭序列化器
+     * 该方法需要提供幂等性 因为可能调用多次
      * <p>
      * This method must be idempotent as it may be called multiple times.
      */

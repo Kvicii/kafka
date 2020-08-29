@@ -23,11 +23,11 @@ public class FloatSerializer implements Serializer<Float> {
             return null;
 
         long bits = Float.floatToRawIntBits(data);
-        return new byte[] {
-            (byte) (bits >>> 24),
-            (byte) (bits >>> 16),
-            (byte) (bits >>> 8),
-            (byte) bits
+        return new byte[]{
+                (byte) (bits >>> 24),
+                (byte) (bits >>> 16),
+                (byte) (bits >>> 8),
+                (byte) bits
         };
     }
 }

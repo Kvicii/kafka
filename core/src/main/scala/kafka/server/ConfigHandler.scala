@@ -6,7 +6,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
  *
- *    http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -38,17 +38,17 @@ import scala.collection.Seq
 import scala.util.Try
 
 /**
-  * The ConfigHandler is used to process config change notifications received by the DynamicConfigManager
-  */
+ * The ConfigHandler is used to process config change notifications received by the DynamicConfigManager
+ */
 trait ConfigHandler {
   def processConfigChanges(entityName: String, value: Properties): Unit
 }
 
 /**
-  * The TopicConfigHandler will process topic config changes in ZK.
-  * The callback provides the topic name and the full properties set read from ZK
-  */
-class TopicConfigHandler(private val logManager: LogManager, kafkaConfig: KafkaConfig, val quotas: QuotaManagers, kafkaController: KafkaController) extends ConfigHandler with Logging  {
+ * The TopicConfigHandler will process topic config changes in ZK.
+ * The callback provides the topic name and the full properties set read from ZK
+ */
+class TopicConfigHandler(private val logManager: LogManager, kafkaConfig: KafkaConfig, val quotas: QuotaManagers, kafkaController: KafkaController) extends ConfigHandler with Logging {
 
   private def updateLogConfig(topic: String,
                               topicConfig: Properties,
@@ -82,6 +82,7 @@ class TopicConfigHandler(private val logManager: LogManager, kafkaConfig: KafkaC
         debug(s"Removing $prop from broker ${kafkaConfig.brokerId} for topic $topic")
       }
     }
+
     updateThrottledList(LogConfig.LeaderReplicationThrottledReplicasProp, quotas.leader)
     updateThrottledList(LogConfig.FollowerReplicationThrottledReplicasProp, quotas.follower)
 
@@ -185,10 +186,10 @@ class UserConfigHandler(private val quotaManagers: QuotaManagers, val credential
 }
 
 /**
-  * The BrokerConfigHandler will process individual broker config changes in ZK.
-  * The callback provides the brokerId and the full properties set read from ZK.
-  * This implementation reports the overrides to the respective ReplicationQuotaManager objects
-  */
+ * The BrokerConfigHandler will process individual broker config changes in ZK.
+ * The callback provides the brokerId and the full properties set read from ZK.
+ * This implementation reports the overrides to the respective ReplicationQuotaManager objects
+ */
 class BrokerConfigHandler(private val brokerConfig: KafkaConfig,
                           private val quotaManagers: QuotaManagers) extends ConfigHandler with Logging {
 
@@ -199,6 +200,7 @@ class BrokerConfigHandler(private val brokerConfig: KafkaConfig,
       else
         DefaultReplicationThrottledRate
     }
+
     if (brokerId == ConfigEntityName.Default)
       brokerConfig.dynamicConfig.updateDefaultConfig(properties)
     else if (brokerConfig.brokerId == brokerId.trim.toInt) {
@@ -221,6 +223,7 @@ object ThrottledReplicaListValidator extends Validator {
         throw new ConfigException(name, value,
           s"$name must be the literal '*' or a list of replicas in the following format: [partitionId]:[brokerId],[partitionId]:[brokerId],...")
     }
+
     value match {
       case scalaSeq: Seq[_] => check(scalaSeq)
       case javaList: java.util.List[_] => check(javaList.asScala)

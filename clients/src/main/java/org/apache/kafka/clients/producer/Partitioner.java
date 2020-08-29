@@ -23,9 +23,14 @@ import java.io.Closeable;
 
 /**
  * Partitioner Interface
- * 生产者程序 自定义分区策略时需要实现的接口
+ * Kafka Producer分区器 自定义分区策略时需要实现的接口
+ * <p>
+ * 1.如果KafkaRecord提供了分区号 则使用record提供的分区号
+ * 2.如果KafkaRecord没有提供分区号 则使用key的序列化后的值的hash值对分区数量取模
+ * 3.如果KafkaRecord没有提供分区号 也没有提供key 则使用轮询的方式分配分区号
+ * ----a.会首先在可用的分区中分配分区号
+ * ----b.如果没有可用的分区 则在该主题所有分区中分配分区号
  */
-
 public interface Partitioner extends Configurable, Closeable {
 
     /**

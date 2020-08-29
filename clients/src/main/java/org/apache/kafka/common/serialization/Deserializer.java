@@ -23,7 +23,7 @@ import java.util.Map;
 
 /**
  * An interface for converting bytes to objects.
- *
+ * <p>
  * A class that implements this interface is expected to have a constructor with no parameters.
  * <p>
  * Implement {@link org.apache.kafka.common.ClusterResourceListener} to receive cluster metadata once it's available. Please see the class documentation for ClusterResourceListener for more information.
@@ -34,8 +34,9 @@ public interface Deserializer<T> extends Closeable {
 
     /**
      * Configure this class.
+     *
      * @param configs configs in key/value pairs
-     * @param isKey whether is for key or value
+     * @param isKey   whether is for key or value
      */
     default void configure(Map<String, ?> configs, boolean isKey) {
         // intentionally left blank
@@ -43,17 +44,19 @@ public interface Deserializer<T> extends Closeable {
 
     /**
      * Deserialize a record value from a byte array into a value or object.
+     *
      * @param topic topic associated with the data
-     * @param data serialized bytes; may be null; implementations are recommended to handle null by returning a value or null rather than throwing an exception.
+     * @param data  serialized bytes; may be null; implementations are recommended to handle null by returning a value or null rather than throwing an exception.
      * @return deserialized typed data; may be null
      */
     T deserialize(String topic, byte[] data);
 
     /**
      * Deserialize a record value from a byte array into a value or object.
-     * @param topic topic associated with the data
+     *
+     * @param topic   topic associated with the data
      * @param headers headers associated with the record; may be empty.
-     * @param data serialized bytes; may be null; implementations are recommended to handle null by returning a value or null rather than throwing an exception.
+     * @param data    serialized bytes; may be null; implementations are recommended to handle null by returning a value or null rather than throwing an exception.
      * @return deserialized typed data; may be null
      */
     default T deserialize(String topic, Headers headers, byte[] data) {

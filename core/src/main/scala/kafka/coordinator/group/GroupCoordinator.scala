@@ -611,8 +611,8 @@ class GroupCoordinator(val brokerId: Int,
     validateGroupStatus(groupId, ApiKeys.HEARTBEAT).foreach { error =>
       if (error == Errors.COORDINATOR_LOAD_IN_PROGRESS)
       // the group is still loading, so respond just blindly
-      responseCallback(Errors.NONE)
-        else
+        responseCallback(Errors.NONE)
+      else
         responseCallback(error)
       return
     }
@@ -949,6 +949,8 @@ class GroupCoordinator(val brokerId: Int,
 
   /**
    * Complete existing DelayedHeartbeats for the given member and schedule the next one
+   *
+   * 如果心跳超期 broker coordinator 会把消费者从 group 中移除 并触发 rebalance
    */
   private def completeAndScheduleNextHeartbeatExpiration(group: GroupMetadata, member: MemberMetadata): Unit = {
     completeAndScheduleNextExpiration(group, member, member.sessionTimeoutMs)
@@ -962,6 +964,7 @@ class GroupCoordinator(val brokerId: Int,
     heartbeatPurgatory.checkAndComplete(memberKey)
 
     // reschedule the next heartbeat expiration deadline
+    // 计算心跳截止时刻
     member.heartbeatSatisfied = false
     val delayedHeartbeat = new DelayedHeartbeat(this, group, member.memberId, isPending = false, timeoutMs)
     heartbeatPurgatory.tryCompleteElseWatch(delayedHeartbeat, Seq(memberKey))
@@ -1240,6 +1243,13 @@ class GroupCoordinator(val brokerId: Int,
     }
   }
 
+  /**
+   * 心跳过期
+   *
+   * @param group
+   * @param memberId
+   * @param isPending
+   */
   def onExpireHeartbeat(group: GroupMetadata, memberId: String, isPending: Boolean): Unit = {
     group.inLock {
       if (group.is(Dead)) {
