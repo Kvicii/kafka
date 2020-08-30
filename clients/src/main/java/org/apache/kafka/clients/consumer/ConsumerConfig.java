@@ -69,6 +69,8 @@ public class ConsumerConfig extends AbstractConfig {
 
     /**
      * <code>max.poll.records</code>
+     * <p>
+     * 一次调用poll()方法返回的记录最大数量
      */
     public static final String MAX_POLL_RECORDS_CONFIG = "max.poll.records";
     private static final String MAX_POLL_RECORDS_DOC = "The maximum number of records returned in a single call to poll().";
@@ -76,20 +78,28 @@ public class ConsumerConfig extends AbstractConfig {
     /**
      * <code>max.poll.interval.ms</code>
      * <p>
-     * Consumer 和 Rebalance 相关的配置参数2
+     * 使用消费组的时候调用poll()方法的时间间隔 该条目指定了消费者调用poll()方法的最大时间间隔
+     * 如果在此时间内消费者没有调用poll()方法 则broker认为消费者失败 触发再平衡 将分区分配给消费组中其他消费者
      */
     public static final String MAX_POLL_INTERVAL_MS_CONFIG = CommonClientConfigs.MAX_POLL_INTERVAL_MS_CONFIG;
     private static final String MAX_POLL_INTERVAL_MS_DOC = CommonClientConfigs.MAX_POLL_INTERVAL_MS_DOC;
     /**
      * <code>session.timeout.ms</code>
      * <p>
-     * Consumer 和 Rebalance 相关的配置参数1
+     * 当使用Kafka的消费组的时候 消费者周期性地向broker发送心跳表明自己的存在
+     * 如果经过该超时时间还没有收到消费者的心跳 则broker将消费者从消费组移除 并启动重平衡
+     * 该值必须在broker配置group.min.session.timeout.ms 和group.max.session.timeout.ms 之间
      */
     public static final String SESSION_TIMEOUT_MS_CONFIG = CommonClientConfigs.SESSION_TIMEOUT_MS_CONFIG;
     private static final String SESSION_TIMEOUT_MS_DOC = CommonClientConfigs.SESSION_TIMEOUT_MS_DOC;
 
     /**
      * <code>heartbeat.interval.ms</code>
+     * <p>
+     * 当使用消费组的时候 该条目指定消费者向消费者协调器发送心跳的时间间隔
+     * 心跳是为了确保消费者会话的活跃状态 同时在消费者加入或离开消费组的时候方便进行重平衡
+     * 该条目的值必须小于session.timeout.ms 也不应该高于session.timeout.ms 的1/3
+     * 可以将其调整得更小 以控制正常重新平衡的预期时间
      */
     public static final String HEARTBEAT_INTERVAL_MS_CONFIG = CommonClientConfigs.HEARTBEAT_INTERVAL_MS_CONFIG;
     private static final String HEARTBEAT_INTERVAL_MS_DOC = CommonClientConfigs.HEARTBEAT_INTERVAL_MS_DOC;
@@ -120,12 +130,16 @@ public class ConsumerConfig extends AbstractConfig {
 
     /**
      * <code>auto.commit.interval.ms</code>
+     * <p>
+     * 如果设置了enable.auto.commit 的值为true 则该值定义了消费者偏移量向Kafka提交的频率
      */
     public static final String AUTO_COMMIT_INTERVAL_MS_CONFIG = "auto.commit.interval.ms";
     private static final String AUTO_COMMIT_INTERVAL_MS_DOC = "The frequency in milliseconds that the consumer offsets are auto-committed to Kafka if <code>enable.auto.commit</code> is set to <code>true</code>.";
 
     /**
      * <code>partition.assignment.strategy</code>
+     * <p>
+     * 当使用消费组的时候 分区分配策略的类名
      */
     public static final String PARTITION_ASSIGNMENT_STRATEGY_CONFIG = "partition.assignment.strategy";
     private static final String PARTITION_ASSIGNMENT_STRATEGY_DOC = "A list of class names or class types, " +
@@ -155,12 +169,21 @@ public class ConsumerConfig extends AbstractConfig {
 
     /**
      * <code>fetch.min.bytes</code>
+     * <p>
+     * 服务器对每个拉取消息的请求返回的数据量最小值 如果数据量达不到这个值 请求等待 以让更多的数据累积
+     * 达到这个值之后响应请求
+     * 默认设置是1个字节 表示只要有一个字节的数据 就立即响应请求 或者在没有数据的时候请求超时
+     * 将该值设置为大一点儿的数字 会让服务器等待稍微长一点儿的时间以累积数据 如此则可以提高服务器的吞吐量 代价是额外的延迟时间
      */
     public static final String FETCH_MIN_BYTES_CONFIG = "fetch.min.bytes";
     private static final String FETCH_MIN_BYTES_DOC = "The minimum amount of data the server should return for a fetch request. If insufficient data is available the request will wait for that much data to accumulate before answering the request. The default setting of 1 byte means that fetch requests are answered as soon as a single byte of data is available or the fetch request times out waiting for data to arrive. Setting this to something greater than 1 will cause the server to wait for larger amounts of data to accumulate which can improve server throughput a bit at the cost of some additional latency.";
 
     /**
      * <code>fetch.max.bytes</code>
+     * <p>
+     * 服务器给单个拉取请求返回的最大数据量 消费者批量拉取消息 如果第一个非空消息批次的值比该值大 消息批也会返回 以让消费者可以接着进行
+     * 即该配置并不是绝对的最大值 broker可以接收的消息批最大值通过 message.max.bytes(broker配置) 或max.message.bytes(主题配置)来指定
+     * 需要注意的是 消费者一般会并发拉取请求
      */
     public static final String FETCH_MAX_BYTES_CONFIG = "fetch.max.bytes";
     private static final String FETCH_MAX_BYTES_DOC = "The maximum amount of data the server should return for a fetch request. " +
@@ -172,6 +195,9 @@ public class ConsumerConfig extends AbstractConfig {
 
     /**
      * <code>fetch.max.wait.ms</code>
+     * <p>
+     * 如果服务器端的数据量达不到fetch.min.bytes 的话 服务器端不能立即响应请求
+     * 该时间用于配置服务器端阻塞请求的最大时长
      */
     public static final String FETCH_MAX_WAIT_MS_CONFIG = "fetch.max.wait.ms";
     private static final String FETCH_MAX_WAIT_MS_DOC = "The maximum amount of time the server will block before answering the fetch request if there isn't sufficient data to immediately satisfy the requirement given by fetch.min.bytes.";
@@ -183,6 +209,10 @@ public class ConsumerConfig extends AbstractConfig {
 
     /**
      * <code>max.partition.fetch.bytes</code>
+     * <p>
+     * 对每个分区 服务器返回的最大数量 消费者按批次拉取数据 如果非空分区的第一个记录大于这个值 批处理依然可以返回
+     * 以保证消费者可以进行下去 broker接收批的大小由message.max.bytes(broker参数)或max.message.bytes(主题参数)指定
+     * fetch.max.bytes 用于限制消费者单次请求的数据量
      */
     public static final String MAX_PARTITION_FETCH_BYTES_CONFIG = "max.partition.fetch.bytes";
     private static final String MAX_PARTITION_FETCH_BYTES_DOC = "The maximum amount of data per-partition the server " +
@@ -195,11 +225,15 @@ public class ConsumerConfig extends AbstractConfig {
 
     /**
      * <code>send.buffer.bytes</code>
+     * <p>
+     * 用于TCP发送数据时使用的缓冲大小(SO_SNDBUF) -1表示使用OS默认的缓冲区大小
      */
     public static final String SEND_BUFFER_CONFIG = CommonClientConfigs.SEND_BUFFER_CONFIG;
 
     /**
      * <code>receive.buffer.bytes</code>
+     * <p>
+     * TCP连接接收数据的缓存(SO_RCVBUF) -1表示使用操作系统的默认值
      */
     public static final String RECEIVE_BUFFER_CONFIG = CommonClientConfigs.RECEIVE_BUFFER_CONFIG;
 
@@ -218,26 +252,37 @@ public class ConsumerConfig extends AbstractConfig {
 
     /**
      * <code>reconnect.backoff.ms</code>
+     * <p>
+     * 重新连接主机的等待时间 避免了重连的密集循环 该等待时间应用于该客户端到broker的所有连接
      */
     public static final String RECONNECT_BACKOFF_MS_CONFIG = CommonClientConfigs.RECONNECT_BACKOFF_MS_CONFIG;
 
     /**
      * <code>reconnect.backoff.max.ms</code>
+     * <p>
+     * 重新连接到反复连接失败的broker时要等待的最长时间 (以毫秒为单位) 如果提供此选项 则对于每个连续的连接失败
+     * 每台主机的退避将成倍增加 直至达到此最大值 在计算退避增量之后 添加20％的随机抖动以避免连接风暴
      */
     public static final String RECONNECT_BACKOFF_MAX_MS_CONFIG = CommonClientConfigs.RECONNECT_BACKOFF_MAX_MS_CONFIG;
 
     /**
      * <code>retry.backoff.ms</code>
+     * <p>
+     * 在发生失败的时候如果需要重试 则该配置表示客户端等待多长时间再发起重试 该时间的存在避免了密集循环
      */
     public static final String RETRY_BACKOFF_MS_CONFIG = CommonClientConfigs.RETRY_BACKOFF_MS_CONFIG;
 
     /**
      * <code>metrics.sample.window.ms</code>
+     * <p>
+     * 计算指标样本的时间窗口
      */
     public static final String METRICS_SAMPLE_WINDOW_MS_CONFIG = CommonClientConfigs.METRICS_SAMPLE_WINDOW_MS_CONFIG;
 
     /**
      * <code>metrics.num.samples</code>
+     * <p>
+     * 用于计算指标而维护的样本数量
      */
     public static final String METRICS_NUM_SAMPLES_CONFIG = CommonClientConfigs.METRICS_NUM_SAMPLES_CONFIG;
 
@@ -253,6 +298,9 @@ public class ConsumerConfig extends AbstractConfig {
 
     /**
      * <code>check.crcs</code>
+     * <p>
+     * 自动计算被消费的消息的CRC32校验值 可以确保在传输过程中或磁盘存储过程中消息没有被破坏
+     * 它会增加额外的负载 在追求极致性能的场合禁用
      */
     public static final String CHECK_CRCS_CONFIG = "check.crcs";
     private static final String CHECK_CRCS_DOC = "Automatically check the CRC32 of the records consumed. This ensures no on-the-wire or on-disk corruption to the messages occurred. This check adds some overhead, so it may be disabled in cases seeking extreme performance.";
@@ -286,11 +334,15 @@ public class ConsumerConfig extends AbstractConfig {
 
     /**
      * <code>connections.max.idle.ms</code>
+     * <p>
+     * 在这个时间之后关闭空闲的连接
      */
     public static final String CONNECTIONS_MAX_IDLE_MS_CONFIG = CommonClientConfigs.CONNECTIONS_MAX_IDLE_MS_CONFIG;
 
     /**
      * <code>request.timeout.ms</code>
+     * <p>
+     * 客户端等待服务端响应的最大时间 如果该时间超时 则客户端要么重新发起请求 要么如果重试耗尽 请求失败
      */
     public static final String REQUEST_TIMEOUT_MS_CONFIG = CommonClientConfigs.REQUEST_TIMEOUT_MS_CONFIG;
     private static final String REQUEST_TIMEOUT_MS_DOC = CommonClientConfigs.REQUEST_TIMEOUT_MS_DOC;
@@ -302,6 +354,10 @@ public class ConsumerConfig extends AbstractConfig {
 
     /**
      * <code>interceptor.classes</code>
+     * <p>
+     * 拦截器类的列表 默认没有拦截器 拦截器是消费者的拦截器
+     * 该拦截器需要实现 {@link org.apache.kafka.clients.consumer.ConsumerInterceptor} 接口
+     * 拦截器可用于对消费者接收到的消息进行拦截处理
      */
     public static final String INTERCEPTOR_CLASSES_CONFIG = "interceptor.classes";
     public static final String INTERCEPTOR_CLASSES_DOC = "A list of classes to use as interceptors. "
@@ -311,6 +367,8 @@ public class ConsumerConfig extends AbstractConfig {
 
     /**
      * <code>exclude.internal.topics</code>
+     * <p>
+     * 是否内部主题应该暴露给消费者 如果该条目设置为true 则只能先订阅再拉取
      */
     public static final String EXCLUDE_INTERNAL_TOPICS_CONFIG = "exclude.internal.topics";
     private static final String EXCLUDE_INTERNAL_TOPICS_DOC = "Whether internal topics matching a subscribed pattern should " +
@@ -342,6 +400,14 @@ public class ConsumerConfig extends AbstractConfig {
 
     /**
      * <code>isolation.level</code>
+     * <p>
+     * 控制如何读取事务消息 如果设置了read_committed 消费者的poll()方法只会返回已经提交的事务消息
+     * 如果设置了read_uncommitted(默认值)消费者的poll方法返回所有的消息 即使是已经取消的事务消息
+     * <p>
+     * 非事务消息以上两种情况都返回 消息总是以偏移量的顺序返回
+     * read_committed 只能返回到达LSO的消息 在LSO之后出现的消息只能等待相关的事务提交之后才能看到
+     * read_committed 模式 如果有未提交的事务 消费者不能读取到直到HW的消息
+     * read_committed 的seekToEnd方法返回LSO
      */
     public static final String ISOLATION_LEVEL_CONFIG = "isolation.level";
     public static final String ISOLATION_LEVEL_DOC = "Controls how to read messages written transactionally. If set to <code>read_committed</code>, consumer.poll() will only return" +

@@ -28,157 +28,199 @@ package org.apache.kafka.common.config;
 // This is a public API, so we should not remove or alter keys without a discussion and a deprecation period.
 // Eventually this should replace LogConfig.scala.
 public class TopicConfig {
+    /**
+     * kafka中log日志是分成一块块存储的 此配置是指log日志划分成块的大小
+     */
     public static final String SEGMENT_BYTES_CONFIG = "segment.bytes";
     public static final String SEGMENT_BYTES_DOC = "This configuration controls the segment file size for " +
-        "the log. Retention and cleaning is always done a file at a time so a larger segment size means " +
-        "fewer files but less granular control over retention.";
+            "the log. Retention and cleaning is always done a file at a time so a larger segment size means " +
+            "fewer files but less granular control over retention.";
 
+    /**
+     * 即使log的分块文件没有达到需要删除 | 压缩的大小 一旦log的时间达到这个上限 就会强制新建一个log分块文件
+     */
     public static final String SEGMENT_MS_CONFIG = "segment.ms";
     public static final String SEGMENT_MS_DOC = "This configuration controls the period of time after " +
-        "which Kafka will force the log to roll even if the segment file isn't full to ensure that retention " +
-        "can delete or compact old data.";
+            "which Kafka will force the log to roll even if the segment file isn't full to ensure that retention " +
+            "can delete or compact old data.";
 
+    /**
+     * The maximum jitter to subtract from logRollTimeMillis.
+     */
     public static final String SEGMENT_JITTER_MS_CONFIG = "segment.jitter.ms";
     public static final String SEGMENT_JITTER_MS_DOC = "The maximum random jitter subtracted from the scheduled " +
-        "segment roll time to avoid thundering herds of segment rolling";
+            "segment roll time to avoid thundering herds of segment rolling";
 
+    /**
+     * 此配置是有关offsets和文件位置之间映射的索引文件的大小 一般不需要修改这个配置
+     */
     public static final String SEGMENT_INDEX_BYTES_CONFIG = "segment.index.bytes";
     public static final String SEGMENT_INDEX_BYTES_DOC = "This configuration controls the size of the index that " +
-        "maps offsets to file positions. We preallocate this index file and shrink it only after log " +
-        "rolls. You generally should not need to change this setting.";
+            "maps offsets to file positions. We preallocate this index file and shrink it only after log " +
+            "rolls. You generally should not need to change this setting.";
 
     public static final String FLUSH_MESSAGES_INTERVAL_CONFIG = "flush.messages";
     public static final String FLUSH_MESSAGES_INTERVAL_DOC = "This setting allows specifying an interval at " +
-        "which we will force an fsync of data written to the log. For example if this was set to 1 " +
-        "we would fsync after every message; if it were 5 we would fsync after every five messages. " +
-        "In general we recommend you not set this and use replication for durability and allow the " +
-        "operating system's background flush capabilities as it is more efficient. This setting can " +
-        "be overridden on a per-topic basis (see <a href=\"#topicconfigs\">the per-topic configuration section</a>).";
+            "which we will force an fsync of data written to the log. For example if this was set to 1 " +
+            "we would fsync after every message; if it were 5 we would fsync after every five messages. " +
+            "In general we recommend you not set this and use replication for durability and allow the " +
+            "operating system's background flush capabilities as it is more efficient. This setting can " +
+            "be overridden on a per-topic basis (see <a href=\"#topicconfigs\">the per-topic configuration section</a>).";
 
     public static final String FLUSH_MS_CONFIG = "flush.ms";
     public static final String FLUSH_MS_DOC = "This setting allows specifying a time interval at which we will " +
-        "force an fsync of data written to the log. For example if this was set to 1000 " +
-        "we would fsync after 1000 ms had passed. In general we recommend you not set " +
-        "this and use replication for durability and allow the operating system's background " +
-        "flush capabilities as it is more efficient.";
+            "force an fsync of data written to the log. For example if this was set to 1000 " +
+            "we would fsync after 1000 ms had passed. In general we recommend you not set " +
+            "this and use replication for durability and allow the operating system's background " +
+            "flush capabilities as it is more efficient.";
 
+    /**
+     * 如果使用"delete"的retention策略 这项配置就是指在删除日志之前 日志所能达到的最大尺寸
+     * 默认情况下 没有尺寸限制而只有时间限制
+     */
     public static final String RETENTION_BYTES_CONFIG = "retention.bytes";
     public static final String RETENTION_BYTES_DOC = "This configuration controls the maximum size a partition " +
-        "(which consists of log segments) can grow to before we will discard old log segments to free up space if we " +
-        "are using the \"delete\" retention policy. By default there is no size limit only a time limit. " +
-        "Since this limit is enforced at the partition level, multiply it by the number of partitions to compute " +
-        "the topic retention in bytes.";
+            "(which consists of log segments) can grow to before we will discard old log segments to free up space if we " +
+            "are using the \"delete\" retention policy. By default there is no size limit only a time limit. " +
+            "Since this limit is enforced at the partition level, multiply it by the number of partitions to compute " +
+            "the topic retention in bytes.";
 
+    /**
+     * 如果使用"delete"的retention策略 这项配置就是指删除日志前日志保存的时间
+     */
     public static final String RETENTION_MS_CONFIG = "retention.ms";
     public static final String RETENTION_MS_DOC = "This configuration controls the maximum time we will retain a " +
-        "log before we will discard old log segments to free up space if we are using the " +
-        "\"delete\" retention policy. This represents an SLA on how soon consumers must read " +
-        "their data. If set to -1, no time limit is applied.";
+            "log before we will discard old log segments to free up space if we are using the " +
+            "\"delete\" retention policy. This represents an SLA on how soon consumers must read " +
+            "their data. If set to -1, no time limit is applied.";
 
+    /**
+     * kafka追加消息的最大字节数 如果增大这个字节数 也必须增大consumer的fetch字节数 这样consumer才能fetch到这些最大字节数的消息
+     */
     public static final String MAX_MESSAGE_BYTES_CONFIG = "max.message.bytes";
     public static final String MAX_MESSAGE_BYTES_DOC =
-        "The largest record batch size allowed by Kafka (after compression if compression is enabled). " +
-        "If this is increased and there are consumers older than 0.10.2, the consumers' fetch " +
-        "size must also be increased so that they can fetch record batches this large. " +
-        "In the latest message format version, records are always grouped into batches for efficiency. " +
-        "In previous message format versions, uncompressed records are not grouped into batches and this " +
-        "limit only applies to a single record in that case.";
+            "The largest record batch size allowed by Kafka (after compression if compression is enabled). " +
+                    "If this is increased and there are consumers older than 0.10.2, the consumers' fetch " +
+                    "size must also be increased so that they can fetch record batches this large. " +
+                    "In the latest message format version, records are always grouped into batches for efficiency. " +
+                    "In previous message format versions, uncompressed records are not grouped into batches and this " +
+                    "limit only applies to a single record in that case.";
 
     public static final String INDEX_INTERVAL_BYTES_CONFIG = "index.interval.bytes";
     public static final String INDEX_INTERVAL_BYTES_DOCS = "This setting controls how frequently " +
-        "Kafka adds an index entry to its offset index. The default setting ensures that we index a " +
-        "message roughly every 4096 bytes. More indexing allows reads to jump closer to the exact " +
-        "position in the log but makes the index larger. You probably don't need to change this.";
+            "Kafka adds an index entry to its offset index. The default setting ensures that we index a " +
+            "message roughly every 4096 bytes. More indexing allows reads to jump closer to the exact " +
+            "position in the log but makes the index larger. You probably don't need to change this.";
 
     public static final String FILE_DELETE_DELAY_MS_CONFIG = "file.delete.delay.ms";
     public static final String FILE_DELETE_DELAY_MS_DOC = "The time to wait before deleting a file from the " +
-        "filesystem";
+            "filesystem";
 
     public static final String DELETE_RETENTION_MS_CONFIG = "delete.retention.ms";
     public static final String DELETE_RETENTION_MS_DOC = "The amount of time to retain delete tombstone markers " +
-        "for <a href=\"#compaction\">log compacted</a> topics. This setting also gives a bound " +
-        "on the time in which a consumer must complete a read if they begin from offset 0 " +
-        "to ensure that they get a valid snapshot of the final stage (otherwise delete " +
-        "tombstones may be collected before they complete their scan).";
+            "for <a href=\"#compaction\">log compacted</a> topics. This setting also gives a bound " +
+            "on the time in which a consumer must complete a read if they begin from offset 0 " +
+            "to ensure that they get a valid snapshot of the final stage (otherwise delete " +
+            "tombstones may be collected before they complete their scan).";
 
     public static final String MIN_COMPACTION_LAG_MS_CONFIG = "min.compaction.lag.ms";
     public static final String MIN_COMPACTION_LAG_MS_DOC = "The minimum time a message will remain " +
-        "uncompacted in the log. Only applicable for logs that are being compacted.";
+            "uncompacted in the log. Only applicable for logs that are being compacted.";
 
     public static final String MAX_COMPACTION_LAG_MS_CONFIG = "max.compaction.lag.ms";
     public static final String MAX_COMPACTION_LAG_MS_DOC = "The maximum time a message will remain " +
-        "ineligible for compaction in the log. Only applicable for logs that are being compacted.";
+            "ineligible for compaction in the log. Only applicable for logs that are being compacted.";
 
+    /**
+     * 控制log压缩器试图进行清除日志的频率 默认情况下 将避免清除压缩率超过50%的日志
+     * 这个比率避免了最大的空间浪费
+     */
     public static final String MIN_CLEANABLE_DIRTY_RATIO_CONFIG = "min.cleanable.dirty.ratio";
     public static final String MIN_CLEANABLE_DIRTY_RATIO_DOC = "This configuration controls how frequently " +
-        "the log compactor will attempt to clean the log (assuming <a href=\"#compaction\">log " +
-        "compaction</a> is enabled). By default we will avoid cleaning a log where more than " +
-        "50% of the log has been compacted. This ratio bounds the maximum space wasted in " +
-        "the log by duplicates (at 50% at most 50% of the log could be duplicates). A " +
-        "higher ratio will mean fewer, more efficient cleanings but will mean more wasted " +
-        "space in the log. If the " + MAX_COMPACTION_LAG_MS_CONFIG + " or the " + MIN_COMPACTION_LAG_MS_CONFIG +
-        " configurations are also specified, then the log compactor considers the log to be eligible for compaction " +
-        "as soon as either: (i) the dirty ratio threshold has been met and the log has had dirty (uncompacted) " +
-        "records for at least the " + MIN_COMPACTION_LAG_MS_CONFIG + " duration, or (ii) if the log has had " +
-        "dirty (uncompacted) records for at most the " + MAX_COMPACTION_LAG_MS_CONFIG + " period.";
+            "the log compactor will attempt to clean the log (assuming <a href=\"#compaction\">log " +
+            "compaction</a> is enabled). By default we will avoid cleaning a log where more than " +
+            "50% of the log has been compacted. This ratio bounds the maximum space wasted in " +
+            "the log by duplicates (at 50% at most 50% of the log could be duplicates). A " +
+            "higher ratio will mean fewer, more efficient cleanings but will mean more wasted " +
+            "space in the log. If the " + MAX_COMPACTION_LAG_MS_CONFIG + " or the " + MIN_COMPACTION_LAG_MS_CONFIG +
+            " configurations are also specified, then the log compactor considers the log to be eligible for compaction " +
+            "as soon as either: (i) the dirty ratio threshold has been met and the log has had dirty (uncompacted) " +
+            "records for at least the " + MIN_COMPACTION_LAG_MS_CONFIG + " duration, or (ii) if the log has had " +
+            "dirty (uncompacted) records for at most the " + MAX_COMPACTION_LAG_MS_CONFIG + " period.";
 
+    /**
+     * 要么是"delete"要么是"compact" 这个字符串指明了针对旧日志部分的利用方式 默认"delete" 将会丢弃旧的部分当他们的回收时间或者尺寸限制到达时
+     * "compact"将会进行日志压缩
+     */
     public static final String CLEANUP_POLICY_CONFIG = "cleanup.policy";
     public static final String CLEANUP_POLICY_COMPACT = "compact";
     public static final String CLEANUP_POLICY_DELETE = "delete";
     public static final String CLEANUP_POLICY_DOC = "A string that is either \"" + CLEANUP_POLICY_DELETE +
-        "\" or \"" + CLEANUP_POLICY_COMPACT + "\" or both. This string designates the retention policy to use on " +
-        "old log segments. The default policy (\"delete\") will discard old segments when their retention " +
-        "time or size limit has been reached. The \"compact\" setting will enable <a href=\"#compaction\">log " +
-        "compaction</a> on the topic.";
+            "\" or \"" + CLEANUP_POLICY_COMPACT + "\" or both. This string designates the retention policy to use on " +
+            "old log segments. The default policy (\"delete\") will discard old segments when their retention " +
+            "time or size limit has been reached. The \"compact\" setting will enable <a href=\"#compaction\">log " +
+            "compaction</a> on the topic.";
 
+    /**
+     * 指明了是否能够使不在ISR中 replicas设置用来作为leader
+     */
     public static final String UNCLEAN_LEADER_ELECTION_ENABLE_CONFIG = "unclean.leader.election.enable";
     public static final String UNCLEAN_LEADER_ELECTION_ENABLE_DOC = "Indicates whether to enable replicas " +
-        "not in the ISR set to be elected as leader as a last resort, even though doing so may result in data " +
-        "loss.";
+            "not in the ISR set to be elected as leader as a last resort, even though doing so may result in data " +
+            "loss.";
 
+    /**
+     * 当producer设置request.required.acks为-1时 min.insync.replicas指定replicas的最小数目(必须确认每一个repica的写数据都是成功的)
+     * 如果这个数目没有达到 producer会产生异常
+     * 即使request.required.acks == -1 也只需要等待min.insync.replicas个副本确认后即可
+     */
     public static final String MIN_IN_SYNC_REPLICAS_CONFIG = "min.insync.replicas";
     public static final String MIN_IN_SYNC_REPLICAS_DOC = "When a producer sets acks to \"all\" (or \"-1\"), " +
-        "this configuration specifies the minimum number of replicas that must acknowledge " +
-        "a write for the write to be considered successful. If this minimum cannot be met, " +
-        "then the producer will raise an exception (either NotEnoughReplicas or " +
-        "NotEnoughReplicasAfterAppend).<br>When used together, <code>min.insync.replicas</code> and <code>acks</code> " +
-        "allow you to enforce greater durability guarantees. A typical scenario would be to " +
-        "create a topic with a replication factor of 3, set <code>min.insync.replicas</code> to 2, and " +
-        "produce with <code>acks</code> of \"all\". This will ensure that the producer raises an exception " +
-        "if a majority of replicas do not receive a write.";
+            "this configuration specifies the minimum number of replicas that must acknowledge " +
+            "a write for the write to be considered successful. If this minimum cannot be met, " +
+            "then the producer will raise an exception (either NotEnoughReplicas or " +
+            "NotEnoughReplicasAfterAppend).<br>When used together, <code>min.insync.replicas</code> and <code>acks</code> " +
+            "allow you to enforce greater durability guarantees. A typical scenario would be to " +
+            "create a topic with a replication factor of 3, set <code>min.insync.replicas</code> to 2, and " +
+            "produce with <code>acks</code> of \"all\". This will ensure that the producer raises an exception " +
+            "if a majority of replicas do not receive a write.";
 
+    /**
+     * producer用于压缩数据的压缩类型 默认是无压缩 正确的选项值是none | gzip | snappy |lz4
+     * 压缩最好用于批量处理 批量处理消息越多 压缩性能越好
+     */
     public static final String COMPRESSION_TYPE_CONFIG = "compression.type";
     public static final String COMPRESSION_TYPE_DOC = "Specify the final compression type for a given topic. " +
-        "This configuration accepts the standard compression codecs ('gzip', 'snappy', 'lz4', 'zstd'). It additionally " +
-        "accepts 'uncompressed' which is equivalent to no compression; and 'producer' which means retain the " +
-        "original compression codec set by the producer.";
+            "This configuration accepts the standard compression codecs ('gzip', 'snappy', 'lz4', 'zstd'). It additionally " +
+            "accepts 'uncompressed' which is equivalent to no compression; and 'producer' which means retain the " +
+            "original compression codec set by the producer.";
 
     public static final String PREALLOCATE_CONFIG = "preallocate";
     public static final String PREALLOCATE_DOC = "True if we should preallocate the file on disk when " +
-        "creating a new log segment.";
+            "creating a new log segment.";
 
     public static final String MESSAGE_FORMAT_VERSION_CONFIG = "message.format.version";
     public static final String MESSAGE_FORMAT_VERSION_DOC = "Specify the message format version the broker " +
-        "will use to append messages to the logs. The value should be a valid ApiVersion. Some examples are: " +
-        "0.8.2, 0.9.0.0, 0.10.0, check ApiVersion for more details. By setting a particular message format " +
-        "version, the user is certifying that all the existing messages on disk are smaller or equal than the " +
-        "specified version. Setting this value incorrectly will cause consumers with older versions to break as " +
-        "they will receive messages with a format that they don't understand.";
+            "will use to append messages to the logs. The value should be a valid ApiVersion. Some examples are: " +
+            "0.8.2, 0.9.0.0, 0.10.0, check ApiVersion for more details. By setting a particular message format " +
+            "version, the user is certifying that all the existing messages on disk are smaller or equal than the " +
+            "specified version. Setting this value incorrectly will cause consumers with older versions to break as " +
+            "they will receive messages with a format that they don't understand.";
 
     public static final String MESSAGE_TIMESTAMP_TYPE_CONFIG = "message.timestamp.type";
     public static final String MESSAGE_TIMESTAMP_TYPE_DOC = "Define whether the timestamp in the message is " +
-        "message create time or log append time. The value should be either `CreateTime` or `LogAppendTime`";
+            "message create time or log append time. The value should be either `CreateTime` or `LogAppendTime`";
 
     public static final String MESSAGE_TIMESTAMP_DIFFERENCE_MAX_MS_CONFIG = "message.timestamp.difference.max.ms";
     public static final String MESSAGE_TIMESTAMP_DIFFERENCE_MAX_MS_DOC = "The maximum difference allowed between " +
-        "the timestamp when a broker receives a message and the timestamp specified in the message. If " +
-        "message.timestamp.type=CreateTime, a message will be rejected if the difference in timestamp " +
-        "exceeds this threshold. This configuration is ignored if message.timestamp.type=LogAppendTime.";
+            "the timestamp when a broker receives a message and the timestamp specified in the message. If " +
+            "message.timestamp.type=CreateTime, a message will be rejected if the difference in timestamp " +
+            "exceeds this threshold. This configuration is ignored if message.timestamp.type=LogAppendTime.";
 
     public static final String MESSAGE_DOWNCONVERSION_ENABLE_CONFIG = "message.downconversion.enable";
     public static final String MESSAGE_DOWNCONVERSION_ENABLE_DOC = "This configuration controls whether " +
-        "down-conversion of message formats is enabled to satisfy consume requests. When set to <code>false</code>, " +
-        "broker will not perform down-conversion for consumers expecting an older message format. The broker responds " +
-        "with <code>UNSUPPORTED_VERSION</code> error for consume requests from such older clients. This configuration" +
-        "does not apply to any message format conversion that might be required for replication to followers.";
+            "down-conversion of message formats is enabled to satisfy consume requests. When set to <code>false</code>, " +
+            "broker will not perform down-conversion for consumers expecting an older message format. The broker responds " +
+            "with <code>UNSUPPORTED_VERSION</code> error for consume requests from such older clients. This configuration" +
+            "does not apply to any message format conversion that might be required for replication to followers.";
 }

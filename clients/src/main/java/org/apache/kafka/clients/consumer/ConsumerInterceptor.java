@@ -61,8 +61,13 @@ public interface ConsumerInterceptor<K, V> extends Configurable, AutoCloseable {
      * to modify the record and throwing an exception. If one of the interceptors in the list throws an exception from onConsume(),
      * the exception is caught, logged, and the next interceptor is called with the records returned by the last successful interceptor
      * in the list, or otherwise the original consumed records.
-     *
+     * <p>
+     * 该方法在poll方法返回之前调用 调用结束后poll方法就返回消息了
+     * 可以修改消费者消息 返回新的消息 拦截器可以过滤收到的消息或生成新的消息
+     * 如果有多个拦截器 则该方法按照KafkaConsumer的configs中配置的顺序调用
+     * 
      * @param records records to be consumed by the client or records returned by the previous interceptors in the list.
+     *        由上个拦截器返回的由客户端消费的消息
      * @return records that are either modified by the interceptor or same as records passed to this method.
      */
     public ConsumerRecords<K, V> onConsume(ConsumerRecords<K, V> records);
@@ -71,7 +76,10 @@ public interface ConsumerInterceptor<K, V> extends Configurable, AutoCloseable {
      * This is called when offsets get committed.
      * <p>
      * Any exception thrown by this method will be ignored by the caller.
-     *
+     * <p>
+     * 当消费者提交偏移量时 调用该方法
+     * 该方法抛出的任何异常调用者都会忽略
+     * 
      * @param offsets A map of offsets by partition with associated metadata
      */
     public void onCommit(Map<TopicPartition, OffsetAndMetadata> offsets);
