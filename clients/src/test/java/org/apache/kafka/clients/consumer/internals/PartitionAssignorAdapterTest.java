@@ -29,6 +29,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
+
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerGroupMetadata;
 import org.apache.kafka.clients.consumer.ConsumerPartitionAssignor;
@@ -83,7 +84,7 @@ public class PartitionAssignorAdapterTest {
 
         props.put(ConsumerConfig.PARTITION_ASSIGNMENT_STRATEGY_CONFIG, classTypes);
         KafkaConsumer<String, String> consumer = new KafkaConsumer<>(
-            props, new StringDeserializer(), new StringDeserializer());
+                props, new StringDeserializer(), new StringDeserializer());
 
         consumer.close();
     }
@@ -97,7 +98,7 @@ public class PartitionAssignorAdapterTest {
 
         props.put(ConsumerConfig.PARTITION_ASSIGNMENT_STRATEGY_CONFIG, classTypes);
         assertThrows(KafkaException.class, () -> new KafkaConsumer<>(
-            props, new StringDeserializer(), new StringDeserializer()));
+                props, new StringDeserializer(), new StringDeserializer()));
     }
 
     @Test

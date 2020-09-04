@@ -33,15 +33,18 @@ import java.util.Set;
 /**
  * Abstract assignor implementation which does some common grunt work (in particular collecting
  * partition counts which are always needed in assignors).
+ * <p>
+ * 自定义分区分配策略时可以继承该类
  */
 public abstract class AbstractPartitionAssignor implements ConsumerPartitionAssignor {
     private static final Logger log = LoggerFactory.getLogger(AbstractPartitionAssignor.class);
 
     /**
      * Perform the group assignment given the partition counts and member subscriptions
+     *
      * @param partitionsPerTopic The number of partitions for each subscribed topic. Topics not in metadata will be excluded
      *                           from this map.
-     * @param subscriptions Map from the member id to their respective topic subscription
+     * @param subscriptions      Map from the member id to their respective topic subscription
      * @return Map from each member to the list of partitions assigned to them.
      */
     public abstract Map<String, List<TopicPartition>> assign(Map<String, Integer> partitionsPerTopic,
