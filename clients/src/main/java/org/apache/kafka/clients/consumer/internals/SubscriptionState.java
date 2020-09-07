@@ -52,7 +52,7 @@ import static org.apache.kafka.clients.consumer.internals.Fetcher.hasUsableOffse
  * A class for tracking the topics, partitions, and offsets for the consumer. A partition
  * is "assigned" either directly with {@link #assignFromUser(Set)} (manual assignment)
  * or with {@link #assignFromSubscribed(Collection)} (automatic assignment from subscription).
- *
+ * <p>
  * Once assigned, the partition is not considered "fetchable" until its initial position has
  * been set with {@link #seekValidated(TopicPartition, FetchPosition)}. Fetchable partitions track a fetch
  * position which is used to set the offset of the next fetch, and a consumed position
@@ -60,10 +60,10 @@ import static org.apache.kafka.clients.consumer.internals.Fetcher.hasUsableOffse
  * from a partition through {@link #pause(TopicPartition)} without affecting the fetched/consumed
  * offsets. The partition will remain unfetchable until the {@link #resume(TopicPartition)} is
  * used. You can also query the pause state independently with {@link #isPaused(TopicPartition)}.
- *
+ * <p>
  * Note that pause state as well as fetch/consumed positions are not preserved when partition
  * assignment is changed whether directly by the user or through a group rebalance.
- *
+ * <p>
  * Thread Safety: this class is thread-safe.
  */
 public class SubscriptionState {
@@ -104,12 +104,12 @@ public class SubscriptionState {
     @Override
     public synchronized String toString() {
         return "SubscriptionState{" +
-            "type=" + subscriptionType +
-            ", subscribedPattern=" + subscribedPattern +
-            ", subscription=" + String.join(",", subscription) +
-            ", groupSubscription=" + String.join(",", groupSubscription) +
-            ", defaultResetStrategy=" + defaultResetStrategy +
-            ", assignment=" + assignment.partitionStateValues() + " (id=" + assignmentId + ")}";
+                "type=" + subscriptionType +
+                ", subscribedPattern=" + subscribedPattern +
+                ", subscription=" + String.join(",", subscription) +
+                ", groupSubscription=" + String.join(",", groupSubscription) +
+                ", defaultResetStrategy=" + defaultResetStrategy +
+                ", assignment=" + assignment.partitionStateValues() + " (id=" + assignmentId + ")}";
     }
 
     public synchronized String prettyString() {
@@ -151,6 +151,7 @@ public class SubscriptionState {
      * This method sets the subscription type if it is not already set (i.e. when it is NONE),
      * or verifies that the subscription type is equal to the give type when it is set (i.e.
      * when it is not NONE)
+     *
      * @param type The given subscription type
      */
     private void setSubscriptionType(SubscriptionType type) {
@@ -246,8 +247,8 @@ public class SubscriptionState {
             if (this.subscribedPattern != null) {
                 if (!this.subscribedPattern.matcher(topicPartition.topic()).matches()) {
                     log.info("Assigned partition {} for non-subscribed topic regex pattern; subscription pattern is {}",
-                        topicPartition,
-                        this.subscribedPattern);
+                            topicPartition,
+                            this.subscribedPattern);
 
                     return false;
                 }
@@ -291,7 +292,6 @@ public class SubscriptionState {
 
     /**
      * Check whether pattern subscription is in use.
-     *
      */
     synchronized boolean hasPatternSubscription() {
         return this.subscriptionType == SubscriptionType.AUTO_PATTERN;
@@ -341,7 +341,7 @@ public class SubscriptionState {
      * to be assigned).
      *
      * @return The union of all subscribed topics in the group if this member is the leader
-     *   of the current generation; otherwise it returns the same set as {@link #subscription()}
+     * of the current generation; otherwise it returns the same set as {@link #subscription()}
      */
     synchronized Set<String> metadataTopics() {
         if (groupSubscription.isEmpty())
@@ -414,6 +414,7 @@ public class SubscriptionState {
 
     /**
      * Provides the number of assigned partitions in a thread safe manner.
+     *
      * @return the number of assigned partitions.
      */
     synchronized int numAssignedPartitions() {
@@ -445,8 +446,8 @@ public class SubscriptionState {
      * Enter the offset validation state if the leader for this partition is known to support a usable version of the
      * OffsetsForLeaderEpoch API. If the leader node does not support the API, simply complete the offset validation.
      *
-     * @param apiVersions supported API versions
-     * @param tp topic partition to validate
+     * @param apiVersions    supported API versions
+     * @param tp             topic partition to validate
      * @param leaderAndEpoch leader epoch of the topic partition
      * @return true if we enter the offset validation state
      */
@@ -469,6 +470,7 @@ public class SubscriptionState {
 
     /**
      * Attempt to complete validation with the end offset returned from the OffsetForLeaderEpoch request.
+     *
      * @return Log truncation details if detected and no reset policy is defined.
      */
     public synchronized Optional<LogTruncation> maybeCompleteValidation(TopicPartition tp,
@@ -488,12 +490,12 @@ public class SubscriptionState {
             } else if (epochEndOffset.hasUndefinedEpochOrOffset()) {
                 if (hasDefaultOffsetResetPolicy()) {
                     log.info("Truncation detected for partition {} at offset {}, resetting offset",
-                        tp, currentPosition);
+                            tp, currentPosition);
 
                     requestOffsetReset(tp);
                 } else {
                     log.warn("Truncation detected for partition {} at offset {}, but no reset policy is set",
-                        tp, currentPosition);
+                            tp, currentPosition);
                     return Optional.of(new LogTruncation(tp, requestPosition, Optional.empty()));
                 }
             } else if (epochEndOffset.endOffset() < currentPosition.offset) {
@@ -506,10 +508,10 @@ public class SubscriptionState {
                     state.seekValidated(newPosition);
                 } else {
                     OffsetAndMetadata divergentOffset = new OffsetAndMetadata(epochEndOffset.endOffset(),
-                        Optional.of(epochEndOffset.leaderEpoch()), null);
+                            Optional.of(epochEndOffset.leaderEpoch()), null);
                     log.warn("Truncation detected for partition {} at offset {} (the end offset from the " +
-                            "broker is {}), but no reset policy is set",
-                        tp, currentPosition, divergentOffset);
+                                    "broker is {}), but no reset policy is set",
+                            tp, currentPosition, divergentOffset);
                     return Optional.of(new LogTruncation(tp, requestPosition, Optional.of(divergentOffset)));
                 }
             } else {
@@ -565,9 +567,9 @@ public class SubscriptionState {
      * Set the preferred read replica with a lease timeout. After this time, the replica will no longer be valid and
      * {@link #preferredReadReplica(TopicPartition, long)} will return an empty result.
      *
-     * @param tp The topic partition
+     * @param tp                     The topic partition
      * @param preferredReadReplicaId The preferred read replica
-     * @param timeMs The time at which this preferred replica is no longer valid
+     * @param timeMs                 The time at which this preferred replica is no longer valid
      */
     public synchronized void updatePreferredReadReplica(TopicPartition tp, int preferredReadReplicaId, LongSupplier timeMs) {
         assignedState(tp).updatePreferredReadReplica(preferredReadReplicaId, timeMs);
@@ -576,7 +578,7 @@ public class SubscriptionState {
     /**
      * Get the preferred read replica
      *
-     * @param tp The topic partition
+     * @param tp     The topic partition
      * @param timeMs The current time
      * @return Returns the current preferred read replica, if it has been set and if it has not expired.
      */
@@ -1062,7 +1064,7 @@ public class SubscriptionState {
 
     /**
      * Represents the position of a partition subscription.
-     *
+     * <p>
      * This includes the offset and epoch from the last record in
      * the batch from a FetchResponse. It also includes the leader epoch at the time the batch was consumed.
      */
@@ -1122,22 +1124,22 @@ public class SubscriptionState {
         @Override
         public String toString() {
             StringBuilder bldr = new StringBuilder()
-                .append("(partition=")
-                .append(topicPartition)
-                .append(", fetchOffset=")
-                .append(fetchPosition.offset)
-                .append(", fetchEpoch=")
-                .append(fetchPosition.offsetEpoch);
+                    .append("(partition=")
+                    .append(topicPartition)
+                    .append(", fetchOffset=")
+                    .append(fetchPosition.offset)
+                    .append(", fetchEpoch=")
+                    .append(fetchPosition.offsetEpoch);
 
             if (divergentOffsetOpt.isPresent()) {
                 OffsetAndMetadata divergentOffset = divergentOffsetOpt.get();
                 bldr.append(", divergentOffset=")
-                    .append(divergentOffset.offset())
-                    .append(", divergentEpoch=")
-                    .append(divergentOffset.leaderEpoch());
+                        .append(divergentOffset.offset())
+                        .append(", divergentEpoch=")
+                        .append(divergentOffset.leaderEpoch());
             } else {
                 bldr.append(", divergentOffset=unknown")
-                    .append(", divergentEpoch=unknown");
+                        .append(", divergentEpoch=unknown");
             }
 
             return bldr.append(")").toString();

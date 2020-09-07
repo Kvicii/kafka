@@ -6,7 +6,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
  *
- *    http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -22,46 +22,66 @@ package kafka.server
  * A broker should be only in one state at a time.
  * The expected state transition with the following defined states is:
  *
- *                +-----------+
- *                |Not Running|
- *                +-----+-----+
- *                      |
- *                      v
- *                +-----+-----+
- *                |Starting   +--+
- *                +-----+-----+  | +----+------------+
- *                      |        +>+RecoveringFrom   |
- *                      v          |UncleanShutdown  |
- *               +-------+-------+ +-------+---------+
- *               |RunningAsBroker|            |
- *               +-------+-------+<-----------+
- *                       |
- *                       v
- *                +-----+------------+
- *                |PendingControlled |
- *                |Shutdown          |
- *                +-----+------------+
- *                      |
- *                      v
- *               +-----+----------+
- *               |BrokerShutting  |
- *               |Down            |
- *               +-----+----------+
- *                     |
- *                     v
- *               +-----+-----+
- *               |Not Running|
- *               +-----------+
+ * +-----------+
+ * |Not Running|
+ * +-----+-----+
+ * |
+ * v
+ * +-----+-----+
+ * |Starting   +--+
+ * +-----+-----+  | +----+------------+
+ * |        +>+RecoveringFrom   |
+ * v          |UncleanShutdown  |
+ * +-------+-------+ +-------+---------+
+ * |RunningAsBroker|            |
+ * +-------+-------+<-----------+
+ * |
+ * v
+ * +-----+------------+
+ * |PendingControlled |
+ * |Shutdown          |
+ * +-----+------------+
+ * |
+ * v
+ * +-----+----------+
+ * |BrokerShutting  |
+ * |Down            |
+ * +-----+----------+
+ * |
+ * v
+ * +-----+-----+
+ * |Not Running|
+ * +-----------+
  *
  * Custom states is also allowed for cases where there are custom kafka states for different scenarios.
  */
-sealed trait BrokerStates { def state: Byte }
-case object NotRunning extends BrokerStates { val state: Byte = 0 }
-case object Starting extends BrokerStates { val state: Byte = 1 }
-case object RecoveringFromUncleanShutdown extends BrokerStates { val state: Byte = 2 }
-case object RunningAsBroker extends BrokerStates { val state: Byte = 3 }
-case object PendingControlledShutdown extends BrokerStates { val state: Byte = 6 }
-case object BrokerShuttingDown extends BrokerStates { val state: Byte = 7 }
+sealed trait BrokerStates {
+  def state: Byte
+}
+
+case object NotRunning extends BrokerStates {
+  val state: Byte = 0
+}
+
+case object Starting extends BrokerStates {
+  val state: Byte = 1
+}
+
+case object RecoveringFromUncleanShutdown extends BrokerStates {
+  val state: Byte = 2
+}
+
+case object RunningAsBroker extends BrokerStates {
+  val state: Byte = 3
+}
+
+case object PendingControlledShutdown extends BrokerStates {
+  val state: Byte = 6
+}
+
+case object BrokerShuttingDown extends BrokerStates {
+  val state: Byte = 7
+}
 
 
 case class BrokerState() {

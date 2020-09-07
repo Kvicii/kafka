@@ -6,7 +6,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
  *
- *    http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -22,7 +22,7 @@ import java.util.Random
 import kafka.utils.Logging
 import org.apache.kafka.common.errors.{InvalidPartitionsException, InvalidReplicationFactorException}
 
-import collection.{Map, mutable, _}
+import scala.collection.{Map, mutable, _}
 
 object AdminUtils extends Logging {
   val rand = new Random
@@ -95,6 +95,7 @@ object AdminUtils extends Logging {
    * situation where the number of replicas is the same as the number of racks and each rack has the same number of
    * brokers, it guarantees that the replica distribution is even across brokers and racks.
    * </p>
+   *
    * @return a Map from partition id to replica ids
    * @throws AdminOperationException If rack information is supplied but it is incomplete, or if it is not possible to
    *                                 assign each replica to a unique rack.
@@ -179,7 +180,7 @@ object AdminUtils extends Logging {
           //    that do not have any replica, or
           // 2. the broker has already assigned a replica AND there is one or more brokers that do not have replica assigned
           if ((!racksWithReplicas.contains(rack) || racksWithReplicas.size == numRacks)
-              && (!brokersWithReplicas.contains(broker) || brokersWithReplicas.size == numBrokers)) {
+            && (!brokersWithReplicas.contains(broker) || brokersWithReplicas.size == numBrokers)) {
             replicaBuffer += broker
             racksWithReplicas += rack
             brokersWithReplicas += broker
@@ -195,20 +196,20 @@ object AdminUtils extends Logging {
   }
 
   /**
-    * Given broker and rack information, returns a list of brokers alternated by the rack. Assume
-    * this is the rack and its brokers:
-    *
-    * rack1: 0, 1, 2
-    * rack2: 3, 4, 5
-    * rack3: 6, 7, 8
-    *
-    * This API would return the list of 0, 3, 6, 1, 4, 7, 2, 5, 8
-    *
-    * This is essential to make sure that the assignReplicasToBrokers API can use such list and
-    * assign replicas to brokers in a simple round-robin fashion, while ensuring an even
-    * distribution of leader and replica counts on each broker and that replicas are
-    * distributed to all racks.
-    */
+   * Given broker and rack information, returns a list of brokers alternated by the rack. Assume
+   * this is the rack and its brokers:
+   *
+   * rack1: 0, 1, 2
+   * rack2: 3, 4, 5
+   * rack3: 6, 7, 8
+   *
+   * This API would return the list of 0, 3, 6, 1, 4, 7, 2, 5, 8
+   *
+   * This is essential to make sure that the assignReplicasToBrokers API can use such list and
+   * assign replicas to brokers in a simple round-robin fashion, while ensuring an even
+   * distribution of leader and replica counts on each broker and that replicas are
+   * distributed to all racks.
+   */
   private[admin] def getRackAlternatedBrokerList(brokerRackMap: Map[Int, String]): IndexedSeq[Int] = {
     val brokersIteratorByRack = getInverseMap(brokerRackMap).map { case (rack, brokers) =>
       (rack, brokers.iterator)

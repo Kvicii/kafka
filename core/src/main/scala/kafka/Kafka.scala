@@ -79,7 +79,7 @@ object Kafka extends Logging {
       // attach shutdown handler to catch terminating signals as well as normal termination
       Exit.addShutdownHook("kafka-shutdown-hook", kafkaServerStartable.shutdown())
 
-      kafkaServerStartable.startup()
+      kafkaServerStartable.startup()  // 启动Kafka的Broker
       kafkaServerStartable.awaitShutdown()
     }
     catch {

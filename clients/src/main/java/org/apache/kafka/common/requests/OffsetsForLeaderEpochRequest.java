@@ -128,8 +128,9 @@ public class OffsetsForLeaderEpochRequest extends AbstractRequest {
 
         @Override
         public OffsetsForLeaderEpochRequest build(short version) {
-            if (version < oldestAllowedVersion() || version > latestAllowedVersion())
+            if (version < oldestAllowedVersion() || version > latestAllowedVersion()) {
                 throw new UnsupportedVersionException("Cannot build " + this + " with version " + version);
+            }
             return new OffsetsForLeaderEpochRequest(epochsByPartition, replicaId, version);
         }
 

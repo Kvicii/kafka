@@ -18,8 +18,9 @@ package org.apache.kafka.common.serialization;
 
 public class IntegerSerializer implements Serializer<Integer> {
     public byte[] serialize(String topic, Integer data) {
-        if (data == null)
+        if (data == null) {
             return null;
+        }
 
         return new byte[]{
                 (byte) (data >>> 24),

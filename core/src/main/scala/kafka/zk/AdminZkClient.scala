@@ -6,14 +6,14 @@
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
  *
- *    http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
-*/
+ */
 package kafka.zk
 
 import java.util.Properties
@@ -41,10 +41,11 @@ class AdminZkClient(zkClient: KafkaZkClient) extends Logging {
 
   /**
    * Creates the topic with given configuration
-   * @param topic topic name to create
-   * @param partitions  Number of partitions to be set
+   *
+   * @param topic             topic name to create
+   * @param partitions        Number of partitions to be set
    * @param replicationFactor Replication factor
-   * @param topicConfig  topic configs
+   * @param topicConfig       topic configs
    * @param rackAwareMode
    */
   def createTopic(topic: String,
@@ -52,13 +53,14 @@ class AdminZkClient(zkClient: KafkaZkClient) extends Logging {
                   replicationFactor: Int,
                   topicConfig: Properties = new Properties,
                   rackAwareMode: RackAwareMode = RackAwareMode.Enforced): Unit = {
-    val brokerMetadatas = getBrokerMetadatas(rackAwareMode)
-    val replicaAssignment = AdminUtils.assignReplicasToBrokers(brokerMetadatas, partitions, replicationFactor)
-    createTopicWithAssignment(topic, topicConfig, replicaAssignment)
+    val brokerMetadatas = getBrokerMetadatas(rackAwareMode) // 获取broker的元数据信息
+    val replicaAssignment = AdminUtils.assignReplicasToBrokers(brokerMetadatas, partitions, replicationFactor) // 将副本分配给broker
+    createTopicWithAssignment(topic, topicConfig, replicaAssignment) // 将Topic分区分配情况写的zk Topic创建结束
   }
 
   /**
    * Gets broker metadata list
+   *
    * @param rackAwareMode
    * @param brokerList
    * @return
@@ -85,10 +87,10 @@ class AdminZkClient(zkClient: KafkaZkClient) extends Logging {
    * Create topic and optionally validate its parameters. Note that this method is used by the
    * TopicCommand as well.
    *
-   * @param topic The name of the topic
-   * @param config The config of the topic
+   * @param topic                      The name of the topic
+   * @param config                     The config of the topic
    * @param partitionReplicaAssignment The assignments of the topic
-   * @param validate Boolean indicating if parameters must be validated or not (true by default)
+   * @param validate                   Boolean indicating if parameters must be validated or not (true by default)
    */
   def createTopicWithAssignment(topic: String,
                                 config: Properties,
@@ -112,9 +114,9 @@ class AdminZkClient(zkClient: KafkaZkClient) extends Logging {
    * Validate topic creation parameters. Note that this method is indirectly used by the
    * TopicCommand via the `createTopicWithAssignment` method.
    *
-   * @param topic The name of the topic
+   * @param topic                      The name of the topic
    * @param partitionReplicaAssignment The assignments of the topic
-   * @param config The config of the topic
+   * @param config                     The config of the topic
    */
   def validateTopicCreate(topic: String,
                           partitionReplicaAssignment: Map[Int, Seq[Int]],
@@ -146,15 +148,15 @@ class AdminZkClient(zkClient: KafkaZkClient) extends Logging {
     val partitionSize = partitionReplicaAssignment.size
     val sequenceSum = partitionSize * (partitionSize - 1) / 2
     if (partitionReplicaAssignment.size != partitionReplicaAssignment.toSet.size ||
-        partitionReplicaAssignment.keys.filter(_ >= 0).sum != sequenceSum)
-        throw new InvalidReplicaAssignmentException("partitions should be a consecutive 0-based integer sequence")
+      partitionReplicaAssignment.keys.filter(_ >= 0).sum != sequenceSum)
+      throw new InvalidReplicaAssignmentException("partitions should be a consecutive 0-based integer sequence")
 
     LogConfig.validate(config)
   }
 
   private def writeTopicPartitionAssignment(topic: String, replicaAssignment: Map[Int, ReplicaAssignment], isUpdate: Boolean): Unit = {
     try {
-      val assignment = replicaAssignment.map { case (partitionId, replicas) => (new TopicPartition(topic,partitionId), replicas) }.toMap
+      val assignment = replicaAssignment.map { case (partitionId, replicas) => (new TopicPartition(topic, partitionId), replicas) }.toMap
 
       if (!isUpdate) {
         zkClient.createTopicAssignment(topic, assignment.map { case (k, v) => k -> v.replicas })
@@ -170,6 +172,7 @@ class AdminZkClient(zkClient: KafkaZkClient) extends Logging {
 
   /**
    * Creates a delete path for a given topic
+   *
    * @param topic
    */
   def deleteTopic(topic: String): Unit = {
@@ -180,7 +183,7 @@ class AdminZkClient(zkClient: KafkaZkClient) extends Logging {
         case _: NodeExistsException => throw new TopicAlreadyMarkedForDeletionException(
           "topic %s is already marked for deletion".format(topic))
         case e: Throwable => throw new AdminOperationException(e.getMessage)
-       }
+      }
     } else {
       throw new UnknownTopicOrPartitionException(s"Topic `$topic` to delete does not exist")
     }
@@ -190,12 +193,12 @@ class AdminZkClient(zkClient: KafkaZkClient) extends Logging {
    * Add partitions to existing topic with optional replica assignment. Note that this
    * method is used by the TopicCommand.
    *
-   * @param topic Topic for adding partitions to
+   * @param topic              Topic for adding partitions to
    * @param existingAssignment A map from partition id to its assignment
-   * @param allBrokers All brokers in the cluster
-   * @param numPartitions Number of partitions to be set
-   * @param replicaAssignment Manual replica assignment, or none
-   * @param validateOnly If true, validate the parameters without actually adding the partitions
+   * @param allBrokers         All brokers in the cluster
+   * @param numPartitions      Number of partitions to be set
+   * @param replicaAssignment  Manual replica assignment, or none
+   * @param validateOnly       If true, validate the parameters without actually adding the partitions
    * @return the updated replica assignment
    */
   def addPartitions(topic: String,
@@ -226,11 +229,11 @@ class AdminZkClient(zkClient: KafkaZkClient) extends Logging {
    * Create assignment to add the given number of partitions while validating the
    * provided arguments.
    *
-   * @param topic Topic for adding partitions to
+   * @param topic              Topic for adding partitions to
    * @param existingAssignment A map from partition id to its assignment
-   * @param allBrokers All brokers in the cluster
-   * @param numPartitions Number of partitions to be set
-   * @param replicaAssignment Manual replica assignment, or none
+   * @param allBrokers         All brokers in the cluster
+   * @param numPartitions      Number of partitions to be set
+   * @param replicaAssignment  Manual replica assignment, or none
    * @return the assignment for the new partitions
    */
   def createNewPartitionsAssignment(topic: String,
@@ -270,8 +273,8 @@ class AdminZkClient(zkClient: KafkaZkClient) extends Logging {
    * Add partitions to the existing topic with the provided assignment. This method does
    * not validate the provided assignments. Validation must be done beforehand.
    *
-   * @param topic Topic for adding partitions to
-   * @param existingAssignment A map from partition id to its assignment
+   * @param topic                  Topic for adding partitions to
+   * @param existingAssignment     A map from partition id to its assignment
    * @param newPartitionAssignment The assignments to add
    * @return the updated replica assignment
    */
@@ -335,6 +338,7 @@ class AdminZkClient(zkClient: KafkaZkClient) extends Logging {
 
   /**
    * Change the configs for a given entityType and entityName
+   *
    * @param entityType
    * @param entityName
    * @param configs
@@ -355,9 +359,9 @@ class AdminZkClient(zkClient: KafkaZkClient) extends Logging {
    * If clientId is <default>, default clientId config is updated. ClientId configs are used only if <user, clientId>
    * and <user> configs are not specified.
    *
-   * @param sanitizedClientId: The sanitized clientId for which configs are being changed
-   * @param configs: The final set of configs that will be applied to the topic. If any new configs need to be added or
-   *                 existing configs need to be deleted, it should be done prior to invoking this API
+   * @param sanitizedClientId : The sanitized clientId for which configs are being changed
+   * @param configs           : The final set of configs that will be applied to the topic. If any new configs need to be added or
+   *                          existing configs need to be deleted, it should be done prior to invoking this API
    *
    */
   def changeClientIdConfig(sanitizedClientId: String, configs: Properties): Unit = {
@@ -370,9 +374,9 @@ class AdminZkClient(zkClient: KafkaZkClient) extends Logging {
    * User and/or clientId components of the path may be <default>, indicating that the configuration is the default
    * value to be applied if a more specific override is not configured.
    *
-   * @param sanitizedEntityName: <sanitizedUserPrincipal> or <sanitizedUserPrincipal>/clients/<clientId>
-   * @param configs: The final set of configs that will be applied to the topic. If any new configs need to be added or
-   *                 existing configs need to be deleted, it should be done prior to invoking this API
+   * @param sanitizedEntityName : <sanitizedUserPrincipal> or <sanitizedUserPrincipal>/clients/<clientId>
+   * @param configs             : The final set of configs that will be applied to the topic. If any new configs need to be added or
+   *                            existing configs need to be deleted, it should be done prior to invoking this API
    *
    */
   def changeUserOrUserClientIdConfig(sanitizedEntityName: String, configs: Properties): Unit = {
@@ -385,6 +389,7 @@ class AdminZkClient(zkClient: KafkaZkClient) extends Logging {
 
   /**
    * validates the topic configs
+   *
    * @param topic
    * @param configs
    */
@@ -399,23 +404,23 @@ class AdminZkClient(zkClient: KafkaZkClient) extends Logging {
   /**
    * Update the config for an existing topic and create a change notification so the change will propagate to other brokers
    *
-   * @param topic: The topic for which configs are being changed
-   * @param configs: The final set of configs that will be applied to the topic. If any new configs need to be added or
-   *                 existing configs need to be deleted, it should be done prior to invoking this API
+   * @param topic   : The topic for which configs are being changed
+   * @param configs : The final set of configs that will be applied to the topic. If any new configs need to be added or
+   *                existing configs need to be deleted, it should be done prior to invoking this API
    *
    */
-   def changeTopicConfig(topic: String, configs: Properties): Unit = {
+  def changeTopicConfig(topic: String, configs: Properties): Unit = {
     validateTopicConfig(topic, configs)
     changeEntityConfig(ConfigType.Topic, topic, configs)
   }
 
   /**
-    * Override the broker config on some set of brokers. These overrides will be persisted between sessions, and will
-    * override any defaults entered in the broker's config files
-    *
-    * @param brokers: The list of brokers to apply config changes to
-    * @param configs: The config to change, as properties
-    */
+   * Override the broker config on some set of brokers. These overrides will be persisted between sessions, and will
+   * override any defaults entered in the broker's config files
+   *
+   * @param brokers : The list of brokers to apply config changes to
+   * @param configs : The config to change, as properties
+   */
   def changeBrokerConfig(brokers: Seq[Int], configs: Properties): Unit = {
     validateBrokerConfig(configs)
     brokers.foreach {
@@ -424,22 +429,23 @@ class AdminZkClient(zkClient: KafkaZkClient) extends Logging {
   }
 
   /**
-    * Override a broker override or broker default config. These overrides will be persisted between sessions, and will
-    * override any defaults entered in the broker's config files
-    *
-    * @param broker: The broker to apply config changes to or None to update dynamic default configs
-    * @param configs: The config to change, as properties
-    */
+   * Override a broker override or broker default config. These overrides will be persisted between sessions, and will
+   * override any defaults entered in the broker's config files
+   *
+   * @param broker  : The broker to apply config changes to or None to update dynamic default configs
+   * @param configs : The config to change, as properties
+   */
   def changeBrokerConfig(broker: Option[Int], configs: Properties): Unit = {
     validateBrokerConfig(configs)
     changeEntityConfig(ConfigType.Broker, broker.map(_.toString).getOrElse(ConfigEntityName.Default), configs)
   }
 
   /**
-    * Validate dynamic broker configs. Since broker configs may contain custom configs, the validation
-    * only verifies that the provided config does not contain any static configs.
-    * @param configs configs to validate
-    */
+   * Validate dynamic broker configs. Since broker configs may contain custom configs, the validation
+   * only verifies that the provided config does not contain any static configs.
+   *
+   * @param configs configs to validate
+   */
   def validateBrokerConfig(configs: Properties): Unit = {
     DynamicConfig.Broker.validate(configs)
   }
@@ -455,6 +461,7 @@ class AdminZkClient(zkClient: KafkaZkClient) extends Logging {
   /**
    * Read the entity (topic, broker, client, user or <user, client>) config (if any) from zk
    * sanitizedEntityName is <topic>, <broker>, <client-id>, <user> or <user>/clients/<client-id>.
+   *
    * @param rootEntityType
    * @param sanitizedEntityName
    * @return
@@ -465,6 +472,7 @@ class AdminZkClient(zkClient: KafkaZkClient) extends Logging {
 
   /**
    * Gets all topic configs
+   *
    * @return
    */
   def getAllTopicConfigs(): Map[String, Properties] =
@@ -472,6 +480,7 @@ class AdminZkClient(zkClient: KafkaZkClient) extends Logging {
 
   /**
    * Gets all the entity configs for a given entityType
+   *
    * @param entityType
    * @return
    */
@@ -480,6 +489,7 @@ class AdminZkClient(zkClient: KafkaZkClient) extends Logging {
 
   /**
    * Gets all the entity configs for a given childEntityType
+   *
    * @param rootEntityType
    * @param childEntityType
    * @return
@@ -496,6 +506,7 @@ class AdminZkClient(zkClient: KafkaZkClient) extends Logging {
         case None => entityNames
       }
     }
+
     entityPaths(None)
       .flatMap(entity => entityPaths(Some(entity + '/' + childEntityType)))
       .map(entityPath => (entityPath, fetchEntityConfig(rootEntityType, entityPath))).toMap
