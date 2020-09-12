@@ -71,6 +71,13 @@ object LogAppendInfo {
       offsetsMonotonic = false, -1L, recordErrors, errorMessage)
 }
 
+sealed trait LeaderHwChange
+object LeaderHwChange {
+  case object Increased extends LeaderHwChange
+  case object Same extends LeaderHwChange
+  case object None extends LeaderHwChange
+}
+
 /**
  * Struct to hold various quantities we compute about each message set before appending to the log
  * 保存一组待写入消息的各种元数据信息(比如这组消息中第一条消息的位移值/最后一条消息的位移值/这组消息中最大的消息时间戳等等)
@@ -92,6 +99,9 @@ object LogAppendInfo {
  * @param validBytes             The number of valid bytes
  * @param offsetsMonotonic       Are the offsets in this message set monotonically increasing
  * @param lastOffsetOfFirstBatch The last offset of the first batch
+ * @param leaderHwChange Incremental if the high watermark needs to be increased after appending record.
+ *                       Same if high watermark is not changed. None is the default value and it means append failed
+ *
  */
 case class LogAppendInfo(var firstOffset: Option[Long],
                          var lastOffset: Long, // 消息集合最后一条消息的位移值
@@ -107,8 +117,8 @@ case class LogAppendInfo(var firstOffset: Option[Long],
                          offsetsMonotonic: Boolean, // 消息位移值是否是顺序增加的
                          lastOffsetOfFirstBatch: Long, // 首个消息批次中最后一条消息的位移
                          recordErrors: Seq[RecordError] = List(), // 写入消息时出现的异常列表
-                         errorMessage: String = null // 错误码
-                        ) {
+                         errorMessage: String = null, // 错误码
+                         leaderHwChange: LeaderHwChange = LeaderHwChange.None) {
   /**
    * Get the first offset if it exists, else get the last offset of the first batch
    * For magic versions 2 and newer, this method will return first offset. For magic versions

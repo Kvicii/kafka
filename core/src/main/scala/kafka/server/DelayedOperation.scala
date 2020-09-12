@@ -40,6 +40,9 @@ import scala.collection.mutable.ListBuffer
  * forceComplete().
  * A subclass of DelayedOperation needs to provide an implementation of both onComplete() and tryComplete().
  *
+ * Noted that if you add a future delayed operation that calls ReplicaManager.appendRecords() in onComplete()
+ * like DelayedJoin, you must be aware that this operation's onExpiration() needs to call actionQueue.tryCompleteAction().
+ *
  * 所有 Kafka 延迟请求类的抽象父类
  * 延迟请求的高阶抽象类 提供了完成请求以及请求完成和过期后的回调逻辑实现
  *
@@ -57,7 +60,8 @@ abstract class DelayedOperation(override val delayMs: Long,
   // 与此同时另一个线程执行检查时却发现条件满足了 但是这个线程又没有拿到锁 此时该延迟操作将永远不会有再次被检查的机会 会导致最终超时
   // 防止多个线程同时检查操作是否可完成时发生锁竞争导致操作最终超时
   // 加入 tryCompletePending 字段目的 就是确保拿到锁的线程有机会再次检查条件是否已经满足
-  private val tryCompletePending = new AtomicBoolean(false)
+  // 已废弃
+  // private val tryCompletePending = new AtomicBoolean(false)
   // Visible for testing
   private[server] val lock: Lock = lockOpt.getOrElse(new ReentrantLock)
 
@@ -133,34 +137,54 @@ abstract class DelayedOperation(override val delayMs: Long,
    *
    * 线程安全版本的 tryComplete 方法 该方法其实是社区后来才加入的 不过已经慢慢地取代了 tryComplete 现在外部代码调用的都是这个方法了
    */
-  private[server] def maybeTryComplete(): Boolean = {
-    var retry = false // 是否需要重试
-    var done = false // 延迟操作是否已完成
-    do {
-      if (lock.tryLock()) { // 尝试获取锁对象
-        try {
-          tryCompletePending.set(false) // 清空 tryCompletePending 状态
-          done = tryComplete() // 完成延迟请求
-        } finally {
-          lock.unlock() // 释放锁
-        }
-        // While we were holding the lock, another thread may have invoked `maybeTryComplete` and set
-        // `tryCompletePending`. In this case we should retry.
-        // 运行到这里的线程持有锁 其他线程只能运行else分支的代码
-        // 如果其他线程将maybeTryComplete设置为true 那么retry = true
-        // 这就相当于其他线程给了本线程重试的机会
-        retry = tryCompletePending.get()
-      } else {
-        // Another thread is holding the lock. If `tryCompletePending` is already set and this thread failed to
-        // acquire the lock, then the thread that is holding the lock is guaranteed to see the flag and retry.
-        // Otherwise, we should set the flag and retry on this thread since the thread holding the lock may have
-        // released the lock and returned by the time the flag is set.
-        // 运行到这里的线程没有拿到锁 间接影响 retry 值 设置tryCompletePending = true给持有锁的线程一个重试的机会
-        retry = !tryCompletePending.getAndSet(true)
-      }
-    } while (!isCompleted && retry)
-    done
+  // private[server] def maybeTryComplete(): Boolean = {
+  //   var retry = false // 是否需要重试
+  //   var done = false // 延迟操作是否已完成
+  //   do {
+  //     if (lock.tryLock()) { // 尝试获取锁对象
+  //       try {
+  //         tryCompletePending.set(false) // 清空 tryCompletePending 状态
+  //         done = tryComplete() // 完成延迟请求
+  //       } finally {
+  //         lock.unlock() // 释放锁
+  //       }
+  //       // While we were holding the lock, another thread may have invoked `maybeTryComplete` and set
+  //       // `tryCompletePending`. In this case we should retry.
+  //       // 运行到这里的线程持有锁 其他线程只能运行else分支的代码
+  //       // 如果其他线程将maybeTryComplete设置为true 那么retry = true
+  //       // 这就相当于其他线程给了本线程重试的机会
+  //       retry = tryCompletePending.get()
+  //     } else {
+  //       // Another thread is holding the lock. If `tryCompletePending` is already set and this thread failed to
+  //       // acquire the lock, then the thread that is holding the lock is guaranteed to see the flag and retry.
+  //       // Otherwise, we should set the flag and retry on this thread since the thread holding the lock may have
+  //       // released the lock and returned by the time the flag is set.
+  //       // 运行到这里的线程没有拿到锁 间接影响 retry 值 设置tryCompletePending = true给持有锁的线程一个重试的机会
+  //       retry = !tryCompletePending.getAndSet(true)
+  //     }
+  //   } while (!isCompleted && retry)
+  //   done
+  // }
+  /**
+   * Thread -safe variant of tryComplete() and call extra function if first tryComplete returns false
+   *
+   * @param f else function to be executed after first tryComplete returns false
+   * @return result of tryComplete
+   */
+
+  private[server] def safeTryCompleteOrElse(f: => Unit): Boolean = inLock(lock) {
+    if (tryComplete()) true
+    else {
+      f
+      // last completion check
+      tryComplete()
+    }
   }
+
+  /**
+   * Thread-safe variant of tryComplete()
+   */
+  private[server] def safeTryComplete(): Boolean = inLock(lock)(tryComplete())
 
   /*
    * run() method defines a task that is executed on timeout
@@ -284,28 +308,60 @@ final class DelayedOperationPurgatory[T <: DelayedOperation](purgatoryName: Stri
     // expire reaper will clean it up periodically.
     // At this point the only thread that can attempt this operation is this current thread
     // Hence it is safe to tryComplete() without a lock
-    var isCompletedByMe = operation.tryComplete()
+    // var isCompletedByMe = operation.tryComplete()
     // 调用tryComplete完成延迟请求 如果返回true 说明调用tryComplete的线程正常完成了延迟请求 不需要加入WatcherList
-    if (isCompletedByMe)
-      return true
-
-    var watchCreated = false
-    for (key <- watchKeys) { // 遍历所有要监控的Key
-      // If the operation is already completed, stop adding it to the rest of the watcher list.
-      if (operation.isCompleted) { // 再次查看请求的完成状态 如果已经完成 就说明是被其他线程完成的 返回false
-        return false
-      }
-      watchForOperation(key, operation) // 依然无法完成 将该operation加入到Key所在的WatcherList 等待后续完成
-
-      if (!watchCreated) { // 设置watchCreated标记 表明该任务已经被加入到WatcherList
-        watchCreated = true
-        estimatedTotalOperations.incrementAndGet() // 更新Purgatory中总请求数
-      }
-    }
-
-    isCompletedByMe = operation.maybeTryComplete() // 再次尝试完成该延迟请求
-    if (isCompletedByMe)
-      return true
+    // if (isCompletedByMe)
+    //   return true
+    //
+    // var watchCreated = false
+    // for (key <- watchKeys) { // 遍历所有要监控的Key
+    //   // If the operation is already completed, stop adding it to the rest of the watcher list.
+    //   if (operation.isCompleted) { // 再次查看请求的完成状态 如果已经完成 就说明是被其他线程完成的 返回false
+    //     return false
+    //   }
+    //   watchForOperation(key, operation) // 依然无法完成 将该operation加入到Key所在的WatcherList 等待后续完成
+    //
+    //   if (!watchCreated) { // 设置watchCreated标记 表明该任务已经被加入到WatcherList
+    //     watchCreated = true
+    //     estimatedTotalOperations.incrementAndGet() // 更新Purgatory中总请求数
+    //   }
+    // }
+    //
+    // isCompletedByMe = operation.maybeTryComplete() // 再次尝试完成该延迟请求
+    // if (isCompletedByMe)
+    //   return true
+    // The cost of tryComplete() is typically proportional to the number of keys. Calling tryComplete() for each key is
+    // going to be expensive if there are many keys. Instead, we do the check in the following way through safeTryCompleteOrElse().
+    // If the operation is not completed, we just add the operation to all keys. Then we call tryComplete() again. At
+    // this time, if the operation is still not completed, we are guaranteed that it won't miss any future triggering
+    // event since the operation is already on the watcher list for all keys.
+    //
+    // ==============[story about lock]==============
+    // Through safeTryCompleteOrElse(), we hold the operation's lock while adding the operation to watch list and doing
+    // the tryComplete() check. This is to avoid a potential deadlock between the callers to tryCompleteElseWatch() and
+    // checkAndComplete(). For example, the following deadlock can happen if the lock is only held for the final tryComplete()
+    // 1) thread_a holds readlock of stateLock from TransactionStateManager
+    // 2) thread_a is executing tryCompleteElseWatch()
+    // 3) thread_a adds op to watch list
+    // 4) thread_b requires writelock of stateLock from TransactionStateManager (blocked by thread_a)
+    // 5) thread_c calls checkAndComplete() and holds lock of op
+    // 6) thread_c is waiting readlock of stateLock to complete op (blocked by thread_b)
+    // 7) thread_a is waiting lock of op to call the final tryComplete() (blocked by thread_c)
+    //
+    // Note that even with the current approach, deadlocks could still be introduced. For example,
+    // 1) thread_a calls tryCompleteElseWatch() and gets lock of op
+    // 2) thread_a adds op to watch list
+    // 3) thread_a calls op#tryComplete and tries to require lock_b
+    // 4) thread_b holds lock_b and calls checkAndComplete()
+    // 5) thread_b sees op from watch list
+    // 6) thread_b needs lock of op
+    // To avoid the above scenario, we recommend DelayedOperationPurgatory.checkAndComplete() be called without holding
+    // any exclusive lock. Since DelayedOperationPurgatory.checkAndComplete() completes delayed operations asynchronously,
+    // holding a exclusive lock to make the call is often unnecessary.
+    if (operation.safeTryCompleteOrElse {
+      watchKeys.foreach(key => watchForOperation(key, operation))
+      if (watchKeys.nonEmpty) estimatedTotalOperations.incrementAndGet()
+    }) return true
 
     // if it cannot be completed by now and hence is watched, add to the expire queue also
     if (!operation.isCompleted) { // 如果依然不能完成此请求 将其加入到过期队列
@@ -451,7 +507,7 @@ final class DelayedOperationPurgatory[T <: DelayedOperation](purgatoryName: Stri
         if (curr.isCompleted) {
           // another thread has completed this operation, just remove it
           iter.remove()
-        } else if (curr.maybeTryComplete()) {
+        } else if (curr.safeTryComplete()) {
           iter.remove()
           completed += 1
         }
