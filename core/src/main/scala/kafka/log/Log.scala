@@ -36,6 +36,7 @@ import kafka.server.checkpoints.LeaderEpochCheckpointFile
 import kafka.server.epoch.LeaderEpochFileCache
 import kafka.utils._
 import org.apache.kafka.common.errors._
+import org.apache.kafka.common.message.FetchResponseData
 import org.apache.kafka.common.record.FileRecords.TimestampAndOffset
 import org.apache.kafka.common.record._
 import org.apache.kafka.common.requests.FetchResponse.AbortedTransaction
@@ -156,6 +157,7 @@ case class LogOffsetSnapshot(logStartOffset: Long,
  * 封装读取日志返回的数据及其元数据
  */
 case class LogReadInfo(fetchedData: FetchDataInfo,
+                       divergingEpoch: Option[FetchResponseData.EpochEndOffset],
                        highWatermark: Long,
                        logStartOffset: Long,
                        logEndOffset: Long,
