@@ -20,19 +20,22 @@
  */
 package kafka.controller
 
+import java.util
 import java.util.concurrent.TimeUnit
 
 import kafka.admin.AdminOperationException
 import kafka.api._
 import kafka.common._
-import kafka.controller.KafkaController.{AlterReassignmentsCallback, ElectLeadersCallback, ListReassignmentsCallback}
+import kafka.controller.KafkaController.{AlterIsrCallback, AlterReassignmentsCallback, ElectLeadersCallback, ListReassignmentsCallback}
 import kafka.metrics.{KafkaMetricsGroup, KafkaTimer}
 import kafka.server._
 import kafka.utils._
+import kafka.utils.Implicits._
 import kafka.zk.KafkaZkClient.UpdateLeaderAndIsrResult
 import kafka.zk._
 import kafka.zookeeper.{StateChangeHandler, ZNodeChangeHandler, ZNodeChildChangeHandler}
 import org.apache.kafka.common.errors.{BrokerNotAvailableException, ControllerMovedException, StaleBrokerEpochException}
+import org.apache.kafka.common.message.{AlterIsrRequestData, AlterIsrResponseData}
 import org.apache.kafka.common.metrics.Metrics
 import org.apache.kafka.common.protocol.Errors
 import org.apache.kafka.common.requests.{AbstractControlRequest, ApiError, LeaderAndIsrResponse, UpdateMetadataResponse}
@@ -43,6 +46,7 @@ import org.apache.zookeeper.KeeperException.Code
 
 import scala.collection.mutable.ArrayBuffer
 import scala.collection.{Map, Seq, Set, immutable, mutable}
+import scala.jdk.CollectionConverters._
 import scala.util.{Failure, Try}
 
 /**
@@ -66,6 +70,7 @@ object KafkaController extends Logging {
   type ElectLeadersCallback = Map[TopicPartition, Either[ApiError, Int]] => Unit
   type ListReassignmentsCallback = Either[Map[TopicPartition, ReplicaAssignment], ApiError] => Unit
   type AlterReassignmentsCallback = Either[Map[TopicPartition, ApiError], ApiError] => Unit
+  type AlterIsrCallback = Either[Map[TopicPartition, Either[Errors, LeaderAndIsr]], Errors] => Unit
 }
 
 /**
@@ -289,6 +294,7 @@ class KafkaController(val config: KafkaConfig,
     val childChangeHandlers = Seq(brokerChangeHandler, topicChangeHandler, topicDeletionHandler, logDirEventNotificationHandler,
       isrChangeNotificationHandler)
     childChangeHandlers.foreach(zkClient.registerZNodeChildChangeHandler)
+
     val nodeChangeHandlers = Seq(preferredReplicaElectionHandler, partitionReassignmentHandler)
     nodeChangeHandlers.foreach(zkClient.registerZNodeChangeHandlerAndCheckExistence)
 
@@ -901,7 +907,7 @@ class KafkaController(val config: KafkaConfig,
 
   private def updateLeaderAndIsrCache(partitions: Seq[TopicPartition] = controllerContext.allPartitions.toSeq): Unit = {
     val leaderIsrAndControllerEpochs = zkClient.getTopicPartitionStates(partitions)
-    leaderIsrAndControllerEpochs.foreach { case (partition, leaderIsrAndControllerEpoch) =>
+    leaderIsrAndControllerEpochs.forKeyValue { (partition, leaderIsrAndControllerEpoch) =>
       controllerContext.putPartitionLeadershipInfo(partition, leaderIsrAndControllerEpoch)
     }
   }
@@ -1162,7 +1168,7 @@ class KafkaController(val config: KafkaConfig,
       }.toMap.groupBy { case (_, assignedReplicas) => assignedReplicas.head }
 
     // for each broker, check if a preferred replica election needs to be triggered
-    preferredReplicasForTopicsByBrokers.foreach { case (leaderBroker, topicPartitionsForBroker) =>
+    preferredReplicasForTopicsByBrokers.forKeyValue { (leaderBroker, topicPartitionsForBroker) =>
       val topicsNotInPreferredReplica = topicPartitionsForBroker.filter { case (topicPartition, _) =>
         val leadershipInfo = controllerContext.partitionLeadershipInfo(topicPartition)
         leadershipInfo.exists(_.leaderAndIsr.leader != leaderBroker)
@@ -1566,7 +1572,7 @@ class KafkaController(val config: KafkaConfig,
       s"[$addedPartitionReplicaAssignment]")
     if (addedPartitionReplicaAssignment.nonEmpty)
     // 调整新增Topic的所有分区以及所属所有副本的运行状态调整为上线状态
-    onNewPartitionCreation(addedPartitionReplicaAssignment.keySet)
+      onNewPartitionCreation(addedPartitionReplicaAssignment.keySet)
   }
 
   private def processLogDirEventNotification(): Unit = {
@@ -1618,7 +1624,7 @@ class KafkaController(val config: KafkaConfig,
       }
     } else if (partitionsToBeAdded.nonEmpty) {
       info(s"New partitions to be added $partitionsToBeAdded")
-      partitionsToBeAdded.foreach { case (topicPartition, assignedReplicas) =>
+      partitionsToBeAdded.forKeyValue { (topicPartition, assignedReplicas) =>
         controllerContext.updatePartitionFullReplicaAssignment(topicPartition, assignedReplicas)
       }
       onNewPartitionCreation(partitionsToBeAdded.keySet)
@@ -1667,7 +1673,7 @@ class KafkaController(val config: KafkaConfig,
       val reassignmentResults = mutable.Map.empty[TopicPartition, ApiError]
       val partitionsToReassign = mutable.Map.empty[TopicPartition, ReplicaAssignment]
 
-      zkClient.getPartitionReassignment.foreach { case (tp, targetReplicas) =>
+      zkClient.getPartitionReassignment.forKeyValue { (tp, targetReplicas) =>
         maybeBuildReassignment(tp, Some(targetReplicas)) match {
           case Some(context) => partitionsToReassign.put(tp, context)
           case None => reassignmentResults.put(tp, new ApiError(Errors.NO_REASSIGNMENT_IN_PROGRESS))
@@ -1704,7 +1710,7 @@ class KafkaController(val config: KafkaConfig,
       val reassignmentResults = mutable.Map.empty[TopicPartition, ApiError]
       val partitionsToReassign = mutable.Map.empty[TopicPartition, ReplicaAssignment]
 
-      reassignments.foreach { case (tp, targetReplicas) =>
+      reassignments.forKeyValue { (tp, targetReplicas) =>
         val maybeApiError = targetReplicas.flatMap(validateReplicas(tp, _))
         maybeApiError match {
           case None =>
@@ -1911,6 +1917,146 @@ class KafkaController(val config: KafkaConfig,
     }
   }
 
+  def alterIsrs(alterIsrRequest: AlterIsrRequestData, callback: AlterIsrResponseData => Unit): Unit = {
+    val isrsToAlter = mutable.Map[TopicPartition, LeaderAndIsr]()
+
+    alterIsrRequest.topics.forEach { topicReq =>
+      topicReq.partitions.forEach { partitionReq =>
+        val tp = new TopicPartition(topicReq.name, partitionReq.partitionIndex)
+        val newIsr = partitionReq.newIsr().asScala.toList.map(_.toInt)
+        isrsToAlter.put(tp, new LeaderAndIsr(alterIsrRequest.brokerId, partitionReq.leaderEpoch, newIsr, partitionReq.currentIsrVersion))
+      }
+    }
+
+    def responseCallback(results: Either[Map[TopicPartition, Either[Errors, LeaderAndIsr]], Errors]): Unit = {
+      val resp = new AlterIsrResponseData()
+      results match {
+        case Right(error) =>
+          resp.setErrorCode(error.code)
+        case Left(partitionResults) =>
+          resp.setTopics(new util.ArrayList())
+          partitionResults
+            .groupBy { case (tp, _) => tp.topic } // Group by topic
+            .foreach { case (topic, partitions) =>
+              // Add each topic part to the response
+              val topicResp = new AlterIsrResponseData.TopicData()
+                .setName(topic)
+                .setPartitions(new util.ArrayList())
+              resp.topics.add(topicResp)
+              partitions.foreach { case (tp, errorOrIsr) =>
+                // Add each partition part to the response (new ISR or error)
+                errorOrIsr match {
+                  case Left(error) => topicResp.partitions.add(
+                    new AlterIsrResponseData.PartitionData()
+                      .setPartitionIndex(tp.partition)
+                      .setErrorCode(error.code))
+                  case Right(leaderAndIsr) => topicResp.partitions.add(
+                    new AlterIsrResponseData.PartitionData()
+                      .setPartitionIndex(tp.partition)
+                      .setLeaderId(leaderAndIsr.leader)
+                      .setLeaderEpoch(leaderAndIsr.leaderEpoch)
+                      .setIsr(leaderAndIsr.isr.map(Integer.valueOf).asJava)
+                      .setCurrentIsrVersion(leaderAndIsr.zkVersion))
+                }
+              }
+            }
+      }
+      callback.apply(resp)
+    }
+
+    eventManager.put(AlterIsrReceived(alterIsrRequest.brokerId, alterIsrRequest.brokerEpoch, isrsToAlter, responseCallback))
+  }
+
+  private def processAlterIsr(brokerId: Int, brokerEpoch: Long, isrsToAlter: Map[TopicPartition, LeaderAndIsr],
+                              callback: AlterIsrCallback): Unit = {
+
+    // Handle a few short-circuits
+    if (!isActive) {
+      callback.apply(Right(Errors.NOT_CONTROLLER))
+      return
+    }
+
+    val brokerEpochOpt = controllerContext.liveBrokerIdAndEpochs.get(brokerId)
+    if (brokerEpochOpt.isEmpty) {
+      info(s"Ignoring AlterIsr due to unknown broker $brokerId")
+      callback.apply(Right(Errors.STALE_BROKER_EPOCH))
+      return
+    }
+
+    if (!brokerEpochOpt.contains(brokerEpoch)) {
+      info(s"Ignoring AlterIsr due to stale broker epoch $brokerEpoch for broker $brokerId")
+      callback.apply(Right(Errors.STALE_BROKER_EPOCH))
+      return
+    }
+
+    val response = try {
+      val partitionResponses = mutable.HashMap[TopicPartition, Either[Errors, LeaderAndIsr]]()
+
+      // Determine which partitions we will accept the new ISR for
+      val adjustedIsrs: Map[TopicPartition, LeaderAndIsr] = isrsToAlter.flatMap {
+        case (tp: TopicPartition, newLeaderAndIsr: LeaderAndIsr) =>
+          controllerContext.partitionLeadershipInfo(tp) match {
+            case Some(leaderIsrAndControllerEpoch) =>
+              val currentLeaderAndIsr = leaderIsrAndControllerEpoch.leaderAndIsr
+              if (newLeaderAndIsr.leaderEpoch < currentLeaderAndIsr.leaderEpoch) {
+                partitionResponses(tp) = Left(Errors.FENCED_LEADER_EPOCH)
+                None
+              } else if (newLeaderAndIsr.equalsIgnoreZk(currentLeaderAndIsr)) {
+                // If a partition is already in the desired state, just return it
+                partitionResponses(tp) = Right(currentLeaderAndIsr)
+                None
+              } else {
+                Some(tp -> newLeaderAndIsr)
+              }
+            case None =>
+              partitionResponses(tp) = Left(Errors.UNKNOWN_TOPIC_OR_PARTITION)
+              None
+          }
+      }
+
+      // Do the updates in ZK
+      debug(s"Updating ISRs for partitions: ${adjustedIsrs.keySet}.")
+      val UpdateLeaderAndIsrResult(finishedUpdates, badVersionUpdates) = zkClient.updateLeaderAndIsr(
+        adjustedIsrs, controllerContext.epoch, controllerContext.epochZkVersion)
+
+      val successfulUpdates: Map[TopicPartition, LeaderAndIsr] = finishedUpdates.flatMap {
+        case (partition: TopicPartition, isrOrError: Either[Throwable, LeaderAndIsr]) =>
+          isrOrError match {
+            case Right(updatedIsr) =>
+              debug(s"ISR for partition $partition updated to [${updatedIsr.isr.mkString(",")}] and zkVersion updated to [${updatedIsr.zkVersion}]")
+              partitionResponses(partition) = Right(updatedIsr)
+              Some(partition -> updatedIsr)
+            case Left(error) =>
+              warn(s"Failed to update ISR for partition $partition", error)
+              partitionResponses(partition) = Left(Errors.forException(error))
+              None
+          }
+      }
+
+      badVersionUpdates.foreach(partition => {
+        debug(s"Failed to update ISR for partition $partition, bad ZK version")
+        partitionResponses(partition) = Left(Errors.INVALID_UPDATE_VERSION)
+      })
+
+      def processUpdateNotifications(partitions: Seq[TopicPartition]): Unit = {
+        val liveBrokers: Seq[Int] = controllerContext.liveOrShuttingDownBrokerIds.toSeq
+        sendUpdateMetadataRequest(liveBrokers, partitions.toSet)
+      }
+
+      // Update our cache and send out metadata updates
+      updateLeaderAndIsrCache(successfulUpdates.keys.toSeq)
+      processUpdateNotifications(isrsToAlter.keys.toSeq)
+
+      Left(partitionResponses)
+    } catch {
+      case e: Throwable =>
+        error(s"Error when processing AlterIsr for partitions: ${isrsToAlter.keys.toSeq}", e)
+        Right(Errors.UNKNOWN_SERVER_ERROR)
+    }
+
+    callback.apply(response)
+  }
+
   private def processControllerChange(): Unit = {
     maybeResign() // 如果是ControllerChange事件 仅执行卸任逻辑即可
   }
@@ -1992,6 +2138,8 @@ class KafkaController(val config: KafkaConfig,
           processPartitionReassignmentIsrChange(partition)
         case IsrChangeNotification =>
           processIsrChangeNotification()
+        case AlterIsrReceived(brokerId, brokerEpoch, isrsToAlter, callback) =>
+          processAlterIsr(brokerId, brokerEpoch, isrsToAlter, callback)
         case Startup =>
           // 处理Startup事件
           processStartup()
@@ -2205,63 +2353,74 @@ private[controller] class ControllerStats extends KafkaMetricsGroup {
  * Controller事件 在事件队列中被处理的对象
  */
 sealed trait ControllerEvent {
-  def state: ControllerState  // 每个 ControllerEvent 都定义了一个状态  Controller 在处理具体的事件时会对状态进行相应的变更 该状态是由ControllerState.scale定义的
+  def state: ControllerState // 每个 ControllerEvent 都定义了一个状态  Controller 在处理具体的事件时会对状态进行相应的变更 该状态是由ControllerState.scale定义的
   // preempt() is not executed by `ControllerEventThread` but by the main thread.
   def preempt(): Unit
 }
 
 case object ControllerChange extends ControllerEvent {
   override def state: ControllerState = ControllerState.ControllerChange
+
   override def preempt(): Unit = {}
 }
 
 case object Reelect extends ControllerEvent {
   override def state: ControllerState = ControllerState.ControllerChange
+
   override def preempt(): Unit = {}
 }
 
 case object RegisterBrokerAndReelect extends ControllerEvent {
   override def state: ControllerState = ControllerState.ControllerChange
+
   override def preempt(): Unit = {}
 }
 
 case object Expire extends ControllerEvent {
   override def state: ControllerState = ControllerState.ControllerChange
+
   override def preempt(): Unit = {}
 }
 
 case object ShutdownEventThread extends ControllerEvent {
   override def state: ControllerState = ControllerState.ControllerShutdown
+
   override def preempt(): Unit = {}
 }
 
 case object AutoPreferredReplicaLeaderElection extends ControllerEvent {
   override def state: ControllerState = ControllerState.AutoLeaderBalance
+
   override def preempt(): Unit = {}
 }
 
 case object UncleanLeaderElectionEnable extends ControllerEvent {
   override def state: ControllerState = ControllerState.UncleanLeaderElectionEnable
+
   override def preempt(): Unit = {}
 }
 
 case class TopicUncleanLeaderElectionEnable(topic: String) extends ControllerEvent {
   override def state: ControllerState = ControllerState.TopicUncleanLeaderElectionEnable
+
   override def preempt(): Unit = {}
 }
 
 case class ControlledShutdown(id: Int, brokerEpoch: Long, controlledShutdownCallback: Try[Set[TopicPartition]] => Unit) extends ControllerEvent {
   override def state: ControllerState = ControllerState.ControlledShutdown
+
   override def preempt(): Unit = controlledShutdownCallback(Failure(new ControllerMovedException("Controller moved to another broker")))
 }
 
 case class LeaderAndIsrResponseReceived(leaderAndIsrResponse: LeaderAndIsrResponse, brokerId: Int) extends ControllerEvent {
   override def state: ControllerState = ControllerState.LeaderAndIsrResponseReceived
+
   override def preempt(): Unit = {}
 }
 
 case class UpdateMetadataResponseReceived(updateMetadataResponse: UpdateMetadataResponse, brokerId: Int) extends ControllerEvent {
   override def state: ControllerState = ControllerState.UpdateMetadataResponseReceived
+
   override def preempt(): Unit = {}
 }
 
@@ -2269,62 +2428,81 @@ case class TopicDeletionStopReplicaResponseReceived(replicaId: Int,
                                                     requestError: Errors,
                                                     partitionErrors: Map[TopicPartition, Errors]) extends ControllerEvent {
   override def state: ControllerState = ControllerState.TopicDeletion
+
   override def preempt(): Unit = {}
 }
 
 case object Startup extends ControllerEvent {
   override def state: ControllerState = ControllerState.ControllerChange
+
   override def preempt(): Unit = {}
 }
 
 case object BrokerChange extends ControllerEvent {
   override def state: ControllerState = ControllerState.BrokerChange
+
   override def preempt(): Unit = {}
 }
 
 case class BrokerModifications(brokerId: Int) extends ControllerEvent {
   override def state: ControllerState = ControllerState.BrokerChange
+
   override def preempt(): Unit = {}
 }
 
 case object TopicChange extends ControllerEvent {
   override def state: ControllerState = ControllerState.TopicChange
+
   override def preempt(): Unit = {}
 }
 
 case object LogDirEventNotification extends ControllerEvent {
   override def state: ControllerState = ControllerState.LogDirChange
+
   override def preempt(): Unit = {}
 }
 
 case class PartitionModifications(topic: String) extends ControllerEvent {
   override def state: ControllerState = ControllerState.TopicChange
+
   override def preempt(): Unit = {}
 }
 
 case object TopicDeletion extends ControllerEvent {
   override def state: ControllerState = ControllerState.TopicDeletion
+
   override def preempt(): Unit = {}
 }
 
 case object ZkPartitionReassignment extends ControllerEvent {
   override def state: ControllerState = ControllerState.AlterPartitionReassignment
+
   override def preempt(): Unit = {}
 }
 
 case class ApiPartitionReassignment(reassignments: Map[TopicPartition, Option[Seq[Int]]],
                                     callback: AlterReassignmentsCallback) extends ControllerEvent {
   override def state: ControllerState = ControllerState.AlterPartitionReassignment
+
   override def preempt(): Unit = callback(Right(new ApiError(Errors.NOT_CONTROLLER)))
 }
 
 case class PartitionReassignmentIsrChange(partition: TopicPartition) extends ControllerEvent {
   override def state: ControllerState = ControllerState.AlterPartitionReassignment
+
   override def preempt(): Unit = {}
 }
 
 case object IsrChangeNotification extends ControllerEvent {
   override def state: ControllerState = ControllerState.IsrChange
+
+  override def preempt(): Unit = {}
+}
+
+case class AlterIsrReceived(brokerId: Int, brokerEpoch: Long, isrsToAlter: Map[TopicPartition, LeaderAndIsr],
+                            callback: AlterIsrCallback) extends ControllerEvent {
+  override def state: ControllerState = ControllerState.IsrChange
+
   override def preempt(): Unit = {}
 }
 
@@ -2349,6 +2527,7 @@ case class ReplicaLeaderElection(
 case class ListPartitionReassignments(partitionsOpt: Option[Set[TopicPartition]],
                                       callback: ListReassignmentsCallback) extends ControllerEvent {
   override def state: ControllerState = ControllerState.ListPartitionReassignment
+
   override def preempt(): Unit = callback(Right(new ApiError(Errors.NOT_CONTROLLER, null)))
 }
 
@@ -2356,5 +2535,6 @@ case class ListPartitionReassignments(partitionsOpt: Option[Set[TopicPartition]]
 // Used only in test cases
 abstract class MockEvent(val state: ControllerState) extends ControllerEvent {
   def process(): Unit
+
   def preempt(): Unit
 }

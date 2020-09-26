@@ -301,8 +301,10 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
         socketServer.startup(startProcessingRequests = false) // 启动SocketServer的Acceptor线程 获取绑定的端口号
 
         /* start replica manager */
+        brokerToControllerChannelManager = new BrokerToControllerChannelManagerImpl(metadataCache, time, metrics, config, threadNamePrefix)
         replicaManager = createReplicaManager(isShuttingDown)
         replicaManager.startup() // 启动副本状态机
+        brokerToControllerChannelManager.start()
 
         val brokerInfo = createBrokerInfo
         val brokerEpoch = zkClient.registerBroker(brokerInfo)
@@ -317,8 +319,6 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
         /* start kafka controller */
         kafkaController = new KafkaController(config, zkClient, time, metrics, brokerInfo, brokerEpoch, tokenManager, threadNamePrefix)
         kafkaController.startup() // 启动Controller
-
-        brokerToControllerChannelManager = new BrokerToControllerChannelManager(metadataCache, time, metrics, config, threadNamePrefix)
 
         adminManager = new AdminManager(config, metrics, metadataCache, zkClient)
 
@@ -424,9 +424,12 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
     metricsContext
   }
 
-  protected def createReplicaManager(isShuttingDown: AtomicBoolean): ReplicaManager =
+  protected def createReplicaManager(isShuttingDown: AtomicBoolean): ReplicaManager = {
+    val alterIsrManager = new AlterIsrManagerImpl(brokerToControllerChannelManager, kafkaScheduler,
+      time, config.brokerId, () => kafkaController.brokerEpoch)
     new ReplicaManager(config, metrics, time, zkClient, kafkaScheduler, logManager, isShuttingDown, quotaManagers,
-      brokerTopicStats, metadataCache, logDirFailureChannel)
+      brokerTopicStats, metadataCache, logDirFailureChannel, alterIsrManager)
+  }
 
   private def initZkClient(time: Time): Unit = {
     info(s"Connecting to zookeeper on ${config.zkConnect}")
@@ -704,6 +707,10 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
 
         if (replicaManager != null)
           CoreUtils.swallow(replicaManager.shutdown(), this)
+
+        if (brokerToControllerChannelManager != null)
+          CoreUtils.swallow(brokerToControllerChannelManager.shutdown(), this)
+
         if (logManager != null)
           CoreUtils.swallow(logManager.shutdown(), this)
 

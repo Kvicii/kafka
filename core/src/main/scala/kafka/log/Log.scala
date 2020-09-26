@@ -398,6 +398,20 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径 To
     newHighWatermark
   }
 
+  def updateHighWatermarkOffsetMetadata(hw: LogOffsetMetadata): Long = {
+    val newHighWatermark = if (hw.messageOffset < logStartOffset) {
+      updateHighWatermarkMetadata(LogOffsetMetadata(logStartOffset))
+      logStartOffset
+    } else if (hw.messageOffset > logEndOffset) {
+      updateHighWatermarkMetadata(logEndOffsetMetadata)
+      logEndOffset
+    } else {
+      updateHighWatermarkMetadata(hw)
+      hw.messageOffset
+    }
+    newHighWatermark
+  }
+
   /**
    * Update the high watermark to a new value if and only if it is larger than the old value. It is
    * an error to update to a value which is larger than the log end offset.
@@ -1608,7 +1622,8 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径 To
            minOneMessage: Boolean // 是否允许至少读一条消息 (设想如果消息很大 超过了 maxLength 正常情况下 read 方法永远不会返回任何消息 但如果设置了该参数为 true read 方法就保证至少能够返回一条消息)
           ): FetchDataInfo = {
     maybeHandleIOException(s"Exception while reading from $topicPartition in dir ${dir.getParent}") {
-      trace(s"Reading $maxLength bytes from offset $startOffset of length $size bytes")
+      trace(s"Reading maximum $maxLength bytes at offset $startOffset from log with " +
+        s"total length $size bytes")
 
       val includeAbortedTxns = isolation == FetchTxnCommitted
 
@@ -2229,7 +2244,7 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径 To
    * @param targetOffset The offset to truncate to, an upper bound on all offsets in the log after truncation is complete.
    * @return True iff targetOffset < logEndOffset
    */
-  private[log] def truncateTo(targetOffset: Long): Boolean = {
+  private[kafka] def truncateTo(targetOffset: Long): Boolean = {
     maybeHandleIOException(s"Error while truncating log to offset $targetOffset for $topicPartition in dir ${dir.getParent}") {
       if (targetOffset < 0)
         throw new IllegalArgumentException(s"Cannot truncate partition $topicPartition to a negative offset (%d).".format(targetOffset))

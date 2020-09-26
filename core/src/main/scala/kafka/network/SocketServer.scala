@@ -19,7 +19,9 @@ package kafka.network
 
 import java.io.IOException
 import java.net._
-import java.nio.channels.{Selector => NSelector, _}
+import java.nio.ByteBuffer
+import java.nio.channels._
+import java.nio.channels.{Selector => NSelector}
 import java.util
 import java.util.Optional
 import java.util.concurrent._
@@ -33,7 +35,10 @@ import kafka.network.SocketServer._
 import kafka.security.CredentialProvider
 import kafka.server.{BrokerReconfigurable, KafkaConfig}
 import kafka.utils._
+import kafka.utils.Implicits._
 import org.apache.kafka.common.config.ConfigException
+import org.apache.kafka.common.errors.InvalidRequestException
+import org.apache.kafka.common.{Endpoint, KafkaException, MetricName, Reconfigurable}
 import org.apache.kafka.common.memory.{MemoryPool, SimpleMemoryPool}
 import org.apache.kafka.common.metrics._
 import org.apache.kafka.common.metrics.stats.{CumulativeSum, Meter, Rate}
@@ -461,7 +466,7 @@ class SocketServer(val config: KafkaConfig,
   private def waitForAuthorizerFuture(acceptor: Acceptor,
                                       authorizerFutures: Map[Endpoint, CompletableFuture[Void]]): Unit = {
     //we can't rely on authorizerFutures.get() due to ephemeral ports. Get the future using listener name
-    authorizerFutures.foreach { case (endpoint, future) =>
+    authorizerFutures.forKeyValue { (endpoint, future) =>
       if (endpoint.listenerName == Optional.of(acceptor.endPoint.listenerName.value))
         future.join()
     }
@@ -1077,6 +1082,14 @@ private[kafka] class Processor(val id: Int,
   /**
    * Process线程从Socket中不断读取已经接收到的网络请求 然后转换成Request实例 放入Request的队列
    */
+  protected def parseRequestHeader(buffer: ByteBuffer): RequestHeader = {
+    val header = RequestHeader.parse(buffer)
+    if (!header.apiKey.isEnabled) {
+      throw new InvalidRequestException("Received request for disabled api key " + header.apiKey)
+    }
+    header
+  }
+
   private def processCompletedReceives(): Unit = {
     // 遍历所有已经接收的Request
     selector.completedReceives.forEach { receive =>
@@ -1084,7 +1097,7 @@ private[kafka] class Processor(val id: Int,
         // 保证对应的SocketChannel已经建立
         openOrClosingChannel(receive.source) match {
           case Some(channel) =>
-            val header = RequestHeader.parse(receive.payload)
+            val header = parseRequestHeader(receive.payload)
             if (header.apiKey == ApiKeys.SASL_HANDSHAKE && channel.maybeBeginServerReauthentication(receive,
               () => time.nanoseconds()))
               trace(s"Begin re-authentication: $channel")

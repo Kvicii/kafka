@@ -6,7 +6,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *    http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -17,26 +17,31 @@
 
 package kafka.admin
 
-import java.io.{IOException, PrintStream}
+import java.io.PrintStream
+import java.io.IOException
 import java.util.Properties
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.{ConcurrentLinkedQueue, TimeUnit}
 
-import kafka.utils.{CommandDefaultOptions, CommandLineUtils, Logging}
+import kafka.utils.{CommandDefaultOptions, CommandLineUtils}
+import kafka.utils.Implicits._
+import kafka.utils.Logging
+import org.apache.kafka.common.utils.Utils
+import org.apache.kafka.clients.{ApiVersions, ClientDnsLookup, ClientResponse, ClientUtils, CommonClientConfigs, Metadata, NetworkClient, NodeApiVersions}
 import org.apache.kafka.clients.consumer.internals.{ConsumerNetworkClient, RequestFuture}
-import org.apache.kafka.clients._
-import org.apache.kafka.common.Node
 import org.apache.kafka.common.config.ConfigDef.ValidString._
 import org.apache.kafka.common.config.ConfigDef.{Importance, Type}
 import org.apache.kafka.common.config.{AbstractConfig, ConfigDef}
 import org.apache.kafka.common.errors.AuthenticationException
 import org.apache.kafka.common.internals.ClusterResourceListeners
-import org.apache.kafka.common.message.ApiVersionsResponseData.ApiVersionsResponseKeyCollection
 import org.apache.kafka.common.metrics.Metrics
 import org.apache.kafka.common.network.Selector
 import org.apache.kafka.common.protocol.{ApiKeys, Errors}
-import org.apache.kafka.common.requests._
-import org.apache.kafka.common.utils.{KafkaThread, LogContext, Time, Utils}
+import org.apache.kafka.common.utils.LogContext
+import org.apache.kafka.common.utils.{KafkaThread, Time}
+import org.apache.kafka.common.Node
+import org.apache.kafka.common.message.ApiVersionsResponseData.ApiVersionsResponseKeyCollection
+import org.apache.kafka.common.requests.{AbstractRequest, AbstractResponse, ApiVersionsRequest, ApiVersionsResponse, MetadataRequest, MetadataResponse}
 
 import scala.jdk.CollectionConverters._
 import scala.util.{Failure, Success, Try}
@@ -55,7 +60,7 @@ object BrokerApiVersionsCommand {
     val adminClient = createAdminClient(opts)
     adminClient.awaitBrokers()
     val brokerMap = adminClient.listAllBrokerVersionInfo()
-    brokerMap.foreach { case (broker, versionInfoOrError) =>
+    brokerMap.forKeyValue { (broker, versionInfoOrError) =>
       versionInfoOrError match {
         case Success(v) => out.print(s"${broker} -> ${v.toString(true)}\n")
         case Failure(v) => out.print(s"${broker} -> ERROR: ${v}\n")
@@ -78,14 +83,14 @@ object BrokerApiVersionsCommand {
     val CommandConfigDoc = "A property file containing configs to be passed to Admin Client."
 
     val commandConfigOpt = parser.accepts("command-config", CommandConfigDoc)
-      .withRequiredArg
-      .describedAs("command config property file")
-      .ofType(classOf[String])
+                                 .withRequiredArg
+                                 .describedAs("command config property file")
+                                 .ofType(classOf[String])
     val bootstrapServerOpt = parser.accepts("bootstrap-server", BootstrapServerDoc)
-      .withRequiredArg
-      .describedAs("server(s) to use for bootstrapping")
-      .ofType(classOf[String])
-    options = parser.parse(args: _*)
+                                   .withRequiredArg
+                                   .describedAs("server(s) to use for bootstrapping")
+                                   .ofType(classOf[String])
+    options = parser.parse(args : _*)
     checkArgs()
 
     def checkArgs(): Unit = {
@@ -261,7 +266,7 @@ object BrokerApiVersionsCommand {
       config
     }
 
-    class AdminConfig(originals: Map[_, _]) extends AbstractConfig(AdminConfigDef, originals.asJava, false)
+    class AdminConfig(originals: Map[_,_]) extends AbstractConfig(AdminConfigDef, originals.asJava, false)
 
     def createSimplePlaintext(brokerUrl: String): AdminClient = {
       val config = Map(CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG -> brokerUrl)

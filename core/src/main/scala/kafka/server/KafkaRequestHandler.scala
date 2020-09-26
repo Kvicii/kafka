@@ -30,6 +30,10 @@ import org.apache.kafka.common.utils.{KafkaThread, Time}
 import scala.collection.mutable
 import scala.jdk.CollectionConverters._
 
+trait ApiRequestHandler {
+  def handle(request: RequestChannel.Request): Unit
+}
+
 /**
  * A thread that answers kafka requests.
  * 请求处理线程类 每个请求处理线程实例 负责从SocketServer的RequestChannel的请求队列中获取请求对象 并进行处理
@@ -49,7 +53,7 @@ class KafkaRequestHandler(id: Int,
                           val aggregateIdleMeter: Meter,
                           val totalHandlerThreads: AtomicInteger,
                           val requestChannel: RequestChannel,
-                          apis: KafkaApis,
+                          apis: ApiRequestHandler,
                           time: Time) extends Runnable with Logging {
   this.logIdent = "[Kafka Request Handler " + id + " on Broker " + brokerId + "], "
   private val shutdownComplete = new CountDownLatch(1)
@@ -134,7 +138,7 @@ class KafkaRequestHandler(id: Int,
  */
 class KafkaRequestHandlerPool(val brokerId: Int,
                               val requestChannel: RequestChannel,
-                              val apis: KafkaApis,
+                              val apis: ApiRequestHandler,
                               time: Time,
                               numThreads: Int,
                               requestHandlerAvgIdleMetricName: String,

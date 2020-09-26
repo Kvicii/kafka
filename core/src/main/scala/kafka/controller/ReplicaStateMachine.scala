@@ -19,6 +19,7 @@ package kafka.controller
 import kafka.api.LeaderAndIsr
 import kafka.common.StateChangeFailedException
 import kafka.server.KafkaConfig
+import kafka.utils.Implicits._
 import kafka.utils.Logging
 import kafka.zk.KafkaZkClient.UpdateLeaderAndIsrResult
 import kafka.zk.{KafkaZkClient, TopicPartitionStateZNode}
@@ -86,7 +87,7 @@ abstract class ReplicaStateMachine(controllerContext: ControllerContext) extends
  * replica can only get become follower state change request.  Valid previous
  * state is NonExistentReplica
  * 2. OnlineReplica     : Once a replica is started and part of the assigned replicas for its partition, it is in this
- *                        state. In this state, it can get either become leader or become follower state change requests.
+ * state. In this state, it can get either become leader or become follower state change requests.
  * Valid previous state are NewReplica, OnlineReplica or OfflineReplica
  * 3. OfflineReplica    : If a replica dies, it moves to this state. This happens when the broker hosting the replica
  * is down. Valid previous state are NewReplica, OnlineReplica
@@ -134,7 +135,7 @@ class ZkReplicaStateMachine(config: KafkaConfig,
         // 清空Controller待发送请求集合
         controllerBrokerRequestBatch.newBatch()
         // 所有副本对象按照Broker进行分组 依次执行状态转换操作
-        replicas.groupBy(_.replica).foreach { case (replicaId, replicas) =>
+        replicas.groupBy(_.replica).forKeyValue { (replicaId, replicas) =>
           doHandleStateChanges(replicaId, replicas, targetState)
         }
         // 发送对应的Controller请求给Broker
@@ -285,7 +286,7 @@ class ZkReplicaStateMachine(config: KafkaConfig,
         // 对于有Leader信息的副本集合而言从它们对应的所有分区中移除该副本对象并更新ZooKeeper节点
         val updatedLeaderIsrAndControllerEpochs = removeReplicasFromIsr(replicaId, replicasWithLeadershipInfo.map(_.topicPartition))
         // 遍历每个更新过的分区信息
-        updatedLeaderIsrAndControllerEpochs.foreach { case (partition, leaderIsrAndControllerEpoch) =>
+        updatedLeaderIsrAndControllerEpochs.forKeyValue { (partition, leaderIsrAndControllerEpoch) =>
           stateLogger.info(s"Partition $partition state changed to $leaderIsrAndControllerEpoch after removing replica $replicaId from the ISR as part of transition to $OfflineReplica")
           // 如果分区对应Topic并未被删除
           if (!controllerContext.isTopicQueuedUpForDeletion(partition.topic)) {
@@ -398,10 +399,10 @@ class ZkReplicaStateMachine(config: KafkaConfig,
    * @param partitions The partitions from which we're trying to remove the replica from isr
    * @return A tuple of two elements:
    *         1. The updated Right[LeaderIsrAndControllerEpochs] of all partitions for which we successfully
-   *         removed the replica from isr. Or Left[Exception] corresponding to failed removals that should
-   *         not be retried
-   *         2. The partitions that we should retry due to a zookeeper BADVERSION conflict. Version conflicts can occur if
-   *         the partition leader updated partition state while the controller attempted to update partition state.
+   *            removed the replica from isr. Or Left[Exception] corresponding to failed removals that should
+   *            not be retried
+   *            2. The partitions that we should retry due to a zookeeper BADVERSION conflict. Version conflicts can occur if
+   *            the partition leader updated partition state while the controller attempted to update partition state.
    */
   private def doRemoveReplicasFromIsr(
                                        replicaId: Int,
@@ -456,9 +457,9 @@ class ZkReplicaStateMachine(config: KafkaConfig,
    * @param partitions the partitions whose state we want from zookeeper
    * @return A tuple of two values:
    *         1. The Right(LeaderAndIsrs) of partitions whose state we successfully read from zookeeper.
-   *         The Left(Exception) to failed zookeeper lookups or states whose controller epoch exceeds our current epoch
-   *         2. The partitions that had no leader and isr state in zookeeper. This happens if the controller
-   *         didn't finish partition initialization.
+   *            The Left(Exception) to failed zookeeper lookups or states whose controller epoch exceeds our current epoch
+   *            2. The partitions that had no leader and isr state in zookeeper. This happens if the controller
+   *            didn't finish partition initialization.
    */
   private def getTopicPartitionStatesFromZk(
                                              partitions: Seq[TopicPartition]

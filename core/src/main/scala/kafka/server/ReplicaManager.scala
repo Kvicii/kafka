@@ -34,6 +34,7 @@ import kafka.server.HostedPartition.Online
 import kafka.server.QuotaFactory.QuotaManagers
 import kafka.server.checkpoints.{LazyOffsetCheckpoints, OffsetCheckpointFile, OffsetCheckpoints}
 import kafka.utils._
+import kafka.utils.Implicits._
 import kafka.zk.KafkaZkClient
 import org.apache.kafka.common.{ElectionType, IsolationLevel, Node, TopicPartition}
 import org.apache.kafka.common.errors._
@@ -187,7 +188,8 @@ class ReplicaManager(val config: KafkaConfig,
                      val delayedFetchPurgatory: DelayedOperationPurgatory[DelayedFetch],
                      val delayedDeleteRecordsPurgatory: DelayedOperationPurgatory[DelayedDeleteRecords],
                      val delayedElectLeaderPurgatory: DelayedOperationPurgatory[DelayedElectLeader],
-                     threadNamePrefix: Option[String]) extends Logging with KafkaMetricsGroup {
+                     threadNamePrefix: Option[String],
+                     val alterIsrManager: AlterIsrManager) extends Logging with KafkaMetricsGroup {
 
   def this(config: KafkaConfig,
            metrics: Metrics,
@@ -200,6 +202,7 @@ class ReplicaManager(val config: KafkaConfig,
            brokerTopicStats: BrokerTopicStats,
            metadataCache: MetadataCache,
            logDirFailureChannel: LogDirFailureChannel,
+           alterIsrManager: AlterIsrManager,
            threadNamePrefix: Option[String] = None) = {
     this(config, metrics, time, zkClient, scheduler, logManager, isShuttingDown,
       quotaManagers, brokerTopicStats, metadataCache, logDirFailureChannel,
@@ -214,7 +217,7 @@ class ReplicaManager(val config: KafkaConfig,
         purgeInterval = config.deleteRecordsPurgatoryPurgeIntervalRequests),
       DelayedOperationPurgatory[DelayedElectLeader](
         purgatoryName = "ElectLeader", brokerId = config.brokerId),
-      threadNamePrefix)
+      threadNamePrefix, alterIsrManager)
   }
 
   /* epoch of the controller that last changed the leader */
@@ -330,7 +333,12 @@ class ReplicaManager(val config: KafkaConfig,
     // A follower can lag behind leader for up to config.replicaLagTimeMaxMs x 1.5 before it is removed from ISR
     // ReplicaManager启动时会创建该异步线程(isr-expiration)定期去查看是否需要为集群中所有online分区执行ISR收缩
     scheduler.schedule("isr-expiration", maybeShrinkIsr _, period = config.replicaLagTimeMaxMs / 2, unit = TimeUnit.MILLISECONDS)
-    scheduler.schedule("isr-change-propagation", maybePropagateIsrChanges _, period = 2500L, unit = TimeUnit.MILLISECONDS)
+    // If using AlterIsr, we don't need the znode ISR propagation
+    if (config.interBrokerProtocolVersion < KAFKA_2_7_IV2) {
+      scheduler.schedule("isr-change-propagation", maybePropagateIsrChanges _, period = 2500L, unit = TimeUnit.MILLISECONDS)
+    } else {
+      alterIsrManager.start()
+    }
     scheduler.schedule("shutdown-idle-replica-alter-log-dirs-thread", shutdownIdleReplicaAlterLogDirsThread _, period = 10000L, unit = TimeUnit.MILLISECONDS)
 
     // If inter-broker protocol (IBP) < 1.0, the controller will send LeaderAndIsrRequest V0 which does not include isNew field.
@@ -366,7 +374,7 @@ class ReplicaManager(val config: KafkaConfig,
       stateChangeLogger.info(s"Handling StopReplica request correlationId $correlationId from controller " +
         s"$controllerId for ${partitionStates.size} partitions")
       if (stateChangeLogger.isTraceEnabled)
-        partitionStates.foreach { case (topicPartition, partitionState) =>
+        partitionStates.forKeyValue { (topicPartition, partitionState) =>
           stateChangeLogger.trace(s"Received StopReplica request $partitionState " +
             s"correlation id $correlationId from controller $controllerId " +
             s"epoch $controllerEpoch for partition $topicPartition")
@@ -383,7 +391,7 @@ class ReplicaManager(val config: KafkaConfig,
         this.controllerEpoch = controllerEpoch
 
         val stoppedPartitions = mutable.Map.empty[TopicPartition, StopReplicaPartitionState]
-        partitionStates.foreach { case (topicPartition, partitionState) =>
+        partitionStates.forKeyValue { (topicPartition, partitionState) =>
           val deletePartition = partitionState.deletePartition
 
           getPartition(topicPartition) match {
@@ -438,7 +446,7 @@ class ReplicaManager(val config: KafkaConfig,
         // Second remove deleted partitions from the partition map. Fetchers rely on the
         // ReplicaManager to get Partition's information so they must be stopped first.
         val deletedPartitions = mutable.Set.empty[TopicPartition]
-        stoppedPartitions.foreach { case (topicPartition, partitionState) =>
+        stoppedPartitions.forKeyValue { (topicPartition, partitionState) =>
           if (partitionState.deletePartition) {
             getPartition(topicPartition) match {
               case hostedPartition@HostedPartition.Online(partition) =>
@@ -1513,7 +1521,7 @@ class ReplicaManager(val config: KafkaConfig,
         s"controller $controllerId epoch $controllerEpoch as part of the become-leader transition for " +
         s"${partitionStates.size} partitions")
       // Update the partition information to be the leader
-      partitionStates.foreach { case (partition, partitionState) =>
+      partitionStates.forKeyValue { (partition, partitionState) =>
         try {
           if (partition.makeLeader(partitionState, highWatermarkCheckpoints))
             partitionsToMakeLeaders += partition
@@ -1578,7 +1586,7 @@ class ReplicaManager(val config: KafkaConfig,
                             responseMap: mutable.Map[TopicPartition, Errors],
                             highWatermarkCheckpoints: OffsetCheckpoints): Set[Partition] = {
     val traceLoggingEnabled = stateChangeLogger.isTraceEnabled
-    partitionStates.foreach { case (partition, partitionState) =>
+    partitionStates.forKeyValue { (partition, partitionState) =>
       if (traceLoggingEnabled)
         stateChangeLogger.trace(s"Handling LeaderAndIsr request correlationId $correlationId from controller $controllerId " +
           s"epoch $controllerEpoch starting the become-follower transition for partition ${partition.topicPartition} with leader " +
@@ -1589,7 +1597,7 @@ class ReplicaManager(val config: KafkaConfig,
     val partitionsToMakeFollower: mutable.Set[Partition] = mutable.Set()
     try {
       // TODO: Delete leaders from LeaderAndIsrRequest
-      partitionStates.foreach { case (partition, partitionState) =>
+      partitionStates.forKeyValue { (partition, partitionState) =>
         val newLeaderBrokerId = partitionState.leader
         try {
           metadataCache.getAliveBrokers.find(_.id == newLeaderBrokerId) match {

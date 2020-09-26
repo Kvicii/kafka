@@ -20,6 +20,7 @@ import kafka.api.LeaderAndIsr
 import kafka.common.StateChangeFailedException
 import kafka.controller.Election._
 import kafka.server.KafkaConfig
+import kafka.utils.Implicits._
 import kafka.utils.Logging
 import kafka.zk.KafkaZkClient.UpdateLeaderAndIsrResult
 import kafka.zk.{KafkaZkClient, TopicPartitionStateZNode}
@@ -101,8 +102,8 @@ abstract class PartitionStateMachine(controllerContext: ControllerContext) exten
           // else, check if the leader for partition is alive. If yes, it is in Online state, else it is in Offline state
           if (controllerContext.isReplicaOnline(currentLeaderIsrAndEpoch.leaderAndIsr.leader, topicPartition))
           // leader is alive
-          controllerContext.putPartitionState(topicPartition, OnlinePartition)
-            else
+            controllerContext.putPartitionState(topicPartition, OnlinePartition)
+          else
             controllerContext.putPartitionState(topicPartition, OfflinePartition)
         case None =>
           controllerContext.putPartitionState(topicPartition, NewPartition)
@@ -137,15 +138,15 @@ abstract class PartitionStateMachine(controllerContext: ControllerContext) exten
  * This class represents the state machine for partitions. It defines the states that a partition can be in, and
  * transitions to move the partition to another legal state. The different states that a partition can be in are -
  *  1. NonExistentPartition: This state indicates that the partition was either never created or was created and then
- *                           deleted. Valid previous state, if one exists, is OfflinePartition
- *  2. NewPartition        : After creation, the partition is in the NewPartition state. In this state, the partition should have
- * replicas assigned to it, but no leader/isr yet. Valid previous states are NonExistentPartition
- *  3. OnlinePartition     : Once a leader is elected for a partition, it is in the OnlinePartition state.
- * Valid previous states are NewPartition/OfflinePartition
- *  4. OfflinePartition    : If, after successful leader election, the leader for partition dies, then the partition
- * moves to the OfflinePartition state. Valid previous states are NewPartition/OnlinePartition
- * PartitionStateMachine 唯一的继承子类 实现了分区状态机的主体逻辑功能
- * 和 ZkReplicaStateMachine 类似 ZkPartitionStateMachine 重写了父类的 handleStateChanges 方法并配以私有的 doHandleStateChanges 方法共同实现分区状态转换的操作
+ *     deleted. Valid previous state, if one exists, is OfflinePartition
+ *     2. NewPartition        : After creation, the partition is in the NewPartition state. In this state, the partition should have
+ *     replicas assigned to it, but no leader/isr yet. Valid previous states are NonExistentPartition
+ *     3. OnlinePartition     : Once a leader is elected for a partition, it is in the OnlinePartition state.
+ *     Valid previous states are NewPartition/OfflinePartition
+ *     4. OfflinePartition    : If, after successful leader election, the leader for partition dies, then the partition
+ *     moves to the OfflinePartition state. Valid previous states are NewPartition/OnlinePartition
+ *     PartitionStateMachine 唯一的继承子类 实现了分区状态机的主体逻辑功能
+ *     和 ZkReplicaStateMachine 类似 ZkPartitionStateMachine 重写了父类的 handleStateChanges 方法并配以私有的 doHandleStateChanges 方法共同实现分区状态转换的操作
  *
  * ZkPartitionStateMachine 和 ZKReplicaStateMachine接收的字段列表都是相同的 所以它们要做的处理逻辑其实也是差不多的
  * ZkPartitionStateMachine 实例的创建和启动时机也跟 ZkReplicaStateMachine 的完全相同:
@@ -430,9 +431,9 @@ class ZkPartitionStateMachine(config: KafkaConfig,
    * @param partitionLeaderElectionStrategy The election strategy to use.
    * @return A tuple of two values:
    *         1. The partitions and the expected leader and isr that successfully had a leader elected. And exceptions
-   *         corresponding to failed elections that should not be retried.
-   *         2. The partitions that we should retry due to a zookeeper BADVERSION conflict. Version conflicts can occur if
-   *         the partition leader updated partition state while the controller attempted to update partition state.
+   *            corresponding to failed elections that should not be retried.
+   *            2. The partitions that we should retry due to a zookeeper BADVERSION conflict. Version conflicts can occur if
+   *            the partition leader updated partition state while the controller attempted to update partition state.
    */
   private def doElectLeaderForPartitions(
                                           partitions: Seq[TopicPartition],
@@ -524,7 +525,7 @@ class ZkPartitionStateMachine(config: KafkaConfig,
       adjustedLeaderAndIsrs, controllerContext.epoch, controllerContext.epochZkVersion)
     // 对于ZooKeeper znode节点数据更新成功的分区 封装对应的Leader和ISR信息
     // 构建LeaderAndIsr请求 并将该请求加入到Controller待发送请求集合 等待后续统一发送
-    finishedUpdates.foreach { case (partition, result) =>
+    finishedUpdates.forKeyValue { (partition, result) =>
       result.foreach { leaderAndIsr =>
         val replicaAssignment = controllerContext.partitionFullReplicaAssignment(partition)
         val leaderIsrAndControllerEpoch = LeaderIsrAndControllerEpoch(leaderAndIsr, controllerContext.epoch)

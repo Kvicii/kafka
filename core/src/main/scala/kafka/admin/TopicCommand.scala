@@ -28,6 +28,9 @@ import kafka.utils.Implicits._
 import kafka.utils._
 import kafka.zk.{AdminZkClient, KafkaZkClient}
 import org.apache.kafka.clients.CommonClientConfigs
+import org.apache.kafka.clients.admin.CreatePartitionsOptions
+import org.apache.kafka.clients.admin.CreateTopicsOptions
+import org.apache.kafka.clients.admin.DeleteTopicsOptions
 import org.apache.kafka.clients.admin.{Admin, ConfigEntry, ListTopicsOptions, NewPartitions, NewTopic, PartitionReassignment, Config => JConfig}
 import org.apache.kafka.common.{Node, TopicPartition, TopicPartitionInfo}
 import org.apache.kafka.common.config.ConfigResource.Type
@@ -69,14 +72,24 @@ object TopicCommand extends Logging {
       else if (opts.hasDeleteOption)
         topicService.deleteTopic(opts)
     } catch {
+      case e: ExecutionException =>
+        if (e.getCause != null)
+          printException(e.getCause)
+        else
+          printException(e)
+        exitCode = 1
       case e: Throwable =>
-        println("Error while executing topic command : " + e.getMessage)
-        error(Utils.stackTrace(e))
+        printException(e)
         exitCode = 1
     } finally {
       topicService.close()
       Exit.exit(exitCode)
     }
+  }
+
+  private def printException(e: Throwable): Unit = {
+    println("Error while executing topic command : " + e.getMessage)
+    error(Utils.stackTrace(e))
   }
 
   class CommandTopicPartition(opts: TopicCommandOptions) {
@@ -256,7 +269,8 @@ object TopicCommand extends Logging {
           .toMap.asJava
 
         newTopic.configs(configsMap)
-        val createResult = adminClient.createTopics(Collections.singleton(newTopic))
+        val createResult = adminClient.createTopics(Collections.singleton(newTopic),
+          new CreateTopicsOptions().retryOnQuotaViolation(false))
         createResult.all().get()
         println(s"Created topic ${topic.name}.")
       } catch {
@@ -279,7 +293,7 @@ object TopicCommand extends Logging {
 
       if (topics.nonEmpty) {
         val topicsInfo = adminClient.describeTopics(topics.asJavaCollection).values()
-        adminClient.createPartitions(topics.map { topicName =>
+        val newPartitions = topics.map { topicName =>
           if (topic.hasReplicaAssignment) {
             val startPartitionId = topicsInfo.get(topicName).get().partitions().size()
             val newAssignment = {
@@ -290,7 +304,9 @@ object TopicCommand extends Logging {
           } else {
             topicName -> NewPartitions.increaseTo(topic.partitions.get)
           }
-        }.toMap.asJava).all().get()
+        }.toMap
+        adminClient.createPartitions(newPartitions.asJava,
+          new CreatePartitionsOptions().retryOnQuotaViolation(false)).all().get()
       }
     }
 
@@ -352,7 +368,8 @@ object TopicCommand extends Logging {
     override def deleteTopic(opts: TopicCommandOptions): Unit = {
       val topics = getTopics(opts.topic, opts.excludeInternalTopics)
       ensureTopicExists(topics, opts.topic, !opts.ifExists)
-      adminClient.deleteTopics(topics.asJavaCollection).all().get()
+      adminClient.deleteTopics(topics.asJavaCollection, new DeleteTopicsOptions().retryOnQuotaViolation(false))
+        .all().get()
     }
 
     override def getTopics(topicWhitelist: Option[String], excludeInternalTopics: Boolean = false): Seq[String] = {
