@@ -24,7 +24,6 @@ import java.nio.{ByteBuffer, MappedByteBuffer}
 import java.util.concurrent.locks.{Lock, ReentrantLock}
 
 import kafka.common.IndexOffsetOverflowException
-import kafka.log.IndexSearchType.IndexSearchEntity
 import kafka.utils.CoreUtils.inLock
 import kafka.utils.{CoreUtils, Logging}
 import org.apache.kafka.common.utils.{ByteBufferUnmapper, OperatingSystem, Utils}
@@ -390,13 +389,13 @@ abstract class AbstractIndex(@volatile private var _file: File, val baseOffset: 
    * @param target The index key to look for
    * @return The slot found or -1 if the least entry in the index is larger than the target key or the index is empty
    */
-  protected def largestLowerBoundSlotFor(idx: ByteBuffer, target: Long, searchEntity: IndexSearchEntity): Int =
+  protected def largestLowerBoundSlotFor(idx: ByteBuffer, target: Long, searchEntity: IndexSearchType): Int =
     indexSlotRangeFor(idx, target, searchEntity)._1
 
   /**
    * Find the smallest entry greater than or equal the target key or value. If none can be found, -1 is returned.
    */
-  protected def smallestUpperBoundSlotFor(idx: ByteBuffer, target: Long, searchEntity: IndexSearchEntity): Int =
+  protected def smallestUpperBoundSlotFor(idx: ByteBuffer, target: Long, searchEntity: IndexSearchType): Int =
     indexSlotRangeFor(idx, target, searchEntity)._2
 
   /**
@@ -414,7 +413,7 @@ abstract class AbstractIndex(@volatile private var _file: File, val baseOffset: 
    * 将所有索引项分成两个部分:热区(Warm Area)和冷区(Cold Area) 然后分别在这两个区域内执行二分查找算法
    * 这个改进版算法的最大好处在于 查询最热那部分数据所遍历的 Page 永远是固定的 因此大概率在页缓存中 从而避免无意义的 Page Fault
    */
-  private def indexSlotRangeFor(idx: ByteBuffer, target: Long, searchEntity: IndexSearchEntity): (Int, Int) = {
+  private def indexSlotRangeFor(idx: ByteBuffer, target: Long, searchEntity: IndexSearchType): (Int, Int) = {
     // check if the index is empty
     // 如果当前索引对象没有索引项直接返回<-1, -1>
     if (_entries == 0)
@@ -458,7 +457,7 @@ abstract class AbstractIndex(@volatile private var _file: File, val baseOffset: 
     binarySearch(0, firstHotEntry)
   }
 
-  private def compareIndexEntry(indexEntry: IndexEntry, target: Long, searchEntity: IndexSearchEntity): Int = {
+  private def compareIndexEntry(indexEntry: IndexEntry, target: Long, searchEntity: IndexSearchType): Int = {
     searchEntity match {
       case IndexSearchType.KEY => java.lang.Long.compare(indexEntry.indexKey, target)
       case IndexSearchType.VALUE => java.lang.Long.compare(indexEntry.indexValue, target)
@@ -484,7 +483,8 @@ object AbstractIndex extends Logging {
   override val loggerName: String = classOf[AbstractIndex].getName
 }
 
-object IndexSearchType extends Enumeration {
-  type IndexSearchEntity = Value
-  val KEY, VALUE = Value
+sealed trait IndexSearchType
+object IndexSearchType {
+  case object KEY extends IndexSearchType
+  case object VALUE extends IndexSearchType
 }
