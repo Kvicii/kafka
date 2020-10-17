@@ -20,8 +20,7 @@ package kafka.network
 import java.io.IOException
 import java.net._
 import java.nio.ByteBuffer
-import java.nio.channels._
-import java.nio.channels.{Selector => NSelector}
+import java.nio.channels.{Selector => NSelector, _}
 import java.util
 import java.util.Optional
 import java.util.concurrent._
@@ -34,11 +33,10 @@ import kafka.network.RequestChannel.{Metrics => _, _}
 import kafka.network.SocketServer._
 import kafka.security.CredentialProvider
 import kafka.server.{BrokerReconfigurable, KafkaConfig}
-import kafka.utils._
 import kafka.utils.Implicits._
+import kafka.utils._
 import org.apache.kafka.common.config.ConfigException
 import org.apache.kafka.common.errors.InvalidRequestException
-import org.apache.kafka.common.{Endpoint, KafkaException, MetricName, Reconfigurable}
 import org.apache.kafka.common.memory.{MemoryPool, SimpleMemoryPool}
 import org.apache.kafka.common.metrics._
 import org.apache.kafka.common.metrics.stats.{CumulativeSum, Meter, Rate}
@@ -92,7 +90,8 @@ import scala.util.control.ControlThrowable
 class SocketServer(val config: KafkaConfig,
                    val metrics: Metrics,
                    val time: Time,
-                   val credentialProvider: CredentialProvider)
+                   val credentialProvider: CredentialProvider,
+                   val allowDisabledApis: Boolean = false)
   extends Logging with KafkaMetricsGroup with BrokerReconfigurable { // SocketServer实现了BrokerReconfigurable BrokerReconfigurable使用trait表明SocketServer的一些参数配置是允许动态修改的 即在不停机的状态下可以动态修改相关参数
 
   // SocketServer请求队列的最大长度 由Broker端参数queued.max.requests指定 默认500
@@ -113,12 +112,12 @@ class SocketServer(val config: KafkaConfig,
   // Acceptor线程 保存了 SocketServer 为每个监听器定义的 Acceptor 线程 线程负责分发该监听器上的入站连接建立请求
   // Acceptor 可能有多个的原因是  SocketServer 会为每个 EndPoint(监听器)创建一个对应的 Acceptor 线程
   private[network] val dataPlaneAcceptors = new ConcurrentHashMap[EndPoint, Acceptor]()
-  // 处理数据类请求专属的RequestChannel对象
-  // 承载请求队列的请求处理通道
-  val dataPlaneRequestChannel = new RequestChannel(maxQueuedRequests, DataPlaneMetricPrefix, time)
 
   // -------------------------------------------------------------------------------------------------------------------
   // 控制类请求的数量应该远远小于数据类请求 因而不需要为它创建线程池和较深的请求队列
+  // 处理数据类请求专属的RequestChannel对象
+  // 承载请求队列的请求处理通道
+  val dataPlaneRequestChannel = new RequestChannel(maxQueuedRequests, DataPlaneMetricPrefix, time, allowDisabledApis)
   // control-plane
   // 用于处理控制类请求的Processor线程 目前只是定义了专属的Processor线程而非线程池处理控制类请求
   // 只有一个Processor线程和Acceptor线程
@@ -127,7 +126,7 @@ class SocketServer(val config: KafkaConfig,
   // 处理控制类请求专属的RequestChannel对象
   // RequestChannel的长度被硬编码为20
   val controlPlaneRequestChannelOpt: Option[RequestChannel] = config.controlPlaneListenerName.map(_ =>
-    new RequestChannel(20, ControlPlaneMetricPrefix, time))
+    new RequestChannel(20, ControlPlaneMetricPrefix, time, allowDisabledApis))
 
   private var nextProcessorId = 0
   private var connectionQuotas: ConnectionQuotas = _
@@ -489,7 +488,8 @@ class SocketServer(val config: KafkaConfig,
       credentialProvider,
       memoryPool,
       logContext,
-      isPrivilegedListener = isPrivilegedListener
+      isPrivilegedListener = isPrivilegedListener,
+      allowDisabledApis = allowDisabledApis
     )
   }
 
@@ -858,7 +858,8 @@ private[kafka] class Processor(val id: Int,
                                memoryPool: MemoryPool,
                                logContext: LogContext,
                                connectionQueueSize: Int = ConnectionQueueSize,
-                               isPrivilegedListener: Boolean = false) extends AbstractServerThread(connectionQuotas) with KafkaMetricsGroup {
+                               isPrivilegedListener: Boolean = false,
+                               allowDisabledApis: Boolean = false) extends AbstractServerThread(connectionQuotas) with KafkaMetricsGroup {
 
   private object ConnectionId {
     def fromString(s: String): Option[ConnectionId] = s.split("-") match {
@@ -1084,10 +1085,11 @@ private[kafka] class Processor(val id: Int,
    */
   protected def parseRequestHeader(buffer: ByteBuffer): RequestHeader = {
     val header = RequestHeader.parse(buffer)
-    if (!header.apiKey.isEnabled) {
+    if (header.apiKey.isEnabled || allowDisabledApis) {
+      header
+    } else {
       throw new InvalidRequestException("Received request for disabled api key " + header.apiKey)
     }
-    header
   }
 
   private def processCompletedReceives(): Unit = {
