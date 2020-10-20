@@ -189,7 +189,7 @@ class LogSegment private[log](val log: FileRecords, // 实际保存Kafka消息�
       trace(s"Appended $appendedBytes to ${log.file} at end offset $largestOffset")
       // Update the in memory max timestamp and corresponding offset.
       // 4.更新日志段的最大时间戳和最大时间戳对应的偏移量 每个日志段都要保存当前最大时间戳信息和所属消息的位移信息
-      // 最大时间戳用于日志留存的 最大时间戳对应的偏移量用于时间戳索引项
+      // 最大时间戳用于日志留存的 最大时间戳对应的消息偏移量用于时间戳索引项(时间戳索引项用于保存时间戳和消息位移之间的对应关系)
       if (largestTimestamp > maxTimestampSoFar) {
         maxTimestampSoFar = largestTimestamp
         offsetOfMaxTimestampSoFar = shallowOffsetOfMaxTimestamp
@@ -324,10 +324,10 @@ class LogSegment private[log](val log: FileRecords, // 实际保存Kafka消息�
    *         or null if the startOffset is larger than the largest offset in this log
    */
   @threadsafe
-  def read(startOffset: Long, // 要读取的第一条消息的位移量
+  def read(startOffset: Long, // 要读取的第一条消息的位移
            maxSize: Int, // 能读取的最大字节数
            maxPosition: Long = size, // 能读到的最大文件位置
-           minOneMessage: Boolean = false // 是否允许在消息体过大时至少返回第一条消息 参数设置为true时 即使超过了maxSize 该方法依然至少返回一条消息 参数出现的目标是为了确保不出现消费饿死的情况
+           minOneMessage: Boolean = false // 是否允许在消息体过大时至少返回第一条消息 参数设置为true时 即使超过了maxSize 该方法依然至少返回一条消息 参数出现的目的是为了确保不出现消费饿死的情况
           ): FetchDataInfo = {
     if (maxSize < 0)
       throw new IllegalArgumentException(s"Invalid max size $maxSize for log read from segment $log")
@@ -357,7 +357,10 @@ class LogSegment private[log](val log: FileRecords, // 实际保存Kafka消息�
     val fetchSize: Int = min((maxPosition - startPosition).toInt, adjustedMaxSize)
 
     // 3.进行读取
-    // org.apache.kafka.common.record.FileRecords.slice方法是从指定位置读取指定大小的消息集合
+    /**
+     * 调用 {@link org.apache.kafka.common.record.FileRecords# slice } 方法
+     * 从指定位置读取指定大小的消息集合
+     */
     FetchDataInfo(offsetMetadata, log.slice(startPosition, fetchSize),
       firstEntryIncomplete = adjustedMaxSize < startOffsetAndSize.size)
   }
@@ -370,7 +373,9 @@ class LogSegment private[log](val log: FileRecords, // 实际保存Kafka消息�
    * from the end of the log and index.
    *
    * broker重启后恢复日志段逻辑
-   * broker重启后从磁盘上加载所有的日志段到内存 创建相应的LogSegment对象实例
+   * broker重启后从磁盘上加载所有的日志段文件到内存 创建相应的LogSegment对象实例
+   *
+   * 所以当Kafka环境中有很多日志段文件兵器Broker重启很慢 这是因为Kafka在recover的过程中读取大量磁盘文件导致的
    *
    * @param producerStateManager Producer state corresponding to the segment's base offset. This is needed to recover
    *                             the transaction index.
@@ -428,7 +433,7 @@ class LogSegment private[log](val log: FileRecords, // 实际保存Kafka消息�
     val truncated = log.sizeInBytes - validBytes
     if (truncated > 0)
       debug(s"Truncated $truncated invalid bytes at the end of segment ${log.file.getAbsoluteFile} during recovery")
-    // 如果validBytes < sizeInBytes 说明日字段写入了一些非法消息
+    // 如果validBytes(刚刚累加的已读取字节数) < sizeInBytes(日志段当前总字节数) 说明日字段写入了一些非法消息
     // 需要截断操作 将日字段的大小调整回合法的数值
     log.truncateTo(validBytes)
     // 相应调整索引文件的大小
