@@ -63,7 +63,7 @@ class LogSegment private[log](val log: FileRecords, // 实际保存Kafka消息�
                               val lazyTimeIndex: LazyIndex[TimeIndex], // 时间戳索引文件--使用了延迟初始化的原理 降低了初始化的时间成本
                               val txnIndex: TransactionIndex, // 已中止事务索引文件
                               val baseOffset: Long, // 每个日志段的起始偏移量 每个LogSegment对象实例一旦被创建 它的起始偏移量就不能再被更改
-                              val indexIntervalBytes: Int, // 对应broker端参数log.index.interval.bytes的值 控制日志段对象新增索引的频率(默认情况下 日志段至少新写入4KB的消息数据才会新增一条索引项)
+                              val indexIntervalBytes: Int, // 对应broker端参数log.index.interval.bytes的值 控制日志段对象新增索引项的频率(默认情况下 日志段至少新写入4KB的消息数据才会新增一条索引项)
                               val rollJitterMs: Long, // 日志段对象新增倒计时的扰动值 由于新增倒计时是全局设置(在未来某一时刻很可能同时创建多个日志段对象 会极大地增加IO) 此干扰值的作用就是每个日志段在创建时会岔开一段时间 减少IO压力
                               val time: Time) extends Logging {
 
@@ -165,8 +165,8 @@ class LogSegment private[log](val log: FileRecords, // 实际保存Kafka消息�
    * @throws LogSegmentOffsetOverflowException if the largest offset causes index offset overflow
    */
   @nonthreadsafe
-  def append(largestOffset: Long, // 当前文件消息的最大位移值
-             largestTimestamp: Long, // 当前文件消息的最大时间戳
+  def append(largestOffset: Long, // 待写入消息批次中消息的最大位移值
+             largestTimestamp: Long, // 待写入消息批次中消息的最大时间戳
              shallowOffsetOfMaxTimestamp: Long, // 最大时间戳对应的位移值
              records: MemoryRecords // 真正要写入的消息集合
             ): Unit = {
@@ -175,11 +175,11 @@ class LogSegment private[log](val log: FileRecords, // 实际保存Kafka消息�
         s"with largest timestamp $largestTimestamp at shallow offset $shallowOffsetOfMaxTimestamp")
       // 1.判断日志段是否为空
       val physicalPosition = log.sizeInBytes()
-      // 记录写入消息集合的最大时间戳 并将其作为后面新增日志段倒计时的依据
+      // 如果为空 记录写入消息集合的最大时间戳 并将其作为后面新增日志段倒计时的依据
       if (physicalPosition == 0)
         rollingBasedTimestamp = Some(largestTimestamp)
       // 2.确认输入参数的最大偏移量是否是合法的
-      // 最大偏移量 - 起始偏移量的值是否在正整数的范围内[0, Integer.MAX_VALUE] 一旦越界抛出异常 组织后续的消息写入
+      // 最大偏移量 - 起始偏移量的值是否在正整数的范围内[0, Integer.MAX_VALUE] 一旦越界抛出异常 阻止后续的消息写入
       // 通常情况下如果碰到该问题需要升级Kafka版本
       ensureOffsetInRange(largestOffset)
 
@@ -188,7 +188,8 @@ class LogSegment private[log](val log: FileRecords, // 实际保存Kafka消息�
       val appendedBytes = log.append(records)
       trace(s"Appended $appendedBytes to ${log.file} at end offset $largestOffset")
       // Update the in memory max timestamp and corresponding offset.
-      // 4.更新日志段的最大时间戳和最大时间戳对应的偏移量
+      // 4.更新日志段的最大时间戳和最大时间戳对应的偏移量 每个日志段都要保存当前最大时间戳信息和所属消息的位移信息
+      // 最大时间戳用于日志留存的 最大时间戳对应的偏移量用于时间戳索引项
       if (largestTimestamp > maxTimestampSoFar) {
         maxTimestampSoFar = largestTimestamp
         offsetOfMaxTimestampSoFar = shallowOffsetOfMaxTimestamp
