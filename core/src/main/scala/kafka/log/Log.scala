@@ -73,10 +73,15 @@ object LogAppendInfo {
 }
 
 sealed trait LeaderHwChange
+
 object LeaderHwChange {
+
   case object Increased extends LeaderHwChange
+
   case object Same extends LeaderHwChange
+
   case object None extends LeaderHwChange
+
 }
 
 /**
@@ -100,8 +105,8 @@ object LeaderHwChange {
  * @param validBytes             The number of valid bytes
  * @param offsetsMonotonic       Are the offsets in this message set monotonically increasing
  * @param lastOffsetOfFirstBatch The last offset of the first batch
- * @param leaderHwChange Incremental if the high watermark needs to be increased after appending record.
- *                       Same if high watermark is not changed. None is the default value and it means append failed
+ * @param leaderHwChange         Incremental if the high watermark needs to be increased after appending record.
+ *                               Same if high watermark is not changed. None is the default value and it means append failed
  *
  */
 case class LogAppendInfo(var firstOffset: Option[Long],
@@ -1514,7 +1519,7 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径 To
     var readFirstMessage = false
     var lastOffsetOfFirstBatch = -1L
 
-    for (batch <- records.batches.asScala) {  // 1.遍历所有的消息批次
+    for (batch <- records.batches.asScala) { // 1.遍历所有的消息批次
       // we only validate V2 and higher to avoid potential compatibility issues with older clients
       // 消息格式Version 2 的消息批次 起始位移值必须从0开始
       if (batch.magic >= RecordBatch.MAGIC_VALUE_V2 && origin == AppendOrigin.Client && batch.baseOffset != 0)
