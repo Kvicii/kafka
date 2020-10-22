@@ -50,7 +50,7 @@ import org.apache.kafka.common.record.RecordBatch
  *
  */
 // Avoid shadowing mutable file in AbstractIndex
-// 定义时间戳索引 保存<时间戳, 位移值>
+// 定义时间戳索引 保存<时间戳, 相对位移值>
 class TimeIndex(_file: File, baseOffset: Long, maxIndexSize: Int = -1, writable: Boolean = true)
   extends AbstractIndex(_file, baseOffset, maxIndexSize, writable) {
 
@@ -60,6 +60,7 @@ class TimeIndex(_file: File, baseOffset: Long, maxIndexSize: Int = -1, writable:
 
   /**
    * 时间戳占8个字节 位移值也是相对于起始位移值 所以占用4个字节 一共占用12字节
+   * 比OffsetIndex多占用了4个字节 说明在保存同等数量索引项的基础上 TimeIndex会比OffsetIndex占用更多的磁盘空间
    *
    * @return
    */

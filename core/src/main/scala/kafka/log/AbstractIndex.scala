@@ -377,7 +377,7 @@ abstract class AbstractIndex(@volatile private var _file: File, val baseOffset: 
 
   /**
    * To parse an entry in the index.
-   * 查找给定的索引项
+   * 查找给定的索引项 即将相对位移值还原为之前的完整位移值
    *
    * @param buffer the buffer of this memory mapped index.
    * @param n      the slot. 查找给定ByteBuffer中保存的第n个索引项(第n个槽)

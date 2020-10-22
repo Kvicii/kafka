@@ -6,7 +6,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
  *
- *    http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -26,10 +26,10 @@ import com.yammer.metrics.core.Meter
 import kafka.log.LogConfig
 import kafka.metrics.KafkaMetricsGroup
 import kafka.server.KafkaConfig
-import kafka.utils.{Logging, NotNothing, Pool}
 import kafka.utils.Implicits._
-import org.apache.kafka.common.config.types.Password
+import kafka.utils.{Logging, NotNothing, Pool}
 import org.apache.kafka.common.config.ConfigResource
+import org.apache.kafka.common.config.types.Password
 import org.apache.kafka.common.memory.MemoryPool
 import org.apache.kafka.common.message.IncrementalAlterConfigsRequestData
 import org.apache.kafka.common.message.IncrementalAlterConfigsRequestData._
@@ -53,29 +53,51 @@ object RequestChannel extends Logging {
 
   def isRequestLoggingEnabled: Boolean = requestLogger.underlying.isDebugEnabled
 
-  sealed trait BaseRequest
+  sealed trait BaseRequest // trait关键字类似于Java中的Interface关键字
+  // 仅仅起到标志位的作用
+  // 当Broker进程关闭时 请求处理器(RequestHandler)会发送 ShutdownRequest 到专属的请求处理线程 该线程接收到此请求后会主动触发一系列的 Broker 关闭逻辑
   case object ShutdownRequest extends BaseRequest
 
   case class Session(principal: KafkaPrincipal, clientAddress: InetAddress) {
     val sanitizedUser: String = Sanitizer.sanitize(principal.getName)
   }
 
+  /**
+   * Request相关的各种监控指标的一个管理类 它里面构建了一个Map 封装了所有的请求JMX指标
+   *
+   * @param allowDisabledApis
+   */
   class Metrics(allowDisabledApis: Boolean = false) {
 
     private val metricsMap = mutable.Map[String, RequestMetrics]()
 
     (ApiKeys.values.toSeq.filter(_.isEnabled || allowDisabledApis).map(_.name) ++
-        Seq(RequestMetrics.consumerFetchMetricName, RequestMetrics.followFetchMetricName)).foreach { name =>
+      Seq(RequestMetrics.consumerFetchMetricName, RequestMetrics.followFetchMetricName)).foreach { name =>
       metricsMap.put(name, new RequestMetrics(name))
     }
 
     def apply(metricName: String) = metricsMap(metricName)
 
     def close(): Unit = {
-       metricsMap.values.foreach(_.removeMetrics())
+      metricsMap.values.foreach(_.removeMetrics())
     }
   }
 
+  /**
+   * Request 真正定义各类 Clients 端或 Broker 端请求的实现类
+   *
+   * @param processor      Processor 线程的序号
+   *                       即这个请求是由哪个Processor线程接收处理的 Broker端参数num.network.threads控制了Broker每个监听器上创建的Processor线程数
+   *                       假设listeners配置为 PLAINTEXT://localhost:9092 SSL://localhost:9093
+   *                       那么在默认情况下Broker启动时会创建6个Processor线程 每3个为一组 分别给listeners参数中设置的两个监听器使用 每组的序号分别是 0 | 1 | 2
+   *                       Processor线程仅仅是网络接收线程 不会执行真正的Request请求处理逻辑
+   * @param context        用来标识请求上下文信息的 保存了有关 Request 的所有上下文信息
+   * @param startTimeNanos 记录了Request对象被创建的时间 主要用于各种时间统计指标的计算
+   *                       请求对象中的很多JMX指标 特别是时间类的统计指标 都需要使用startTimeNanos字段 需要注意的是它是以纳秒为单位的时间戳信息 可以实现非常细粒度的时间统计精度
+   * @param memoryPool     源码定义的一个非阻塞式的内存缓冲区 主要作用是避免Request对象无限使用内存
+   * @param buffer         真正保存Request对象内容的字节缓冲区 Request发送方必须按照Kafka RPC协议规定的格式向该缓冲区写入字节
+   * @param metrics
+   */
   class Request(val processor: Int,
                 val context: RequestContext,
                 val startTimeNanos: Long,
@@ -97,6 +119,7 @@ object RequestChannel extends Logging {
     private val bodyAndSize: RequestAndSize = context.parseRequest(buffer)
 
     def header: RequestHeader = context.header
+
     def sizeOfBodyInBytes: Int = bodyAndSize.size
 
     //most request types are parsed entirely into objects at this point. for those we can release the underlying buffer.
@@ -132,7 +155,7 @@ object RequestChannel extends Logging {
         case alterConfigs: AlterConfigsRequest =>
           val loggableConfigs = alterConfigs.configs().asScala.map { case (resource, config) =>
             val loggableEntries = new AlterConfigsRequest.Config(config.entries.asScala.map { entry =>
-                new AlterConfigsRequest.ConfigEntry(entry.name, loggableValue(resource.`type`, entry.name, entry.value))
+              new AlterConfigsRequest.ConfigEntry(entry.name, loggableValue(resource.`type`, entry.name, entry.value))
             }.asJavaCollection)
             (resource, loggableEntries)
           }.asJava
@@ -265,6 +288,12 @@ object RequestChannel extends Logging {
 
   }
 
+  /**
+   * Response的抽象基类 每个Response对象都包含了对应的Request对象
+   * 这个类里最重要的方法是onComplete方法 用来实现每类Response被处理后需要执行的回调逻辑
+   *
+   * @param request
+   */
   abstract class Response(val request: Request) {
 
     def processor: Int = request.processor
@@ -277,6 +306,15 @@ object RequestChannel extends Logging {
   }
 
   /** responseAsString should only be defined if request logging is enabled */
+  /**
+   * Kafka大多数Request处理完成后都需要执行一段回调逻辑
+   * SendResponse就是保存返回结果的Response子类 里面最重要的字段是onCompletionCallback 即指定处理完成之后的回调逻辑
+   *
+   * @param request
+   * @param responseSend
+   * @param responseAsString
+   * @param onCompleteCallback
+   */
   class SendResponse(request: Request,
                      val responseSend: Send,
                      val responseAsString: Option[String],
@@ -289,34 +327,60 @@ object RequestChannel extends Logging {
       s"Response(type=Send, request=$request, send=$responseSend, asString=$responseAsString)"
   }
 
+  /**
+   * 有些Request处理完成后无需单独执行额外的回调逻辑 NoResponse就是为这类Response准备的
+   *
+   * @param request
+   */
   class NoOpResponse(request: Request) extends Response(request) {
     override def toString: String =
       s"Response(type=NoOp, request=$request)"
   }
 
+  /**
+   * 用于出错后需要关闭TCP连接的场景 此时返回CloseConnectionResponse给Request发送方 显式地通知它关闭连接
+   *
+   * @param request
+   */
   class CloseConnectionResponse(request: Request) extends Response(request) {
     override def toString: String =
       s"Response(type=CloseConnection, request=$request)"
   }
 
+  /**
+   * 用于通知Broker的SocketServer组件某个TCP连接通信通道开始被限流(throttling)
+   *
+   * @param request
+   */
   class StartThrottlingResponse(request: Request) extends Response(request) {
     override def toString: String =
       s"Response(type=StartThrottling, request=$request)"
   }
 
+  /**
+   * 与StartThrottlingResponse对应 通知Broker的SocketServer组件某个TCP连接通信通道的限流已结束
+   *
+   * @param request
+   */
   class EndThrottlingResponse(request: Request) extends Response(request) {
     override def toString: String =
       s"Response(type=EndThrottling, request=$request)"
   }
+
 }
 
-class RequestChannel(val queueSize: Int,
+class RequestChannel(val queueSize: Int, /*Request队列的最大长度 当Broker启动时 SocketServer组件会创建RequestChannel对象 并把Broker端参数queued.max.requests赋值给queueSize 因此在默认情况下 每个RequestChannel上的队列长度是500*/
                      val metricNamePrefix: String,
                      time: Time,
-                     allowDisabledApis: Boolean = false) extends KafkaMetricsGroup {
+                     allowDisabledApis: Boolean = false) extends KafkaMetricsGroup /*KafkaMetricsGroup封装了许多实用的指标监控方法*/ {
+
   import RequestChannel._
+
   val metrics = new RequestChannel.Metrics(allowDisabledApis)
+  // 每个RequestChannel对象实例创建时 会定义一个队列来保存Broker接收到的各类请求 这个队列被称为请求队列(或Request队列)
   private val requestQueue = new ArrayBlockingQueue[BaseRequest](queueSize)
+  // RequestChannel下辖的Processor线程池 每个Processor线程负责具体的请求处理逻辑
+  // Map中的Key就是processor序号 而Value则对应具体的Processor线程对象
   private val processors = new ConcurrentHashMap[Int, Processor]()
   val requestQueueSizeMetricName = metricNamePrefix.concat(RequestQueueSizeMetric)
   val responseQueueSizeMetricName = metricNamePrefix.concat(ResponseQueueSizeMetric)
@@ -324,33 +388,45 @@ class RequestChannel(val queueSize: Int,
   newGauge(requestQueueSizeMetricName, () => requestQueue.size)
 
   newGauge(responseQueueSizeMetricName, () => {
-    processors.values.asScala.foldLeft(0) {(total, processor) =>
+    processors.values.asScala.foldLeft(0) { (total, processor) =>
       total + processor.responseQueueSize
     }
   })
 
+  /**
+   * 每当Broker启动时 都会调用addProcessor方法 向RequestChannel对象添加num.network.threads个Processor线程
+   *
+   * @param processor
+   */
   def addProcessor(processor: Processor): Unit = {
+    // 添加Processor到Processor线程池
     if (processors.putIfAbsent(processor.id, processor) != null)
       warn(s"Unexpected processor with processorId ${processor.id}")
 
     newGauge(responseQueueSizeMetricName, () => processor.responseQueueSize,
+      // 为给定Processor对象创建对应的监控指标
       Map(ProcessorMetricTag -> processor.id.toString))
   }
 
   def removeProcessor(processorId: Int): Unit = {
+    // 从Processor线程池中移除给定Processor线程
     processors.remove(processorId)
+    // 移除对应Processor的监控指标
     removeMetric(responseQueueSizeMetricName, Map(ProcessorMetricTag -> processorId.toString))
   }
 
   /** Send a request to be handled, potentially blocking until there is room in the queue for the request */
+  // 发送Request 仅仅是将Request对象放置在Request队列中
   def sendRequest(request: RequestChannel.Request): Unit = {
     requestQueue.put(request)
   }
 
   /** Send a response back to the socket server to be sent over the network */
+  // 没有所谓的接收Response 只有发送Response
+  // 将Response对象发送出去 也就是将Response添加到Response队列的过程
   def sendResponse(response: RequestChannel.Response): Unit = {
 
-    if (isTraceEnabled) {
+    if (isTraceEnabled) { // 构造Trace日志输出字符串
       val requestHeader = response.request.header
       val message = response match {
         case sendResponse: SendResponse =>
@@ -379,15 +455,18 @@ class RequestChannel(val queueSize: Int,
       case _: StartThrottlingResponse | _: EndThrottlingResponse => ()
     }
 
+    // 找出response对应的Processor线程 即request当初是由哪个Processor线程处理的
     val processor = processors.get(response.processor)
     // The processor may be null if it was shutdown. In this case, the connections
     // are closed, so the response is dropped.
     if (processor != null) {
+      // 将response对象放置到对应Processor线程的Response队列中
       processor.enqueueResponse(response)
     }
   }
 
   /** Get the next request or block until specified time has elapsed */
+  // 接收Request则是从队列中取出Request
   def receiveRequest(timeout: Long): RequestChannel.BaseRequest =
     requestQueue.poll(timeout, TimeUnit.MILLISECONDS)
 
@@ -418,13 +497,20 @@ object RequestMetrics {
   val consumerFetchMetricName = ApiKeys.FETCH.name + "Consumer"
   val followFetchMetricName = ApiKeys.FETCH.name + "Follower"
 
+  // 每秒处理的Request数 用来评估Broker的繁忙状态
   val RequestsPerSec = "RequestsPerSec"
+  // 计算Request在Request队列中的平均等候时间 单位是毫秒 倘若Request在队列的等待时间过长 你通常需要增加后端I/O线程的数量 来加快队列中Request的拿取速度
   val RequestQueueTimeMs = "RequestQueueTimeMs"
+  // 计算Request实际被处理的时间 单位是毫秒 一旦定位到这个监控项的值很大 就需要进一步研究Request被处理的逻辑了 具体分析到底是哪一步消耗了过多的时间
   val LocalTimeMs = "LocalTimeMs"
+  // Kafka的读写请求(PRODUCE请求和FETCH请求)逻辑涉及等待其他Broker操作的步骤
+  // RemoteTimeMs计算的就是等待其他Broker完成指定逻辑的时间 因为等待的是其他Broker 因此被称为Remote Time 这个监控项非常重要
+  // Kafka 生产环境中设置acks = all的Producer程序发送消息延时高的主要原因 往往就是Remote Time高
   val RemoteTimeMs = "RemoteTimeMs"
   val ThrottleTimeMs = "ThrottleTimeMs"
   val ResponseQueueTimeMs = "ResponseQueueTimeMs"
   val ResponseSendTimeMs = "ResponseSendTimeMs"
+  // 计算Request被处理的完整流程时间 这是最实用的监控指标
   val TotalTimeMs = "TotalTimeMs"
   val RequestBytes = "RequestBytes"
   val MessageConversionsTimeMs = "MessageConversionsTimeMs"
@@ -463,10 +549,10 @@ class RequestMetrics(name: String) extends KafkaMetricsGroup {
   // Temporary memory allocated for processing request (only populated for fetch and produce requests)
   // This shows the memory allocated for compression/conversions excluding the actual request size
   val tempMemoryBytesHist =
-    if (name == ApiKeys.FETCH.name || name == ApiKeys.PRODUCE.name)
-      Some(newHistogram(TemporaryMemoryBytes, biased = true, tags))
-    else
-      None
+  if (name == ApiKeys.FETCH.name || name == ApiKeys.PRODUCE.name)
+    Some(newHistogram(TemporaryMemoryBytes, biased = true, tags))
+  else
+    None
 
   private val errorMeters = mutable.Map[Errors, ErrorMeter]()
   Errors.values.foreach(error => errorMeters.put(error, new ErrorMeter(name, error)))
@@ -486,7 +572,7 @@ class RequestMetrics(name: String) extends KafkaMetricsGroup {
       else {
         synchronized {
           if (meter == null)
-             meter = newMeter(ErrorsPerSec, "requests", TimeUnit.SECONDS, tags)
+            meter = newMeter(ErrorsPerSec, "requests", TimeUnit.SECONDS, tags)
           meter
         }
       }
