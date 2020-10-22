@@ -86,8 +86,8 @@ object LeaderHwChange {
 
 /**
  * Struct to hold various quantities we compute about each message set before appending to the log
- * 保存一组待写入消息的各种元数据信息(比如这组消息中第一条消息的位移值/最后一条消息的位移值/这组消息中最大的消息时间戳等等)
  *
+ * 保存一组待写入消息的各种元数据信息(比如这组消息中第一条消息的位移值 | 最后一条消息的位移值 | 这组消息中最大的消息时间戳等等)
  * 在 0.11.0.0 版本之后 lastOffset 和 lastOffsetOfFirstBatch 都是指向消息集合的最后一条消息
  * 它们的区别主要体现在 0.11.0.0 之前的版本
  *
@@ -150,6 +150,7 @@ case class LogAppendInfo(var firstOffset: Option[Long],
  * Container class which represents a snapshot of the significant offsets for a partition. This allows fetching
  * of these offsets atomically without the possibility of a leader change affecting their consistency relative
  * to each other. See [[Log.fetchOffsetSnapshot()]].
+ *
  * 封装分区所有位移元数据的容器类
  */
 case class LogOffsetSnapshot(logStartOffset: Long,
@@ -159,6 +160,7 @@ case class LogOffsetSnapshot(logStartOffset: Long,
 
 /**
  * Another container which is used for lower level reads using  [[kafka.cluster.Partition.readRecords()]].
+ *
  * 封装读取日志返回的数据及其元数据
  */
 case class LogReadInfo(fetchedData: FetchDataInfo,
@@ -171,6 +173,7 @@ case class LogReadInfo(fetchedData: FetchDataInfo,
 /**
  * A class used to hold useful metadata about a completed transaction. This is used to build
  * the transaction index after appending to the log.
+ *
  * 记录已完成事务的元数据 主要用于构建事务索引
  *
  * @param producerId  The ID of the producer
@@ -191,6 +194,7 @@ case class CompletedTxn(producerId: Long, firstOffset: Long, lastOffset: Long, i
 
 /**
  * A class used to hold params required to decide to rotate a log segment or not.
+ *
  * 定义用于控制日志段是否切分的结构
  */
 case class RollParams(maxSegmentMs: Long,
@@ -200,6 +204,9 @@ case class RollParams(maxSegmentMs: Long,
                       messagesSize: Int,
                       now: Long)
 
+/**
+ * RollParams的伴生对象 内部定义了工厂方法
+ */
 object RollParams {
   def apply(config: LogConfig, appendInfo: LogAppendInfo, messagesSize: Int, now: Long): RollParams = {
     new RollParams(config.maxSegmentMs,
@@ -233,6 +240,7 @@ case object SegmentDeletion extends LogStartOffsetIncrementReason {
  * for a given segment.
  *
  * 核心代码
+ * 日志是日志段的容器 内部定义了很多管理日志段的操作
  *
  * @param _dir                                The directory in which log segments are created.
  * @param config                              The log configuration settings
@@ -255,9 +263,10 @@ case object SegmentDeletion extends LogStartOffsetIncrementReason {
  * @param producerIdExpirationCheckIntervalMs How often to check for producer ids which need to be expired
  */
 @threadsafe
-class Log(@volatile private var _dir: File, // 日志所在的文件夹路径 Topic分区的路径  @volatile表示值是可以变动的 并且可能被多个线程更新  不能简称为LSO(Log Stable Offset 属于事务的概念)
+class Log(@volatile private var _dir: File, // 日志所在的文件夹路径(即Topic分区的路径)
+          // @volatile表示值是可以变动的 并且可能被多个线程更新 不能简称为LSO(Log Stable Offset 属于事务的概念)
           @volatile var config: LogConfig,
-          @volatile var logStartOffset: Long, // 日志当前的最早位移
+          @volatile var logStartOffset: Long, // 日至当前的最早位移 和LEO(Log End Offset)是对应的(LSO是Log Stable Offset 是和事务相关的概念 Log Start Offset != LSO)
           @volatile var recoveryPoint: Long,
           scheduler: Scheduler,
           brokerTopicStats: BrokerTopicStats,
@@ -286,7 +295,7 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径 To
   /* last time it was flushed */
   private val lastFlushedTime = new AtomicLong(time.milliseconds)
 
-  /* 永远指向下一条待插入消息的位移值 也就是说这个位置是没有值的(LEO == Log End Offset 日志当前的末端位移)  */
+  /* 永远指向下一条待插入消息的位移值 也就是说这个位置是没有值的(和LEO等价 <--> Log End Offset 日志当前的末端位移)  */
   @volatile private var nextOffsetMetadata: LogOffsetMetadata = _
 
   /* The earliest offset which is part of an incomplete transaction. This is used to compute the
@@ -312,9 +321,10 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径 To
    */
   @volatile private var highWatermarkMetadata: LogOffsetMetadata = LogOffsetMetadata(logStartOffset)
 
-  /* the actual segments of the log. 保存分区日志下所有的日志段信息 Map的key值是日志段的起始位移值 value是日志段对象本身(ConcurrentSkipListMap线程安全 | 键值可排序) */
+  /* the actual segments of the log. 最重要的属性 保存分区日志下所有的日志段信息 Map的key值是日志段的起始位移值 value是日志段对象本身(ConcurrentSkipListMap线程安全 && 键值可排序) */
   private val segments: ConcurrentNavigableMap[java.lang.Long, LogSegment] = new ConcurrentSkipListMap[java.lang.Long, LogSegment]
 
+  // Leader Epoch 是社区于 0.11.0.0 版本引入源码中的 主要是用来判断出现 Failure 时是否执行日志截断操作(Truncation)
   // Visible for testing. 出现Failure时是否进行日志截断操作(之前根据高水位判断的机制 可能会造成副本间数据不一致的问题) 保存了分区Leader的Epoch值与对应位移值的映射关系
   @volatile var leaderEpochCache: Option[LeaderEpochFileCache] = None
 
@@ -814,10 +824,10 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径 To
       // In case we encounter a segment with offset overflow, the retry logic will split it after which we need to retry
       // loading of segments. In that case, we also need to close all segments that could have been left open in previous
       // call to loadSegmentFiles().
-      // 清空所有已有日志段对象
+      // 2.1.清空所有已有日志段对象
       logSegments.foreach(_.close())
       segments.clear()
-      // 2.再次遍历分区路径 重建日志段segments Map以及索引文件
+      // 2.2.再次遍历分区路径 重建日志段segments Map并删除无对应日志段文件的孤立索引文件
       loadSegmentFiles()
     }
 
@@ -829,13 +839,13 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径 To
 
     if (!dir.getAbsolutePath.endsWith(Log.DeleteDirSuffix)) {
       val nextOffset = retryOnOffsetOverflow {
-        // 4.恢复日志段对象
+        // 4.1.恢复日志段对象
         recoverLog()
       }
 
       // reset the index size of the currently active log segment to allow more entries
       activeSegment.resizeIndexes(config.maxIndexSize)
-      // 返回恢复之后的分区日志LEO值
+      // 4.2.返回恢复之后的分区日志LEO值
       nextOffset
     } else {
       if (logSegments.isEmpty) {
@@ -2612,32 +2622,37 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径 To
 
 /**
  * Helper functions for logs
+ *
+ * Log类的伴生对象 内部定义了很多常量及一些辅助方法
  */
 object Log {
 
-  /** a log file */
+  // ==========================Kafka定义的文件类型Start==========================
+  /** a log file. Kafka日志对象文件 */
   val LogFileSuffix = ".log"
 
-  /** an index file */
+  /** an index file. Kafka位移索引文件 */
   val IndexFileSuffix = ".index"
 
-  /** a time index file */
+  /** a time index file. Kafka时间戳索引文件 */
   val TimeIndexFileSuffix = ".timeindex"
 
-  /* Kafka为幂等型或事务型Producer所做的快照文件 */
+  /** Kafka为幂等型或事务型Producer所做的快照文件 */
   val ProducerSnapshotFileSuffix = ".snapshot"
 
-  /** an (aborted) txn index. */
+  /** an (aborted) txn index. Kafka事务索引文件 */
   val TxnIndexFileSuffix = ".txnindex"
 
   /** a file that is scheduled to be deleted. 删除日志段操作创建的文件 目前删除日志段文件是异步操作 broker端把日志段从.log后缀改为.deleted后缀 */
   val DeletedFileSuffix = ".deleted"
 
-  /** A temporary file that is being used for log cleaning. Compaction的产物 */
+  // ==============================都是Compaction操作的产物 和Cleaner有关Start==============================
+  /** A temporary file that is being used for log cleaning. */
   val CleanedFileSuffix = ".cleaned"
 
-  /** A temporary file used when swapping files into the log. Compaction的产物 */
+  /** A temporary file used when swapping files into the log. */
   val SwapFileSuffix = ".swap"
+  // ==============================都是Compaction操作的产物 和Cleaner有关End==============================
 
   /** Clean shutdown file that indicates the broker was cleanly shutdown in 0.8 and higher.
    * This is used to avoid unnecessary recovery after a clean shutdown. In theory this could be
@@ -2647,11 +2662,12 @@ object Log {
    */
   val CleanShutdownFile = ".kafka_cleanshutdown"
 
-  /** a directory that is scheduled to be deleted. 应用于文件夹 删除一个Topic时 Topic分区的文件夹很加上该后缀 */
+  /** a directory that is scheduled to be deleted. 应用于文件夹 删除一个Topic时 Topic的分区文件夹会加上该后缀 */
   val DeleteDirSuffix = "-delete"
 
-  /** a directory that is used for future partition. 变更Topic分区文件夹地址 */
+  /** a directory that is used for future partition. 适用于变更Topic分区文件夹地址的 */
   val FutureDirSuffix = "-future"
+  // ==========================Kafka定义的文件类型End==========================
 
   private[log] val DeleteDirPattern = Pattern.compile(s"^(\\S+)-(\\S+)\\.(\\S+)$DeleteDirSuffix")
   private[log] val FutureDirPattern = Pattern.compile(s"^(\\S+)-(\\S+)\\.(\\S+)$FutureDirSuffix")
@@ -2680,6 +2696,7 @@ object Log {
    *
    * 通过给定的位移值计算出对应的日志段文件名
    * 由于日志段文件名固定式20位的 该方法采用给定位移值前补0的方式将文件名扩充成20位
+   * 比如给定位移值 12345 那么Broker端磁盘上对应的日志段文件名即为00000000000000012345.log
    *
    * @param offset The offset to use in the file name
    * @return The filename

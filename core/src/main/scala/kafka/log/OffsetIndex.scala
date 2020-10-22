@@ -61,7 +61,6 @@ class OffsetIndex(_file: File, baseOffset: Long, maxIndexSize: Int = -1, writabl
    * broker端参数log.segment.bytes是整型 即Kafka每个日志段文件的大小不会超过 2 ^ 32(4GB)
    * 说明同一个日志段文件上的位移值 - baseOffset的差值一定在整数范围内 所以保存4字节就足够了
    *
-   *
    * @return
    */
   override def entrySize = 8
@@ -149,7 +148,8 @@ class OffsetIndex(_file: File, baseOffset: Long, maxIndexSize: Int = -1, writabl
    * 将绝对位移值和物理位移值存入
    *
    * @param buffer the buffer of this memory mapped index.
-   * @param n      the slot. 查找给定ByteBuffer中保存的第n个索引项(第n个槽)
+   * @param n      the slot.
+   *               查找给定ByteBuffer中保存的第n个索引项(第n个槽)
    * @return the index entry stored in the given slot.
    */
   override protected def parseEntry(buffer: ByteBuffer, n: Int): OffsetPosition = {
@@ -181,6 +181,7 @@ class OffsetIndex(_file: File, baseOffset: Long, maxIndexSize: Int = -1, writabl
   def append(offset: Long, position: Int): Unit = {
     inLock(lock) { // 索引对象的各个属性可能被多个线程并发修改 需要加锁保证线程安全
       // 1.判断日志文件是否已经写满
+      // 使用Scala的require方法抛出的illegalArgumentException 但是该问题不是由于传入参数导致的 二是由于索引文件处于不恰当的状态 即抛出illegalStateException更加合适
       require(!isFull, "Attempt to append to a full index (size = " + _entries + ").")
       // 2.Kafka不允许写入一个比最新索引项还小的索引项 所以必须满足以下两个条件才允许写入:
       // ----a.当前索引文件为空
