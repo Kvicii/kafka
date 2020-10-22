@@ -34,10 +34,14 @@ import org.apache.kafka.common.utils.{ByteBufferUnmapper, OperatingSystem, Utils
  * 关于索引的顶层抽象类 封装了所有索引类型的公共操作
  * 由于是抽象基类 Kafka的所有子类自动继承了这4个参数
  *
- * @param _file        The index file.  索引文件 var类型说明可被修改  自1.1.0版本之后 Kafka允许迁移底层的日志路径 所以索引文件自然要是可以更换的
- * @param baseOffset   the base offset of the segment that this index is corresponding to.  起始位移值 索引对象对应日志段对象的起始位移值 日志文件和索引文件都是成组出现的
- * @param maxIndexSize The maximum index size in bytes. 索引文件最大字节数 控制了索引文件的最大长度 传入该参数的值是broker端参数segment.index.bytes值(10M) 即默认情况下Kafka的所有索引文件默认大小都是10MB
- * @param writable     索引文件的打开方式 True代表以读写方式打开 False代表以只读方式打开
+ * @param _file        The index file.  索引文件 var类型说明可被修改
+ *                     自1.1.0版本之后 Kafka允许迁移底层的日志路径 所以索引文件自然要是可以更换的
+ * @param baseOffset   the base offset of the segment that this index is corresponding to.
+ *                     起始位移值 索引对象对应日志段对象的起始位移值 日志文件和索引文件都是成组出现的
+ * @param maxIndexSize The maximum index size in bytes.
+ *                     索引文件最大字节数 控制了索引文件的最大长度 传入该参数的值是broker端参数segment.index.bytes值(10M) 即默认情况下Kafka的所有索引文件默认大小都是10MB
+ * @param writable
+ *                     索引文件的打开方式 True代表以读写方式打开 False代表以只读方式打开
  */
 abstract class AbstractIndex(@volatile private var _file: File, val baseOffset: Long,
                              val maxIndexSize: Int = -1, val writable: Boolean) extends Closeable {
@@ -121,7 +125,7 @@ abstract class AbstractIndex(@volatile private var _file: File, val baseOffset: 
    * 拥有很高的IO性能 文件直接映射到一段虚拟内存 访问内存映射文件的速度要快于普通文件的读写速度
    * 在Linux操作系统 这段映射的内存区域直接就是操作系统的Page Cache 意味着不需要将数据拷贝到用户态空间 避免了时间/空间消耗
    *
-   * 创建MappedByteBuffer对象 {@link AbstractIndex} 的其他大部分操作都和mmap有关
+   * 创建MappedByteBuffer对象实例 {@link AbstractIndex} 的其他大部分操作都和mmap有关
    */
   @volatile
   protected var mmap: MappedByteBuffer = {
@@ -133,11 +137,11 @@ abstract class AbstractIndex(@volatile private var _file: File, val baseOffset: 
       /* pre-allocate the file if necessary */
       if (newlyCreated) {
         if (maxIndexSize < entrySize) // 预设的索引文件不能太小 如果连一个索引项都保存不了直接抛出异常
-        throw new IllegalArgumentException("Invalid max index size: " + maxIndexSize)
+          throw new IllegalArgumentException("Invalid max index size: " + maxIndexSize)
         // 3.设置索引文件长度 roundDownToExactMultiple计算的是不超过maxIndexSize的最大整数倍entrySize
-        raf.setLength(roundDownToExactMultiple(maxIndexSize, entrySize)) // 比如maxIndexSize=1234567 entrySize=8 那么调整后的文件长度为1234560
+        raf.setLength(roundDownToExactMultiple(maxIndexSize, entrySize)) // 比如maxIndexSize=67 entrySize=8 那么调整后的文件长度为64
       }
-      // info.索引对象的文件长度是指索引对象底层物理文件的大小 索引对象的长度字段是内存中索引类的长度属性
+      // info.索引对象的文件长度是指索引对象底层物理文件的大小 索引对象的长度字段是内存中索引类实例的长度属性
       /* memory-map the file */
       _length = raf.length() // 4.更新索引对象长度字段_length
       // 5.更具writable参数创建只读/读写MappedByteBuffer
@@ -439,11 +443,11 @@ abstract class AbstractIndex(@volatile private var _file: File, val baseOffset: 
     }
 
     // 确定热区首个索引项位于哪个槽 _warmEntries就是所谓的分割线 目前固定为8192字节处
-    // 如果是 {@link OffsetIndex}  _warmEntries = 8192 / entrySize 即第1024个槽
-    // 如果是 {@link TimeIndex} _warmEntries = 8192 / 12 = 682，即第682个槽
+    // 如果是 {@link OffsetIndex}  _warmEntries = 8192 / entrySize 即第1024个槽 其中entrySize值为8 也就是OffsetIndex中定义的值
+    // 如果是 {@link TimeIndex} _warmEntries = 8192 / entrySize = 682 即第682个槽 其中entrySize值为12 也就是TimeIndex中定义的值
     val firstHotEntry = Math.max(0, _entries - 1 - _warmEntries) // 热区位于尾部
     // check if the target offset is in the warm section of the index
-    // 判断target是在热区还是冷区
+    // 判断查找位移值target是在热区还是冷区
     if (compareIndexEntry(parseEntry(idx, firstHotEntry), target, searchEntity) < 0) {
       // 热区直接搜索
       return binarySearch(firstHotEntry, _entries - 1)
@@ -484,7 +488,11 @@ object AbstractIndex extends Logging {
 }
 
 sealed trait IndexSearchType
+
 object IndexSearchType {
+
   case object KEY extends IndexSearchType
+
   case object VALUE extends IndexSearchType
+
 }
