@@ -548,8 +548,8 @@ class ControllerContext {
     val preferredReplica = replicaAssignment.replicas.head
     if (replicaAssignment.isBeingReassigned && replicaAssignment.addingReplicas.contains(preferredReplica))
     // reassigning partitions are not counted as imbalanced until the new replica joins the ISR (completes reassignment)
-    !leadershipInfo.leaderAndIsr.isr.contains(preferredReplica)
-      else
+      !leadershipInfo.leaderAndIsr.isr.contains(preferredReplica)
+    else
       leadershipInfo.leaderAndIsr.leader == preferredReplica
   }
 

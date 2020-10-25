@@ -13,6 +13,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
+ *
  * 每个 Broker 启动时 都会创建(Controller实例)对应的分区状态机和副本状态机实例
  * 但只有 Controller 所在的 Broker 才会启动它们 如果 Controller 变更到其他 Broker
  * 老 Controller 所在的 Broker 要调用这些状态机的 shutdown 方法关闭它们
@@ -2777,6 +2778,7 @@ case class LeaderIsrAndControllerEpoch(leaderAndIsr: LeaderAndIsr, controllerEpo
  *
  * 1.UnCleanLeaderElectionsPerSec: 计算Controller每秒执行的Unclean Leader选举数量 通常情况下执行Unclean Leader选举可能会造成数据丢失 一般不建议开启
  * 一旦开启就需要关注该指标的值 确保Unclean Leader的速率维持在一个很低的水平 否则会出现很多数据丢失的情况
+ *
  * 2.所有Controller事件状态的执行速率与时间: 统计所有Controller的状态的速率和时间信息 单位是ms
  */
 private[controller] class ControllerStats extends KafkaMetricsGroup {

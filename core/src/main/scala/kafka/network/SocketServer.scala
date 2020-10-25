@@ -600,12 +600,12 @@ private[kafka] abstract class AbstractServerThread(connectionQuotas: ConnectionQ
  * 接收和创建外部TCP连接的线程 每个SocketServer实例只会创建一个Acceptor线程
  * 目的是创建连接 并将接收到的Request对象传递给下游的Processor线程处理
  *
- * 如果在生产环境中 Clients 与 Broker 的通信网络延迟很大(比如 RTT>10ms)
- * 建议调大控制缓冲区大小的两个参数 也就是 sendBufferSize 和 recvBufferSize 100KB太小了
+ * 如果在生产环境中Clients与Broker的通信网络延迟很大(比如 RTT>10ms)
+ * 建议调大控制缓冲区大小的两个参数 也就是sendBufferSize和recvBufferSize 100KB太小了
  */
-private[kafka] class Acceptor(val endPoint: EndPoint, // 定义的Kafka Broker连接信息 Acceptor需要用到连接信息中的主机名和端口创建ServerSocket
-                              val sendBufferSize: Int, // 设置的是SocketOptions的SO_SNDBUF 用于设置出站(Outbound)网络IO的底层缓冲存区大小 默认是Broker端参数socket.receive.buffer.bytes 的值 即 100KB
-                              val recvBufferSize: Int, // 设置的是SocketOptions的SO_RCVBUF 用于设置入站(Inbound)网络IO的底层缓冲区大小 默认是 Broker 端参数 socket.receive.buffer.bytes 的值 即 100KB
+private[kafka] class Acceptor(val endPoint: EndPoint, // 定义的Kafka Broker连接信息Acceptor需要用到连接信息中的主机名和端口创建ServerSocket
+                              val sendBufferSize: Int, // 设置的是SocketOptions的SO_SNDBUF 用于设置出站(Outbound)网络IO的底层缓冲存区大小 默认是Broker端参数socket.receive.buffer.bytes的值 即100KB
+                              val recvBufferSize: Int, // 设置的是SocketOptions的SO_RCVBUF 用于设置入站(Inbound)网络IO的底层缓冲区大小 默认是Broker端参数 socket.receive.buffer.bytes的值 即100KB
                               brokerId: Int,
                               connectionQuotas: ConnectionQuotas,
                               metricPrefix: String) extends AbstractServerThread(connectionQuotas) with KafkaMetricsGroup {
@@ -635,7 +635,7 @@ private[kafka] class Acceptor(val endPoint: EndPoint, // 定义的Kafka Broker�
   }
 
   private def startProcessors(processors: Seq[Processor], processorThreadPrefix: String): Unit = synchronized {
-    // 遍一组Processor线程 依次创建并启动
+    // 遍历一组Processor线程 依次创建并启动
     processors.foreach { processor =>
       KafkaThread.nonDaemon(
         // 线程命名规范 processor线程前缀-kafka-network-thread-broker序号-监听器名称-安全协议-processor序号
@@ -829,19 +829,16 @@ private[kafka] object Processor {
 /**
  * Thread that processes all requests from a single connection. There are N of these running in parallel
  * each of which has its own selector
- * <<<<<<< HEAD
+ *
  * 处理单个TCP连接上所有请求的线程 每个SocketServer默认创建若干个(num.network.threads指定)Processor线程
  * Processor线程负责将接收到的Request加入到RequestChannel的队列中
  * 也负责将处理后的Response返还给Request的发送方
- * =======
- *
  *
  * @param isPrivilegedListener The privileged listener flag is used as one factor to determine whether
  *                             a certain request is forwarded or not. When the control plane is defined,
  *                             the control plane processor would be fellow broker's choice for sending
  *                             forwarding requests; if the control plane is not defined, the processor
  *                             relying on the inter broker listener would be acting as the privileged listener.
- *                             >>>>>>> 1a9697430a8a6da575fdc7e96c1aa9a5640295df
  */
 private[kafka] class Processor(val id: Int,
                                time: Time,
@@ -877,7 +874,7 @@ private[kafka] class Processor(val id: Int,
   }
 
   // 每个Processor线程创建的时候都会创建以下三个队列结构
-  // 保存要创建的新连接信息 即SocketChannel对象 默认上限20 由于是硬编码了队列的长度 所以无法从外部修改
+  // 保存要创建的新连接信息(即SocketChannel对象) 默认上限20 由于是硬编码了队列的长度 所以无法从外部修改
   // 每当Processor接收新的连接请求时都会将SocketChannel放入到该队列 后续调用configureNewConnections创建连接时 再从该队列取出SocketChannel 注册新的连接
   private val newConnections = new ArrayBlockingQueue[SocketChannel](connectionQueueSize)
   // 临时Response队列 当Processor将Response发送给Request的发送方时 会将Response放入到该队列
@@ -953,7 +950,7 @@ private[kafka] class Processor(val id: Int,
           // register any new responses for writing
           // 发送Response并将Response放入到inflightResponses临时队列
           processNewResponses()
-          // 执行NIO的pol(执行真正的发送逻辑) 获取对应SocketChannel上准备就绪的IO操作
+          // 执行NIO的poll(执行真正的发送逻辑) 获取对应SocketChannel上准备就绪的IO操作
           poll()
           // 将接收到的Request放入到Request队列
           processCompletedReceives()
@@ -1002,7 +999,7 @@ private[kafka] class Processor(val id: Int,
   private def processNewResponses(): Unit = {
     var currentResponse: RequestChannel.Response = null
     while ( {
-      currentResponse = dequeueResponse();
+      currentResponse = dequeueResponse()
       currentResponse != null
     }) {
       // 获取channelId
@@ -1060,7 +1057,7 @@ private[kafka] class Processor(val id: Int,
     if (openOrClosingChannel(connectionId).isDefined) { // 判断连接是否处于打开状态
       // 发送Response
       selector.send(responseSend)
-      // 将Reponse放入临时队列
+      // 将Response放入临时队列
       inflightResponses += (connectionId -> response)
     }
   }
@@ -1092,6 +1089,9 @@ private[kafka] class Processor(val id: Int,
     }
   }
 
+  /**
+   * 接收和处理Request
+   */
   private def processCompletedReceives(): Unit = {
     // 遍历所有已经接收的Request
     selector.completedReceives.forEach { receive =>
@@ -1148,6 +1148,9 @@ private[kafka] class Processor(val id: Int,
     selector.clearCompletedReceives()
   }
 
+  /**
+   * 负责处理Response的回调逻辑
+   */
   private def processCompletedSends(): Unit = {
     // 遍历SocketChannel已发送的Response
     selector.completedSends.forEach { send =>
@@ -1182,6 +1185,9 @@ private[kafka] class Processor(val id: Int,
     request.updateRequestMetrics(networkThreadTimeNanos, response)
   }
 
+  /**
+   * 是处理已断开连接的
+   */
   private def processDisconnected(): Unit = {
     // 遍历SocketChannel的那些已经断开的连接
     selector.disconnected.keySet.forEach { connectionId =>
@@ -1201,12 +1207,15 @@ private[kafka] class Processor(val id: Int,
     }
   }
 
+  /**
+   * 关闭超限连接
+   */
   private def closeExcessConnections(): Unit = {
     // 如果超过了配额限制
     if (connectionQuotas.maxConnectionsExceeded(listenerName)) {
       // 找出可以优先关闭的那个连接
-      // 所谓优先关闭是指在诸多 TCP 连接中找出最近未被使用的那个
-      //这里“未被使用”就是说在最近一段时间内 没有任何 Request 经由这个连接被发送到 Processor 线程
+      // 所谓优先关闭是指在诸多TCP连接中找出最近未被使用的那个
+      // 这里"未被使用"就是说在最近一段时间内 没有任何Request经由这个连接被发送到Processor线程
       val channel = selector.lowestPriorityChannel()
       if (channel != null)
         close(channel.id) // 关闭连接
