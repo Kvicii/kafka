@@ -33,7 +33,7 @@ sealed abstract class ControllerState {
   def value: Byte
 
   /**
-   * 用于构造Controller状态速率的监控指标名称
+   * 用于构造Controller状态速率的监控指标名称(比如Topic总数发生变化的监控速率指标TopicChangeRateAndTimeMs)
    *
    * @return
    */

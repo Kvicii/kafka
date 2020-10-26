@@ -90,12 +90,12 @@ object KafkaController extends Logging {
  *
  * 在Kafka集群中 某段时间内只能有一个Broker被选为Controller 随着时间推移 可能有不同的Broker被当选为Controller 但在某一个时刻只能有一个Broker当选Controller
  *
- * @param config             * Kafka配置信息 可以通过它拿到Broker端所有参数的值
- * @param zkClient           * ZK客户端 Controller与Zookeeper的所有交互都通过该属性完成
+ * @param config             Kafka配置信息 可以通过它拿到Broker端所有参数的值
+ * @param zkClient           ZK客户端 Controller与Zookeeper的所有交互都通过该属性完成
  * @param time               提供时间服务(如获取当前时间)的工具类
  * @param metrics            实现指标监控服务(如创建监控指标)的工具类
  * @param initialBrokerInfo  Broker节点信息 包括主机名 端口号 所用监听器
- * @param initialBrokerEpoch * Broker Epoch值 隔离老Broker发送的请求
+ * @param initialBrokerEpoch Broker Epoch值 隔离老Broker发送的请求
  * @param tokenManager       实现Delegation token管理的工具类 Delegation token是一种轻量级的认证机制
  * @param threadNamePrefix   Controller端事件处理线程名字前缀
  */
@@ -675,7 +675,7 @@ class KafkaController(val config: KafkaConfig,
    */
   private def onBrokerFailure(deadBrokers: Seq[Int]): Unit = {
     info(s"Broker failure callback for ${deadBrokers.mkString(",")}")
-    // 更新Controller的元数据信息 将给定的Broker ID从replicasOnOfflineDirs中移除
+    // 更新Controller的元数据信息 将给定的Broker Id从replicasOnOfflineDirs中移除
     deadBrokers.foreach(controllerContext.replicasOnOfflineDirs.remove)
     // 将待移除的Broker从元数据对象中处于已关闭状态的Broker列表中移除
     val deadBrokersThatWereShuttingDown =
@@ -691,7 +691,7 @@ class KafkaController(val config: KafkaConfig,
 
   private def onBrokerUpdate(updatedBrokerId: Int): Unit = {
     info(s"Broker info update callback for $updatedBrokerId")
-    // 给集群所有Broker发送UpdateMetadataRequest 让她它们去更新元数据
+    // 给集群所有Broker发送UpdateMetadataRequest 让他们去更新元数据
     sendUpdateMetadataRequest(controllerContext.liveOrShuttingDownBrokerIds.toSeq, Set.empty)
   }
 
@@ -2794,6 +2794,8 @@ private[controller] class ControllerStats extends KafkaMetricsGroup {
 
 /**
  * Controller事件 在事件队列中被处理的对象
+ * 多个ControllerEvent可能对应同一个ControllerState
+ * (如TopicChange 和 PartitionModifications 事件都属于 TopicChange 状态 它们都与 Topic 的变更有关前者是创建 Topic 后者是修改 Topic 的属性 比如分区数或副本因子等等)
  */
 sealed trait ControllerEvent {
   def state: ControllerState // 每个 ControllerEvent 都定义了一个状态  Controller 在处理具体的事件时会对状态进行相应的变更 该状态是由ControllerState.scale定义的

@@ -30,12 +30,7 @@ import org.apache.kafka.common.utils.FlattenedIterator;
 import org.apache.kafka.common.utils.Utils;
 
 import java.nio.ByteBuffer;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.stream.Collectors;
 
 public class LeaderAndIsrRequest extends AbstractControlRequest {

@@ -52,7 +52,6 @@ object ControllerChannelManager {
  * 主要有两类任务:
  *
  * 1.管理Controller与集群中Broker的连接 为每一个Broker创建RequestSendThread实例
- *
  * 2.将要发送的请求放入到指定的Broker的阻塞队列中 等待该Broker专属的RequestSendThread线程处理
  *
  * @param controllerContext
@@ -124,7 +123,7 @@ class ControllerChannelManager(controllerContext: ControllerContext,
   }
 
   /**
-   * 添加目标Broker到brokerStateInfo中 创建必要的配套资源 如请求队列 RequestSendThread线程对象
+   * 添加目标Broker到brokerStateInfo中 创建必要的配套资源(如请求队列RequestSendThread线程对象)
    * 最后启动RequestSendThread线程
    *
    * @param broker
@@ -265,7 +264,7 @@ class ControllerChannelManager(controllerContext: ControllerContext,
     val requestThread = brokerStateInfo(brokerId).requestSendThread
     if (requestThread.getState == Thread.State.NEW)
     // 启动RequestSendThread线程
-    requestThread.start()
+      requestThread.start()
   }
 }
 
@@ -274,7 +273,7 @@ class ControllerChannelManager(controllerContext: ControllerContext,
  * 每个QueueItem实例保存的都是 LeaderAndIsrRequest | StopReplicaRequest | UpdateMetadataRequest 三类请求中的一类
  *
  * @param apiKey        标识请求类型
- * @param request       // 是上边界的意思 即request字段必须是AbstractControlRequest的子类
+ * @param request       `<:` 是上边界的意思 即request字段必须是AbstractControlRequest的子类
  * @param callback      回调方法
  * @param enqueueTimeMs 请求被放置到请求队列的时间戳
  */

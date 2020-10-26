@@ -44,17 +44,16 @@ object ControllerEventManager {
  */
 trait ControllerEventProcessor {
   /**
-   * 支持普通处理Controller事件的接口
-   * 接收一个 Controller 事件并进行处理 是实现 Controller 事件处理的主力方法
+   * 支持普通处理Controller事件的接口 接收一个 Controller 事件并进行处理
+   * 是实现 Controller 事件处理的主力方法
    *
    * @param event
    */
   def process(event: ControllerEvent): Unit
 
   /**
-   * 支持抢占处理Controller事件的接口
-   * 接收一个 Controller 事件 并抢占队列之前的事件进行优先处理 Kafka 使用preempt实现某些高优先级事件的抢占处理
-   * 目前在源码中只有两类事件(ShutdownEventThread 和 Expire)需要抢占式处理
+   * 支持抢占处理Controller事件的接口 接收一个 Controller 事件 并抢占队列之前的事件进行优先处理
+   * Kafka 使用preempt实现某些高优先级事件的抢占处理 目前在源码中只有两类事件(ShutdownEventThread 和 Expire)需要抢占式处理
    *
    * @param event
    */
@@ -68,7 +67,8 @@ trait ControllerEventProcessor {
  * @param enqueueTimeMs Controller事件被放入事件队列的时间戳
  */
 class QueuedEvent(val event: ControllerEvent, val enqueueTimeMs: Long) {
-  // 标识Controller事件是否开始被处理  QueuedEvent使用CountDownLatch的目的是确保Expire事件在建立ZK会话前被处理 如果不是为了处理Expire事件 使用spent来标识该事件已经被处理过了(如果事件已经被处理过 什么都不做直接返回)
+  // 标识Controller事件是否开始被处理
+  // QueuedEvent使用CountDownLatch的目的是确保Expire事件在建立ZK会话前被处理 如果不是为了处理Expire事件 使用spent来标识该事件已经被处理过了(如果事件已经被处理过 什么都不做直接返回)
   val processingStarted = new CountDownLatch(1)
   // 标识Controller事件是否被处理过
   val spent = new AtomicBoolean(false)
@@ -167,7 +167,7 @@ class ControllerEventManager(controllerId: Int,
    * @param event
    * @return
    */
-  def clearAndPut(event: ControllerEvent): QueuedEvent = inLock(putLock){
+  def clearAndPut(event: ControllerEvent): QueuedEvent = inLock(putLock) {
     val preemptedEvents = new ArrayList[QueuedEvent]()
     queue.drainTo(preemptedEvents)
     preemptedEvents.forEach(_.preempt(processor))
@@ -178,7 +178,7 @@ class ControllerEventManager(controllerId: Int,
 
   /**
    * 专属的事件处理线程 唯一的作用是处理不同种类的ControllerEvent 从事件队列中读取Controller事件
-   * ShutdownableThread是Kafka为很多线程类定义的公共父类 其父类是是 Java Thread 类
+   * ShutdownableThread是Kafka为很多线程类定义的公共父类 其父类是 Java Thread 类
    *
    * @param name 由ControllerEventManager对象定义的
    */
