@@ -24,11 +24,13 @@ import org.apache.kafka.common.network.Send;
 import org.apache.kafka.common.protocol.ApiKeys;
 import org.apache.kafka.common.protocol.types.Struct;
 import org.apache.kafka.common.security.auth.KafkaPrincipal;
+import org.apache.kafka.common.security.auth.KafkaPrincipalSerde;
 import org.apache.kafka.common.security.auth.SecurityProtocol;
 import org.apache.kafka.server.authorizer.AuthorizableRequestContext;
 
 import java.net.InetAddress;
 import java.nio.ByteBuffer;
+import java.util.Optional;
 
 import static org.apache.kafka.common.protocol.ApiKeys.API_VERSIONS;
 
@@ -41,6 +43,7 @@ public class RequestContext implements AuthorizableRequestContext {
 	public final SecurityProtocol securityProtocol; // 安全协议类型 目前支持4种:PLAINTEXT、SSL、SASL_PLAINTEXT、SASL_SSL
 	public final ClientInformation clientInformation;   // 用户自定义的一些连接方信息
 	public final boolean fromPrivilegedListener;
+	public final Optional<KafkaPrincipalSerde> principalSerde;
 
 	public RequestContext(RequestHeader header,
 						  String connectionId,
@@ -50,6 +53,26 @@ public class RequestContext implements AuthorizableRequestContext {
 						  SecurityProtocol securityProtocol,
 						  ClientInformation clientInformation,
 						  boolean fromPrivilegedListener) {
+		this(header,
+				connectionId,
+				clientAddress,
+				principal,
+				listenerName,
+				securityProtocol,
+				clientInformation,
+				fromPrivilegedListener,
+				Optional.empty());
+	}
+
+	public RequestContext(RequestHeader header,
+						  String connectionId,
+						  InetAddress clientAddress,
+						  KafkaPrincipal principal,
+						  ListenerName listenerName,
+						  SecurityProtocol securityProtocol,
+						  ClientInformation clientInformation,
+						  boolean fromPrivilegedListener,
+						  Optional<KafkaPrincipalSerde> principalSerde) {
 		this.header = header;
 		this.connectionId = connectionId;
 		this.clientAddress = clientAddress;
@@ -58,6 +81,7 @@ public class RequestContext implements AuthorizableRequestContext {
 		this.securityProtocol = securityProtocol;
 		this.clientInformation = clientInformation;
 		this.fromPrivilegedListener = fromPrivilegedListener;
+		this.principalSerde = principalSerde;
 	}
 
 	/**
@@ -94,9 +118,7 @@ public class RequestContext implements AuthorizableRequestContext {
 						", apiVersion: " + header.apiVersion() +
 						", connectionId: " + connectionId +
 						", listenerName: " + listenerName +
-						", principal: " + principal +
-						", initialPrincipal: " + initialPrincipalName() +
-						", initialClientId: " + header.initialClientId(), ex);
+						", principal: " + principal, ex);
 			}
 		}
 	}
@@ -157,10 +179,5 @@ public class RequestContext implements AuthorizableRequestContext {
 	@Override
 	public int correlationId() {
 		return header.correlationId();
-	}
-
-	@Override
-	public String initialPrincipalName() {
-		return header.initialPrincipalName();
 	}
 }

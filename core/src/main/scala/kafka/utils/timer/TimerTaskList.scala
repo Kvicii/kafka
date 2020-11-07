@@ -134,7 +134,7 @@ private[timer] class TimerTaskList(taskCounter: AtomicInteger) extends Delayed {
    *
    * @param f
    */
-  def flush(f: (TimerTaskEntry) => Unit): Unit = {
+  def flush(f: TimerTaskEntry => Unit): Unit = {
     synchronized {
       var head = root.next // 找到链表第一个元素
       while (head ne root) { // 开始遍历链表

@@ -146,11 +146,6 @@ class SystemTimer(executorName: String,
     }
   }
 
-  /**
-   * 调用 addTimerTaskEntry 重新将定时任务插入回时间轮
-   */
-  private[this] val reinsert = (timerTaskEntry: TimerTaskEntry) => addTimerTaskEntry(timerTaskEntry)
-
   /*
    * Advances the clock if there is an expired bucket. If there isn't any expired bucket when called,
    * waits up to timeoutMs before giving up.
@@ -170,7 +165,7 @@ class SystemTimer(executorName: String,
           // 推动时间轮向前"滚动"到Bucket的过期时间点
           timingWheel.advanceClock(bucket.getExpiration)
           // 将该Bucket下的所有定时任务重写回到时间轮
-          bucket.flush(reinsert)
+          bucket.flush(addTimerTaskEntry)
           // 读取下一个Bucket对象
           bucket = delayQueue.poll()
         }
@@ -198,4 +193,3 @@ class SystemTimer(executorName: String,
     taskExecutor.shutdown()
   }
 }
-

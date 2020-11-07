@@ -310,18 +310,11 @@ class ZkPartitionStateMachine(config: KafkaConfig,
         } else {
           Map.empty
         }
-      case OfflinePartition =>
+      case OfflinePartition | NonExistentPartition =>
         validPartitions.foreach { partition =>
           if (traceEnabled)
             stateChangeLog.trace(s"Changed partition $partition state from ${partitionState(partition)} to $targetState")
-          controllerContext.putPartitionState(partition, OfflinePartition)
-        }
-        Map.empty
-      case NonExistentPartition =>
-        validPartitions.foreach { partition =>
-          if (traceEnabled)
-            stateChangeLog.trace(s"Changed partition $partition state from ${partitionState(partition)} to $targetState")
-          controllerContext.putPartitionState(partition, NonExistentPartition)
+          controllerContext.putPartitionState(partition, targetState)
         }
         Map.empty
     }

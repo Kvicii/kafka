@@ -29,7 +29,7 @@ import java.util.concurrent.atomic._
 import kafka.cluster.{BrokerEndPoint, EndPoint}
 import kafka.metrics.KafkaMetricsGroup
 import kafka.network.Processor._
-import kafka.network.RequestChannel.{Metrics => _, _}
+import kafka.network.RequestChannel.{CloseConnectionResponse, EndThrottlingResponse, NoOpResponse, SendResponse, StartThrottlingResponse}
 import kafka.network.SocketServer._
 import kafka.security.CredentialProvider
 import kafka.server.{BrokerReconfigurable, KafkaConfig}
@@ -39,18 +39,19 @@ import org.apache.kafka.common.config.ConfigException
 import org.apache.kafka.common.errors.InvalidRequestException
 import org.apache.kafka.common.memory.{MemoryPool, SimpleMemoryPool}
 import org.apache.kafka.common.metrics._
-import org.apache.kafka.common.metrics.stats.{CumulativeSum, Meter, Rate}
+import org.apache.kafka.common.metrics.stats.{Avg, CumulativeSum, Meter, Rate}
 import org.apache.kafka.common.network.KafkaChannel.ChannelMuteEvent
 import org.apache.kafka.common.network.{ChannelBuilder, ChannelBuilders, ClientInformation, KafkaChannel, ListenerName, ListenerReconfigurable, Selectable, Send, Selector => KSelector}
-import org.apache.kafka.common.protocol.ApiKeys
-import org.apache.kafka.common.requests.{ApiVersionsRequest, RequestContext, RequestHeader}
-import org.apache.kafka.common.security.auth.SecurityProtocol
+import org.apache.kafka.common.protocol.{ApiKeys, Errors}
+import org.apache.kafka.common.requests.{ApiVersionsRequest, EnvelopeRequest, EnvelopeResponse, RequestContext, RequestHeader}
+import org.apache.kafka.common.security.auth.{KafkaPrincipal, KafkaPrincipalSerde, SecurityProtocol}
 import org.apache.kafka.common.utils.{KafkaThread, LogContext, Time}
 import org.apache.kafka.common.{Endpoint, KafkaException, MetricName, Reconfigurable}
 import org.slf4j.event.Level
 
 import scala.collection._
 import scala.collection.mutable.{ArrayBuffer, Buffer}
+import scala.compat.java8.OptionConverters._
 import scala.jdk.CollectionConverters._
 import scala.util.control.ControlThrowable
 
@@ -1115,23 +1116,42 @@ private[kafka] class Processor(val id: Int,
                 val connectionId = receive.source
                 val context = new RequestContext(header, connectionId, channel.socketAddress,
                   channel.principal, listenerName, securityProtocol,
-                  channel.channelMetadataRegistry.clientInformation, isPrivilegedListener)
-                val req = new RequestChannel.Request(processor = id, context = context,
-                  startTimeNanos = nowNanos, memoryPool, receive.payload, requestChannel.metrics)
-                // KIP-511: ApiVersionsRequest is intercepted here to catch the client software name
-                // and version. It is done here to avoid wiring things up to the api layer.
-                if (header.apiKey == ApiKeys.API_VERSIONS) {
-                  val apiVersionsRequest = req.body[ApiVersionsRequest]
-                  if (apiVersionsRequest.isValid) {
-                    channel.channelMetadataRegistry.registerClientInformation(new ClientInformation(
-                      apiVersionsRequest.data.clientSoftwareName,
-                      apiVersionsRequest.data.clientSoftwareVersion))
+                  channel.channelMetadataRegistry.clientInformation, isPrivilegedListener, channel.principalSerde)
+
+                var req = new RequestChannel.Request(processor = id, context = context,
+                  startTimeNanos = nowNanos, memoryPool, receive.payload, requestChannel.metrics, None)
+
+                if (req.header.apiKey == ApiKeys.ENVELOPE) {
+                  // Override the request context with the forwarded request context.
+                  // The envelope's context will be preserved in the forwarded context
+
+                  req = parseForwardedPrincipal(req, channel.principalSerde.asScala) match {
+                    case Some(forwardedPrincipal) =>
+                      buildForwardedRequestContext(req, forwardedPrincipal)
+
+                    case None =>
+                      val envelopeResponse = new EnvelopeResponse(Errors.PRINCIPAL_DESERIALIZATION_FAILURE)
+                      sendEnvelopeResponse(req, envelopeResponse)
+                      null
                   }
                 }
-                // 将Request放入到Request队列
-                requestChannel.sendRequest(req)
-                selector.mute(connectionId)
-                handleChannelMuteEvent(connectionId, ChannelMuteEvent.REQUEST_RECEIVED)
+
+                if (req != null) {
+                  // KIP-511: ApiVersionsRequest is intercepted here to catch the client software name
+                  // and version. It is done here to avoid wiring things up to the api layer.
+                  if (header.apiKey == ApiKeys.API_VERSIONS) {
+                    val apiVersionsRequest = req.body[ApiVersionsRequest]
+                    if (apiVersionsRequest.isValid) {
+                      channel.channelMetadataRegistry.registerClientInformation(new ClientInformation(
+                        apiVersionsRequest.data.clientSoftwareName,
+                        apiVersionsRequest.data.clientSoftwareVersion))
+                    }
+                  }
+                  // 将Request放入到Request队列
+                  requestChannel.sendRequest(req)
+                  selector.mute(connectionId)
+                  handleChannelMuteEvent(connectionId, ChannelMuteEvent.REQUEST_RECEIVED)
+                }
               }
             }
           case None =>
@@ -1151,6 +1171,66 @@ private[kafka] class Processor(val id: Int,
   /**
    * 负责处理Response的回调逻辑
    */
+  private def sendEnvelopeResponse(
+                                    envelopeRequest: RequestChannel.Request,
+                                    envelopeResponse: EnvelopeResponse
+                                  ): Unit = {
+    val envelopResponseSend = envelopeRequest.context.buildResponse(envelopeResponse)
+    enqueueResponse(new RequestChannel.SendResponse(
+      envelopeRequest,
+      envelopResponseSend,
+      None,
+      None
+    ))
+  }
+
+  private def parseForwardedPrincipal(
+                                       envelopeRequest: RequestChannel.Request,
+                                       principalSerde: Option[KafkaPrincipalSerde]
+                                     ): Option[KafkaPrincipal] = {
+    val envelope = envelopeRequest.body[EnvelopeRequest]
+    try {
+      principalSerde.map { serde =>
+        serde.deserialize(envelope.principalData())
+      }
+    } catch {
+      case e: Exception =>
+        warn(s"Failed to deserialize principal from envelope request $envelope", e)
+        None
+    }
+  }
+
+  private def buildForwardedRequestContext(
+                                            envelopeRequest: RequestChannel.Request,
+                                            forwardedPrincipal: KafkaPrincipal
+                                          ): RequestChannel.Request = {
+    val envelope = envelopeRequest.body[EnvelopeRequest]
+    val forwardedRequestBuffer = envelope.requestData.duplicate()
+    val forwardedHeader = parseRequestHeader(forwardedRequestBuffer)
+    val forwardedClientAddress = InetAddress.getByAddress(envelope.clientAddress)
+
+    val forwardedContext = new RequestContext(
+      forwardedHeader,
+      envelopeRequest.context.connectionId,
+      forwardedClientAddress,
+      forwardedPrincipal,
+      listenerName,
+      securityProtocol,
+      ClientInformation.EMPTY,
+      isPrivilegedListener
+    )
+
+    new RequestChannel.Request(
+      processor = id,
+      context = forwardedContext,
+      startTimeNanos = envelopeRequest.startTimeNanos,
+      memoryPool,
+      forwardedRequestBuffer,
+      requestChannel.metrics,
+      Some(envelopeRequest)
+    )
+  }
+
   private def processCompletedSends(): Unit = {
     // 遍历SocketChannel已发送的Response
     selector.completedSends.forEach { send =>
@@ -1376,6 +1456,7 @@ class ConnectionQuotas(config: KafkaConfig, time: Time, metrics: Metrics) extend
   @volatile private var defaultMaxConnectionsPerIp: Int = config.maxConnectionsPerIp
   @volatile private var maxConnectionsPerIpOverrides = config.maxConnectionsPerIpOverrides.map { case (host, count) => (InetAddress.getByName(host), count) }
   @volatile private var brokerMaxConnections = config.maxConnections
+  private val interBrokerListenerName = config.interBrokerListenerName
   private val counts = mutable.Map[InetAddress, Int]()
 
   // Listener counts and configs are synchronized on `counts`
@@ -1431,6 +1512,7 @@ class ConnectionQuotas(config: KafkaConfig, time: Time, metrics: Metrics) extend
         maxConnectionsPerListener.put(listenerName, newListenerQuota)
         listenerCounts.put(listenerName, 0)
         config.addReconfigurable(newListenerQuota)
+        newListenerQuota.configure(config.valuesWithPrefixOverride(listenerName.configPrefix))
       }
       counts.notifyAll()
     }
@@ -1512,7 +1594,7 @@ class ConnectionQuotas(config: KafkaConfig, time: Time, metrics: Metrics) extend
   }
 
   private def protectedListener(listenerName: ListenerName): Boolean =
-    config.interBrokerListenerName == listenerName && config.listeners.size > 1
+    interBrokerListenerName == listenerName && listenerCounts.size > 1
 
   private def maxListenerConnections(listenerName: ListenerName): Int =
     maxConnectionsPerListener.get(listenerName).map(_.maxConnections).getOrElse(Int.MaxValue)
@@ -1526,16 +1608,26 @@ class ConnectionQuotas(config: KafkaConfig, time: Time, metrics: Metrics) extend
    * @return delay in milliseconds
    */
   private def recordConnectionAndGetThrottleTimeMs(listenerName: ListenerName, timeMs: Long): Long = {
-    val listenerThrottleTimeMs = maxConnectionsPerListener
-      .get(listenerName)
-      .map(listenerQuota => recordAndGetThrottleTimeMs(listenerQuota.connectionRateSensor, timeMs))
-      .getOrElse(0)
+    def recordAndGetListenerThrottleTime(minThrottleTimeMs: Int): Int = {
+      maxConnectionsPerListener
+        .get(listenerName)
+        .map { listenerQuota =>
+          val listenerThrottleTimeMs = recordAndGetThrottleTimeMs(listenerQuota.connectionRateSensor, timeMs)
+          val throttleTimeMs = math.max(minThrottleTimeMs, listenerThrottleTimeMs)
+          // record throttle time due to hitting connection rate quota
+          if (throttleTimeMs > 0) {
+            listenerQuota.connectionRateThrottleSensor.record(throttleTimeMs.toDouble, timeMs)
+          }
+          throttleTimeMs
+        }
+        .getOrElse(0)
+    }
 
     if (protectedListener(listenerName)) {
-      listenerThrottleTimeMs
+      recordAndGetListenerThrottleTime(0)
     } else {
       val brokerThrottleTimeMs = recordAndGetThrottleTimeMs(brokerConnectionRateSensor, timeMs)
-      math.max(brokerThrottleTimeMs, listenerThrottleTimeMs)
+      recordAndGetListenerThrottleTime(brokerThrottleTimeMs)
     }
   }
 
@@ -1588,7 +1680,7 @@ class ConnectionQuotas(config: KafkaConfig, time: Time, metrics: Metrics) extend
     val namePrefix = listenerOpt.map(_ => "").getOrElse("broker-")
     metrics.metricName(
       s"${namePrefix}connection-accept-rate",
-      "socket-server-metrics",
+      MetricsGroup,
       s"Tracking rate of accepting new connections (per second)",
       tags.asJava)
   }
@@ -1602,11 +1694,13 @@ class ConnectionQuotas(config: KafkaConfig, time: Time, metrics: Metrics) extend
 
   def close(): Unit = {
     metrics.removeSensor("ConnectionAcceptRate")
+    maxConnectionsPerListener.values.foreach(_.close())
   }
 
-  class ListenerConnectionQuota(lock: Object, listener: ListenerName) extends ListenerReconfigurable {
+  class ListenerConnectionQuota(lock: Object, listener: ListenerName) extends ListenerReconfigurable with AutoCloseable {
     @volatile private var _maxConnections = Int.MaxValue
-    val connectionRateSensor = createConnectionRateQuotaSensor(Int.MaxValue, Some(listener.value))
+    private[network] val connectionRateSensor = createConnectionRateQuotaSensor(Int.MaxValue, Some(listener.value))
+    private[network] val connectionRateThrottleSensor = createConnectionRateThrottleSensor()
 
     def maxConnections: Int = _maxConnections
 
@@ -1639,12 +1733,32 @@ class ConnectionQuotas(config: KafkaConfig, time: Time, metrics: Metrics) extend
       }
     }
 
+    def close(): Unit = {
+      metrics.removeSensor(connectionRateSensor.name)
+      metrics.removeSensor(connectionRateThrottleSensor.name)
+    }
+
     private def maxConnections(configs: util.Map[String, _]): Int = {
       Option(configs.get(KafkaConfig.MaxConnectionsProp)).map(_.toString.toInt).getOrElse(Int.MaxValue)
     }
 
     private def maxConnectionCreationRate(configs: util.Map[String, _]): Int = {
       Option(configs.get(KafkaConfig.MaxConnectionCreationRateProp)).map(_.toString.toInt).getOrElse(Int.MaxValue)
+    }
+
+    /**
+     * Creates sensor for tracking the average throttle time on this listener due to hitting connection rate quota.
+     * The average is out of all throttle times > 0, which is consistent with the bandwidth and request quota throttle
+     * time metrics.
+     */
+    private def createConnectionRateThrottleSensor(): Sensor = {
+      val sensor = metrics.sensor(s"ConnectionRateThrottleTime-${listener.value}")
+      val metricName = metrics.metricName("connection-accept-throttle-time",
+        MetricsGroup,
+        "Tracking average throttle-time, out of non-zero throttle times, per listener",
+        Map(ListenerMetricTag -> listener.value).asJava)
+      sensor.add(metricName, new Avg)
+      sensor
     }
   }
 
