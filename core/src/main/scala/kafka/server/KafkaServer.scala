@@ -6,7 +6,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *    http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -168,7 +168,7 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
 
   var kafkaController: KafkaController = null
 
-  var forwardingManager: ForwardingManager = null
+  var forwardingChannelManager: BrokerToControllerChannelManager = null
 
   var alterIsrChannelManager: BrokerToControllerChannelManager = null
 
@@ -204,7 +204,7 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
 
   newGauge("BrokerState", () => brokerState.currentState)
   newGauge("ClusterId", () => clusterId)
-  newGauge("yammer-metrics-count", () => KafkaYammerMetrics.defaultRegistry.allMetrics.size)
+  newGauge("yammer-metrics-count", () =>  KafkaYammerMetrics.defaultRegistry.allMetrics.size)
 
   val linuxIoMetricsCollector = new LinuxIoMetricsCollector("/proc", time, logger.underlying)
 
@@ -243,7 +243,7 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
         }
 
         /* Get or create cluster_id */
-        _clusterId = getOrGenerateClusterId(zkClient) // 创建clusterId
+        _clusterId = getOrGenerateClusterId(zkClient)
         info(s"Cluster ID = $clusterId")
 
         /* load metadata */
@@ -253,10 +253,10 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
         if (preloadedBrokerMetadataCheckpoint.clusterId.isDefined && preloadedBrokerMetadataCheckpoint.clusterId.get != clusterId)
           throw new InconsistentClusterIdException(
             s"The Cluster ID ${clusterId} doesn't match stored clusterId ${preloadedBrokerMetadataCheckpoint.clusterId} in meta.properties. " +
-              s"The broker is trying to join the wrong cluster. Configured zookeeper.connect may be wrong.")
+            s"The broker is trying to join the wrong cluster. Configured zookeeper.connect may be wrong.")
 
         /* generate brokerId */
-        config.brokerId = getOrGenerateBrokerId(preloadedBrokerMetadataCheckpoint) // 生成BrokerId 此处从配置文件中获取
+        config.brokerId = getOrGenerateBrokerId(preloadedBrokerMetadataCheckpoint)
         logContext = new LogContext(s"[KafkaServer id=${config.brokerId}] ")
         this.logIdent = logContext.logPrefix
 
@@ -331,10 +331,13 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
         kafkaController = new KafkaController(config, zkClient, time, metrics, brokerInfo, brokerEpoch, tokenManager, brokerFeatures, featureCache, threadNamePrefix)
         kafkaController.startup() // 启动Controller
 
+        var forwardingManager: ForwardingManager = null
         if (config.metadataQuorumEnabled) {
           /* start forwarding manager */
-          forwardingManager = new ForwardingManager(metadataCache, time, metrics, config, threadNamePrefix)
-          forwardingManager.start()
+          forwardingChannelManager = new BrokerToControllerChannelManagerImpl(metadataCache, time, metrics,
+            config, "forwardingChannel", threadNamePrefix)
+          forwardingChannelManager.start()
+          forwardingManager = new ForwardingManager(forwardingChannelManager)
         }
 
         adminManager = new AdminManager(config, metrics, metadataCache, zkClient)
@@ -391,9 +394,10 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
 
         /* start dynamic config manager */
         dynamicConfigHandlers = Map[String, ConfigHandler](ConfigType.Topic -> new TopicConfigHandler(logManager, config, quotaManagers, kafkaController),
-          ConfigType.Client -> new ClientIdConfigHandler(quotaManagers),
-          ConfigType.User -> new UserConfigHandler(quotaManagers, credentialProvider),
-          ConfigType.Broker -> new BrokerConfigHandler(config, quotaManagers))
+                                                           ConfigType.Client -> new ClientIdConfigHandler(quotaManagers),
+                                                           ConfigType.User -> new UserConfigHandler(quotaManagers, credentialProvider),
+                                                           ConfigType.Broker -> new BrokerConfigHandler(config, quotaManagers),
+                                                           ConfigType.Ip -> new IpConfigHandler(socketServer.connectionQuotas))
 
         // Create the config manager. start listening to notifications
         dynamicConfigManager = new DynamicConfigManager(zkClient, dynamicConfigHandlers)
@@ -621,10 +625,10 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
                 else 3
 
               val controlledShutdownRequest = new ControlledShutdownRequest.Builder(
-                new ControlledShutdownRequestData()
-                  .setBrokerId(config.brokerId)
-                  .setBrokerEpoch(kafkaController.brokerEpoch),
-                controlledShutdownApiVersion)
+                  new ControlledShutdownRequestData()
+                    .setBrokerId(config.brokerId)
+                    .setBrokerEpoch(kafkaController.brokerEpoch),
+                    controlledShutdownApiVersion)
               val request = networkClient.newClientRequest(node(prevController).idString, controlledShutdownRequest,
                 time.milliseconds(), true)
               val clientResponse = NetworkClientUtils.sendAndReceive(networkClient, request, time)
@@ -644,7 +648,7 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
                 ioException = true
                 warn("Error during controlled shutdown, possibly because leader movement took longer than the " +
                   s"configured controller.socket.timeout.ms and/or request.timeout.ms: ${ioe.getMessage}")
-              // ignore and try again
+                // ignore and try again
             }
           }
           if (!shutdownSucceeded) {
@@ -728,8 +732,8 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
         if (alterIsrChannelManager != null)
           CoreUtils.swallow(alterIsrChannelManager.shutdown(), this)
 
-        if (forwardingManager != null)
-          CoreUtils.swallow(forwardingManager.shutdown(), this)
+        if (forwardingChannelManager != null)
+          CoreUtils.swallow(forwardingChannelManager.shutdown(), this)
 
         if (logManager != null)
           CoreUtils.swallow(logManager.shutdown(), this)
@@ -820,7 +824,7 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
 
       throw new InconsistentBrokerMetadataException(
         s"BrokerMetadata is not consistent across log.dirs. This could happen if multiple brokers shared a log directory (log.dirs) " +
-          s"or partial data was manually copied from another broker. Found:\n${builder.toString()}"
+        s"or partial data was manually copied from another broker. Found:\n${builder.toString()}"
       )
     } else if (brokerMetadataSet.size == 1)
       (brokerMetadataSet.last, offlineDirs)
@@ -857,8 +861,8 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
     if (brokerId >= 0 && brokerMetadata.brokerId >= 0 && brokerMetadata.brokerId != brokerId)
       throw new InconsistentBrokerIdException(
         s"Configured broker.id $brokerId doesn't match stored broker.id ${brokerMetadata.brokerId} in meta.properties. " +
-          s"If you moved your data, make sure your configured broker.id matches. " +
-          s"If you intend to create a new broker, you should remove all data in your data directories (log.dirs).")
+        s"If you moved your data, make sure your configured broker.id matches. " +
+        s"If you intend to create a new broker, you should remove all data in your data directories (log.dirs).")
     else if (brokerMetadata.brokerId < 0 && brokerId < 0 && config.brokerIdGenerationEnable) // generate a new brokerId from Zookeeper
       generateBrokerId
     else if (brokerMetadata.brokerId >= 0) // pick broker.id from meta.properties
@@ -868,10 +872,10 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
   }
 
   /**
-   * Return a sequence id generated by updating the broker sequence id path in ZK.
-   * Users can provide brokerId in the config. To avoid conflicts between ZK generated
-   * sequence id and configured brokerId, we increment the generated sequence id by KafkaConfig.MaxReservedBrokerId.
-   */
+    * Return a sequence id generated by updating the broker sequence id path in ZK.
+    * Users can provide brokerId in the config. To avoid conflicts between ZK generated
+    * sequence id and configured brokerId, we increment the generated sequence id by KafkaConfig.MaxReservedBrokerId.
+    */
   private def generateBrokerId: Int = {
     try {
       zkClient.generateBrokerSequenceId() + config.maxReservedBrokerId

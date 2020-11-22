@@ -98,10 +98,11 @@ private[group] class MemberMetadata(var memberId: String,
                                     val rebalanceTimeoutMs: Int,
                                     val sessionTimeoutMs: Int,
                                     val protocolType: String,
-                                    var supportedProtocols: List[(String, Array[Byte])]) {
+                                    var supportedProtocols: List[(String, Array[Byte])],
+                                    var assignment: Array[Byte] = Array.empty[Byte]) {
 
   // 保存分配给该成员的分区分配方案
-  var assignment: Array[Byte] = Array.empty[Byte]
+  // var assignment: Array[Byte] = Array.empty[Byte]
   // 表示组成员是否正在等待加入组
   var awaitingJoinCallback: JoinGroupResult => Unit = null
   // 表示组成员是否正在等待 GroupCoordinator 发送分配方案

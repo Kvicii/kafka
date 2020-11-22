@@ -17,49 +17,52 @@
 
 package kafka.server
 
-import java.lang.{Byte => JByte, Long => JLong}
+import java.lang.{Byte => JByte}
+import java.lang.{Long => JLong}
 import java.nio.ByteBuffer
 import java.util
+import java.util.{Collections, Optional}
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
-import java.util.{Collections, Optional}
 
 import kafka.admin.{AdminUtils, RackAwareMode}
-import kafka.api.{ApiVersion, ElectLeadersRequestOps, KAFKA_0_11_0_IV0, KAFKA_2_3_IV0}
+import kafka.api.ElectLeadersRequestOps
+import kafka.api.{ApiVersion, KAFKA_0_11_0_IV0, KAFKA_2_3_IV0}
 import kafka.cluster.Partition
 import kafka.common.OffsetAndMetadata
 import kafka.controller.{KafkaController, ReplicaAssignment}
-import kafka.coordinator.group._
+import kafka.coordinator.group.{GroupCoordinator, JoinGroupResult, LeaveGroupResult, SyncGroupResult}
 import kafka.coordinator.transaction.{InitProducerIdResult, TransactionCoordinator}
 import kafka.log.AppendOrigin
 import kafka.message.ZStdCompressionCodec
 import kafka.network.RequestChannel
 import kafka.security.authorizer.{AclEntry, AuthorizerUtils}
 import kafka.server.QuotaFactory.{QuotaManagers, UnboundedQuota}
-import kafka.utils.Implicits._
 import kafka.utils.{CoreUtils, Logging}
+import kafka.utils.Implicits._
 import kafka.zk.{AdminZkClient, KafkaZkClient}
-import org.apache.kafka.clients.admin.AlterConfigOp.OpType
 import org.apache.kafka.clients.admin.{AlterConfigOp, ConfigEntry}
-import org.apache.kafka.common.acl.AclOperation._
+import org.apache.kafka.clients.admin.AlterConfigOp.OpType
 import org.apache.kafka.common.acl.{AclBinding, AclOperation}
+import org.apache.kafka.common.acl.AclOperation._
 import org.apache.kafka.common.config.ConfigResource
 import org.apache.kafka.common.errors._
-import org.apache.kafka.common.internals.FatalExitError
+import org.apache.kafka.common.internals.{FatalExitError, Topic}
 import org.apache.kafka.common.internals.Topic.{GROUP_METADATA_TOPIC_NAME, TRANSACTION_STATE_TOPIC_NAME, isInternal}
 import org.apache.kafka.common.message.CreateTopicsRequestData.CreatableTopic
 import org.apache.kafka.common.message.CreatePartitionsResponseData.CreatePartitionsTopicResult
 import org.apache.kafka.common.message.{AddOffsetsToTxnResponseData, AlterConfigsResponseData, AlterPartitionReassignmentsResponseData, AlterReplicaLogDirsResponseData, CreateAclsResponseData, CreatePartitionsResponseData, CreateTopicsResponseData, DeleteAclsResponseData, DeleteGroupsResponseData, DeleteRecordsResponseData, DeleteTopicsResponseData, DescribeAclsResponseData, DescribeConfigsResponseData, DescribeGroupsResponseData, DescribeLogDirsResponseData, EndTxnResponseData, ExpireDelegationTokenResponseData, FindCoordinatorResponseData, HeartbeatResponseData, InitProducerIdResponseData, JoinGroupResponseData, LeaveGroupResponseData, ListGroupsResponseData, ListOffsetResponseData, ListPartitionReassignmentsResponseData, MetadataResponseData, OffsetCommitRequestData, OffsetCommitResponseData, OffsetDeleteResponseData, RenewDelegationTokenResponseData, SaslAuthenticateResponseData, SaslHandshakeResponseData, StopReplicaResponseData, SyncGroupResponseData, UpdateMetadataResponseData}
 import org.apache.kafka.common.message.CreateTopicsResponseData.{CreatableTopicResult, CreatableTopicResultCollection}
 import org.apache.kafka.common.message.DeleteGroupsResponseData.{DeletableGroupResult, DeletableGroupResultCollection}
-import org.apache.kafka.common.message.DeleteRecordsResponseData.{DeleteRecordsPartitionResult, DeleteRecordsTopicResult}
+import org.apache.kafka.common.message.AlterPartitionReassignmentsResponseData.{ReassignablePartitionResponse, ReassignableTopicResponse}
+import org.apache.kafka.common.message.CreateAclsResponseData.AclCreationResult
 import org.apache.kafka.common.message.DeleteTopicsResponseData.{DeletableTopicResult, DeletableTopicResultCollection}
-import org.apache.kafka.common.message.ElectLeadersResponseData.{PartitionResult, ReplicaElectionResult}
+import org.apache.kafka.common.message.DeleteRecordsResponseData.{DeleteRecordsPartitionResult, DeleteRecordsTopicResult}
+import org.apache.kafka.common.message.ElectLeadersResponseData.PartitionResult
+import org.apache.kafka.common.message.ElectLeadersResponseData.ReplicaElectionResult
 import org.apache.kafka.common.message.LeaveGroupResponseData.MemberResponse
 import org.apache.kafka.common.message.ListOffsetRequestData.ListOffsetPartition
 import org.apache.kafka.common.message.ListOffsetResponseData.{ListOffsetPartitionResponse, ListOffsetTopicResponse}
-import org.apache.kafka.common.message.MetadataResponseData.{MetadataResponsePartition, MetadataResponseTopic}
-import org.apache.kafka.common.message._
 import org.apache.kafka.common.metrics.Metrics
 import org.apache.kafka.common.network.{ListenerName, Send}
 import org.apache.kafka.common.protocol.{ApiKeys, Errors}
@@ -80,11 +83,12 @@ import org.apache.kafka.common.message.AlterConfigsResponseData.AlterConfigsReso
 import org.apache.kafka.common.message.MetadataResponseData.{MetadataResponsePartition, MetadataResponseTopic}
 import org.apache.kafka.server.authorizer._
 
-import scala.collection.mutable.ArrayBuffer
-import scala.collection.{Map, Seq, Set, immutable, mutable}
 import scala.compat.java8.OptionConverters._
 import scala.jdk.CollectionConverters._
+import scala.collection.mutable.ArrayBuffer
+import scala.collection.{Map, Seq, Set, immutable, mutable}
 import scala.util.{Failure, Success, Try}
+import kafka.coordinator.group.GroupOverview
 
 import scala.annotation.nowarn
 
@@ -144,9 +148,9 @@ class KafkaApis(val requestChannel: RequestChannel,
   }
 
   private def maybeHandleInvalidEnvelope(
-    envelope: RequestChannel.Request,
-    forwardedApiKey: ApiKeys
-  ): Boolean = {
+                                          envelope: RequestChannel.Request,
+                                          forwardedApiKey: ApiKeys
+                                        ): Boolean = {
     def sendEnvelopeError(error: Errors): Unit = {
       sendErrorResponseMaybeThrottle(envelope, error.exception)
     }
@@ -176,9 +180,9 @@ class KafkaApis(val requestChannel: RequestChannel,
   }
 
   private def maybeForward(
-    request: RequestChannel.Request,
-    handler: RequestChannel.Request => Unit
-  ): Unit = {
+                            request: RequestChannel.Request,
+                            handler: RequestChannel.Request => Unit
+                          ): Unit = {
     def responseCallback(response: AbstractResponse): Unit = {
       sendForwardedResponse(request, response)
     }
@@ -355,13 +359,13 @@ class KafkaApis(val requestChannel: RequestChannel,
       result.forKeyValue { (topicPartition, error) =>
         if (error == Errors.NONE) {
           if (topicPartition.topic == GROUP_METADATA_TOPIC_NAME
-              && partitionStates(topicPartition).deletePartition) {
+            && partitionStates(topicPartition).deletePartition) {
             groupCoordinator.onResignation(topicPartition.partition)
           } else if (topicPartition.topic == TRANSACTION_STATE_TOPIC_NAME
-                     && partitionStates(topicPartition).deletePartition) {
+            && partitionStates(topicPartition).deletePartition) {
             val partitionState = partitionStates(topicPartition)
             val leaderEpoch = if (partitionState.leaderEpoch >= 0)
-                Some(partitionState.leaderEpoch)
+              Some(partitionState.leaderEpoch)
             else
               None
             txnCoordinator.onResignation(topicPartition.partition, coordinatorEpoch = leaderEpoch)
@@ -1163,12 +1167,12 @@ class KafkaApis(val requestChannel: RequestChannel,
           } catch {
             // NOTE: These exceptions are special cases since these error messages are typically transient or the client
             // would have received a clear exception and there is no value in logging the entire stack trace for the same
-            case e@(_: UnknownTopicOrPartitionException |
-                    _: NotLeaderForPartitionException |
-                    _: UnknownLeaderEpochException |
-                    _: FencedLeaderEpochException |
-                    _: KafkaStorageException |
-                    _: UnsupportedForMessageFormatException) =>
+            case e @ (_ : UnknownTopicOrPartitionException |
+                      _ : NotLeaderForPartitionException |
+                      _ : UnknownLeaderEpochException |
+                      _ : FencedLeaderEpochException |
+                      _ : KafkaStorageException |
+                      _ : UnsupportedForMessageFormatException) =>
               e.printStackTrace()
               debug(s"Offset request with correlation id $correlationId from client $clientId on " +
                 s"partition $topicPartition failed due to ${e.getMessage}")
@@ -1364,13 +1368,13 @@ class KafkaApis(val requestChannel: RequestChannel,
       brokers.mkString(","), request.header.correlationId, request.header.clientId))
 
     sendResponseMaybeThrottle(request, requestThrottleMs =>
-      MetadataResponse.prepareResponse(
-        requestThrottleMs,
-        completeTopicMetadata.asJava,
-        brokers.flatMap(_.getNode(request.context.listenerName)).asJava,
-        clusterId,
-        metadataCache.getControllerId.getOrElse(MetadataResponse.NO_CONTROLLER_ID),
-        clusterAuthorizedOperations
+       MetadataResponse.prepareResponse(
+         requestThrottleMs,
+         completeTopicMetadata.asJava,
+         brokers.flatMap(_.getNode(request.context.listenerName)).asJava,
+         clusterId,
+         metadataCache.getControllerId.getOrElse(MetadataResponse.NO_CONTROLLER_ID),
+         clusterAuthorizedOperations
       ))
   }
 
@@ -1575,17 +1579,17 @@ class KafkaApis(val requestChannel: RequestChannel,
       listGroupsRequest.data.statesFilter.asScala.toSet
 
     def createResponse(throttleMs: Int, groups: List[GroupOverview], error: Errors): AbstractResponse = {
-      new ListGroupsResponse(new ListGroupsResponseData()
-        .setErrorCode(error.code)
-        .setGroups(groups.map { group =>
-          val listedGroup = new ListGroupsResponseData.ListedGroup()
-            .setGroupId(group.groupId)
-            .setProtocolType(group.protocolType)
-            .setGroupState(group.state.toString)
-          listedGroup
-        }.asJava)
-        .setThrottleTimeMs(throttleMs)
-      )
+       new ListGroupsResponse(new ListGroupsResponseData()
+            .setErrorCode(error.code)
+            .setGroups(groups.map { group =>
+                val listedGroup = new ListGroupsResponseData.ListedGroup()
+                  .setGroupId(group.groupId)
+                  .setProtocolType(group.protocolType)
+                  .setGroupState(group.state.toString)
+                listedGroup
+            }.asJava)
+            .setThrottleTimeMs(throttleMs)
+        )
     }
 
     // 调用GroupCoordinator的handleListGroups方法获取所有消费者组的信息
@@ -1876,6 +1880,7 @@ class KafkaApis(val requestChannel: RequestChannel,
           s"${request.header.correlationId} to client ${request.header.clientId}.")
         responseBody
       }
+
       sendResponseMaybeThrottleWithControllerQuota(controllerMutationQuota, request, createResponse)
     }
 
@@ -1900,7 +1905,7 @@ class KafkaApis(val requestChannel: RequestChannel,
         if (hasClusterAuthorization) topics.toSet
         else filterByAuthorized(request.context, CREATE, TOPIC, topics)(identity)
       // 是否具有TOPIC资源的DESCRIBE_CONFIGS权限
-       val authorizedForDescribeConfigs = filterByAuthorized(request.context, DESCRIBE_CONFIGS, TOPIC,
+      val authorizedForDescribeConfigs = filterByAuthorized(request.context, DESCRIBE_CONFIGS, TOPIC,
         topics, logIfDenied = false)(identity).map(name => name -> results.find(name)).toMap
 
       results.forEach { topic =>
@@ -1969,6 +1974,7 @@ class KafkaApis(val requestChannel: RequestChannel,
           s"client ${request.header.clientId}.")
         responseBody
       }
+
       sendResponseMaybeThrottleWithControllerQuota(controllerMutationQuota, request, createResponse)
     }
 
@@ -2018,6 +2024,7 @@ class KafkaApis(val requestChannel: RequestChannel,
         trace(s"Sending delete topics response $responseBody for correlation id ${request.header.correlationId} to client ${request.header.clientId}.")
         responseBody
       }
+
       sendResponseMaybeThrottleWithControllerQuota(controllerMutationQuota, request, createResponse)
     }
 
@@ -2646,9 +2653,9 @@ class KafkaApis(val requestChannel: RequestChannel,
     // cluster permission. With KIP-320, the consumer now also uses this API to check for log truncation
     // following a leader change, so we also allow topic describe permission.
     val (authorizedPartitions, unauthorizedPartitions) =
-    if (authorize(request.context, CLUSTER_ACTION, CLUSTER, CLUSTER_NAME, logIfDenied = false))
-      (requestInfo, Map.empty[TopicPartition, OffsetsForLeaderEpochRequest.PartitionData])
-    else partitionMapByAuthorized(request.context, DESCRIBE, TOPIC, requestInfo)(_.topic)
+      if (authorize(request.context, CLUSTER_ACTION, CLUSTER, CLUSTER_NAME, logIfDenied = false))
+        (requestInfo, Map.empty[TopicPartition, OffsetsForLeaderEpochRequest.PartitionData])
+      else partitionMapByAuthorized(request.context, DESCRIBE, TOPIC, requestInfo)(_.topic)
 
     val endOffsetsForAuthorizedPartitions = replicaManager.lastOffsetForLeaderEpoch(authorizedPartitions)
     val endOffsetsForUnauthorizedPartitions = unauthorizedPartitions.map { case (k, _) =>
@@ -2723,15 +2730,14 @@ class KafkaApis(val requestChannel: RequestChannel,
     }
 
     val reassignments = alterPartitionReassignmentsRequest.data.topics.asScala.flatMap {
-      reassignableTopic =>
-        reassignableTopic.partitions.asScala.map {
-          reassignablePartition =>
-            val tp = new TopicPartition(reassignableTopic.name, reassignablePartition.partitionIndex)
-            if (reassignablePartition.replicas == null)
-              tp -> None // revert call
-            else
-              tp -> Some(reassignablePartition.replicas.asScala.map(_.toInt))
-        }
+      reassignableTopic => reassignableTopic.partitions.asScala.map {
+        reassignablePartition =>
+          val tp = new TopicPartition(reassignableTopic.name, reassignablePartition.partitionIndex)
+          if (reassignablePartition.replicas == null)
+            tp -> None // revert call
+          else
+            tp -> Some(reassignablePartition.replicas.asScala.map(_.toInt))
+      }
     }.toMap
 
     controller.alterPartitionReassignments(reassignments, sendResponseCallback)
@@ -2797,9 +2803,8 @@ class KafkaApis(val requestChannel: RequestChannel,
       val configResource = new ConfigResource(ConfigResource.Type.forId(alterConfigResource.resourceType),
         alterConfigResource.resourceName)
       configResource -> alterConfigResource.configs.iterator.asScala.map {
-        alterConfig =>
-          new AlterConfigOp(new ConfigEntry(alterConfig.name, alterConfig.value),
-            OpType.forId(alterConfig.configOperation))
+        alterConfig => new AlterConfigOp(new ConfigEntry(alterConfig.name, alterConfig.value),
+          OpType.forId(alterConfig.configOperation))
       }.toBuffer
     }.toMap
 
@@ -3412,9 +3417,9 @@ class KafkaApis(val requestChannel: RequestChannel,
   }
 
   private def sendForwardedResponse(
-    request: RequestChannel.Request,
-    response: AbstractResponse
-  ): Unit = {
+                                     request: RequestChannel.Request,
+                                     response: AbstractResponse
+                                   ): Unit = {
     // For forwarded requests, we take the throttle time from the broker that
     // the request was forwarded to
     val throttleTimeMs = response.throttleTimeMs()
@@ -3429,7 +3434,6 @@ class KafkaApis(val requestChannel: RequestChannel,
    *
    * @param request
    * @param createResponse
-   * @param onComplete
    */
   private def sendResponseMaybeThrottle(request: RequestChannel.Request,
                                         createResponse: Int => AbstractResponse): Unit = {

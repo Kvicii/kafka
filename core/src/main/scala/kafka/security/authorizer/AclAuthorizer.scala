@@ -16,8 +16,8 @@
  */
 package kafka.security.authorizer
 
-import java.util.concurrent.{CompletableFuture, CompletionStage}
 import java.{lang, util}
+import java.util.concurrent.{CompletableFuture, CompletionStage}
 
 import com.typesafe.scalalogging.Logger
 import kafka.api.KAFKA_2_0_IV1
@@ -28,9 +28,9 @@ import kafka.utils._
 import kafka.utils.Implicits._
 import kafka.zk._
 import org.apache.kafka.common.Endpoint
+import org.apache.kafka.common.acl._
 import org.apache.kafka.common.acl.AclOperation._
 import org.apache.kafka.common.acl.AclPermissionType.{ALLOW, DENY}
-import org.apache.kafka.common.acl._
 import org.apache.kafka.common.errors.{ApiException, InvalidRequestException, UnsupportedVersionException}
 import org.apache.kafka.common.protocol.ApiKeys
 import org.apache.kafka.common.resource._
@@ -484,15 +484,15 @@ class AclAuthorizer extends Authorizer with Logging {
   }
 
   /**
-    * Safely updates the resources ACLs by ensuring reads and writes respect the expected zookeeper version.
-    * Continues to retry until it successfully updates zookeeper.
-    *
-    * Returns a boolean indicating if the content of the ACLs was actually changed.
-    *
-    * @param resource the resource to change ACLs for
-    * @param getNewAcls function to transform existing acls to new ACLs
-    * @return boolean indicating if a change was made
-    */
+   * Safely updates the resources ACLs by ensuring reads and writes respect the expected zookeeper version.
+   * Continues to retry until it successfully updates zookeeper.
+   *
+   * Returns a boolean indicating if the content of the ACLs was actually changed.
+   *
+   * @param resource the resource to change ACLs for
+   * @param getNewAcls function to transform existing acls to new ACLs
+   * @return boolean indicating if a change was made
+   */
   private def updateResourceAcls(resource: ResourcePattern)(getNewAcls: Set[AclEntry] => Set[AclEntry]): Boolean = {
     var currentVersionedAcls =
       if (aclCache.contains(resource))

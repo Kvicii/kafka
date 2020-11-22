@@ -198,9 +198,7 @@ class GroupMetadataManager(brokerId: Int,
 
   def isGroupLoading(groupId: String): Boolean = isPartitionLoading(partitionFor(groupId))
 
-  def isLoading: Boolean = inLock(partitionLock) {
-    loadingPartitions.nonEmpty
-  }
+  def isLoading: Boolean = inLock(partitionLock) { loadingPartitions.nonEmpty }
 
   // return true iff group is owned and the group doesn't exist
   def groupNotExists(groupId: String) = inLock(partitionLock) {
@@ -955,7 +953,7 @@ class GroupMetadataManager(brokerId: Int,
   /**
    * Check if the replica is local and return the message format version and timestamp
    *
-   * @param   partition Partition of GroupMetadataTopic
+   * @param partition Partition of GroupMetadataTopic
    * @return Some(MessageFormatVersion) if replica is local, None otherwise
    */
   private def getMagic(partition: Int): Option[Byte] =
@@ -1020,7 +1018,7 @@ object GroupMetadataManager {
   /**
    * Generates the key for offset commit message for given (group, topic, partition)
    *
-   * @param groupId the ID of the group to generate the key
+   * @param groupId        the ID of the group to generate the key
    * @param topicPartition the TopicPartition to generate the key
    * @return key for offset commit message
    */
@@ -1154,8 +1152,8 @@ object GroupMetadataManager {
    * Decodes the group metadata messages' payload and retrieves its member metadata from it
    *
    * @param groupId The ID of the group to be read
-   * @param buffer input byte-buffer
-   * @param time   the time instance to use
+   * @param buffer  input byte-buffer
+   * @param time    the time instance to use
    * @return a group metadata object from the message
    */
   def readGroupMessageValue(groupId: String, buffer: ByteBuffer, time: Time): GroupMetadata = {

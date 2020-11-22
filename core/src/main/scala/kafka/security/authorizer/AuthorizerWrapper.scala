@@ -6,7 +6,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
  *
- *    http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -21,7 +21,7 @@ import java.util.concurrent.{CompletableFuture, CompletionStage}
 import java.{lang, util}
 
 import kafka.network.RequestChannel.Session
-import kafka.security.auth.{Acl, Operation, PermissionType, Resource, ResourceType}
+import kafka.security.auth.{Authorizer => _, _}
 import kafka.security.authorizer.AuthorizerWrapper._
 import org.apache.kafka.common.Endpoint
 import org.apache.kafka.common.acl.{AccessControlEntry, AclBinding, AclBindingFilter}
@@ -33,9 +33,9 @@ import org.apache.kafka.common.utils.SecurityUtils.parseKafkaPrincipal
 import org.apache.kafka.server.authorizer.AclDeleteResult.AclBindingDeleteResult
 import org.apache.kafka.server.authorizer.{AuthorizableRequestContext, AuthorizerServerInfo, _}
 
-import scala.jdk.CollectionConverters._
 import scala.collection.mutable.ArrayBuffer
 import scala.collection.{Seq, immutable, mutable}
+import scala.jdk.CollectionConverters._
 import scala.util.{Failure, Success, Try}
 
 @deprecated("Use kafka.security.authorizer.AclAuthorizer", "Since 2.5")
@@ -84,7 +84,8 @@ class AuthorizerWrapper(private[kafka] val baseAuthorizer: kafka.security.auth.A
 
   override def start(serverInfo: AuthorizerServerInfo): util.Map[Endpoint, _ <: CompletionStage[Void]] = {
     serverInfo.endpoints.asScala.map { endpoint =>
-      endpoint -> CompletableFuture.completedFuture[Void](null) }.toMap.asJava
+      endpoint -> CompletableFuture.completedFuture[Void](null)
+    }.toMap.asJava
   }
 
   override def authorize(requestContext: AuthorizableRequestContext, actions: util.List[Action]): util.List[AuthorizationResult] = {

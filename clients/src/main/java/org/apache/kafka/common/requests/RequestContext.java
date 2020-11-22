@@ -123,25 +123,29 @@ public class RequestContext implements AuthorizableRequestContext {
 		}
 	}
 
-	public Send buildResponseSend(AbstractResponse body) {
-		ResponseHeader responseHeader = header.toResponseHeader();
-		return body.toSend(connectionId, responseHeader, apiVersion());
-	}
+    /**
+     * Build a {@link Send} for direct transmission of the provided response
+     * over the network.
+     */
+    public Send buildResponseSend(AbstractResponse body) {
+        ResponseHeader responseHeader = header.toResponseHeader();
+        return body.toSend(connectionId, responseHeader, apiVersion());
+    }
 
-	/**
-	 * Serialize a response into a {@link ByteBuffer}. This is used when the response
-	 * will be encapsulated in an {@link EnvelopeResponse}. The buffer will contain
-	 * both the serialized {@link ResponseHeader} as well as the bytes from the response.
-	 * There is no `size` prefix unlike the output from {@link #buildResponseSend(AbstractResponse)}.
-	 *
-	 * Note that envelope requests are reserved only for APIs which have set the
-	 * {@link ApiKeys#forwardable} flag. Notably the `Fetch` API cannot be forwarded,
-	 * so we do not lose the benefit of "zero copy" transfers from disk.
-	 */
-	public ByteBuffer buildResponseEnvelopePayload(AbstractResponse body) {
-		ResponseHeader responseHeader = header.toResponseHeader();
-		return RequestUtils.serialize(responseHeader.toStruct(), body.toStruct(header.apiVersion()));
-	}
+    /**
+     * Serialize a response into a {@link ByteBuffer}. This is used when the response
+     * will be encapsulated in an {@link EnvelopeResponse}. The buffer will contain
+     * both the serialized {@link ResponseHeader} as well as the bytes from the response.
+     * There is no `size` prefix unlike the output from {@link #buildResponseSend(AbstractResponse)}.
+     *
+     * Note that envelope requests are reserved only for APIs which have set the
+     * {@link ApiKeys#forwardable} flag. Notably the `Fetch` API cannot be forwarded,
+     * so we do not lose the benefit of "zero copy" transfers from disk.
+     */
+    public ByteBuffer buildResponseEnvelopePayload(AbstractResponse body) {
+        ResponseHeader responseHeader = header.toResponseHeader();
+        return RequestUtils.serialize(responseHeader.toStruct(), body.toStruct(header.apiVersion()));
+    }
 
 	private boolean isUnsupportedApiVersionsRequest() {
 		// 当 Broker 接收到一个 ApiVersionsRequest 的时候 它会返回 Broker 当前支持的请求类型列表 包括请求类型名称、支持的最早版本号和最新版本号
