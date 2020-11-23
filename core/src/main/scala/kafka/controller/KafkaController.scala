@@ -6,7 +6,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *    http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -26,30 +26,34 @@ import java.util.concurrent.TimeUnit
 
 import kafka.admin.AdminOperationException
 import kafka.api._
-import kafka.cluster.Broker
 import kafka.common._
-import kafka.controller.KafkaController._
+import kafka.controller.KafkaController.AlterIsrCallback
+import kafka.cluster.Broker
+import kafka.controller.KafkaController.{AlterReassignmentsCallback, ElectLeadersCallback, ListReassignmentsCallback, UpdateFeaturesCallback}
 import kafka.metrics.{KafkaMetricsGroup, KafkaTimer}
 import kafka.server._
-import kafka.utils.Implicits._
 import kafka.utils._
+import kafka.utils.Implicits._
 import kafka.zk.KafkaZkClient.UpdateLeaderAndIsrResult
 import kafka.zk.TopicZNode.TopicIdReplicaAssignment
 import kafka.zk.{FeatureZNodeStatus, _}
 import kafka.zookeeper.{StateChangeHandler, ZNodeChangeHandler, ZNodeChildChangeHandler}
+import org.apache.kafka.common.ElectionType
+import org.apache.kafka.common.KafkaException
+import org.apache.kafka.common.TopicPartition
 import org.apache.kafka.common.errors.{BrokerNotAvailableException, ControllerMovedException, StaleBrokerEpochException}
+import org.apache.kafka.common.message.{AlterIsrRequestData, AlterIsrResponseData}
 import org.apache.kafka.common.feature.{Features, FinalizedVersionRange}
-import org.apache.kafka.common.message.{AlterIsrRequestData, AlterIsrResponseData, UpdateFeaturesRequestData}
+import org.apache.kafka.common.message.UpdateFeaturesRequestData
 import org.apache.kafka.common.metrics.Metrics
 import org.apache.kafka.common.protocol.Errors
-import org.apache.kafka.common.requests._
+import org.apache.kafka.common.requests.{AbstractControlRequest, ApiError, LeaderAndIsrResponse, UpdateFeaturesRequest, UpdateMetadataResponse}
 import org.apache.kafka.common.utils.{Time, Utils}
-import org.apache.kafka.common.{ElectionType, KafkaException, TopicPartition}
 import org.apache.zookeeper.KeeperException
 import org.apache.zookeeper.KeeperException.Code
 
-import scala.collection.mutable.ArrayBuffer
 import scala.collection.{Map, Seq, Set, immutable, mutable}
+import scala.collection.mutable.ArrayBuffer
 import scala.jdk.CollectionConverters._
 import scala.util.{Failure, Try}
 
