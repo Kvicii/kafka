@@ -31,33 +31,34 @@ import kafka.api.{ApiVersion, KAFKA_0_10_0_IV0}
 import kafka.common.{LogSegmentOffsetOverflowException, LongRef, OffsetsOutOfOrderException, UnexpectedAppendOffsetException}
 import kafka.message.{BrokerCompressionCodec, CompressionCodec, NoCompressionCodec}
 import kafka.metrics.KafkaMetricsGroup
-import kafka.server._
 import kafka.server.checkpoints.LeaderEpochCheckpointFile
 import kafka.server.epoch.LeaderEpochFileCache
+import kafka.server.{BrokerTopicStats, FetchDataInfo, FetchHighWatermark, FetchIsolation, FetchLogEnd, FetchTxnCommitted, LogDirFailureChannel, LogOffsetMetadata, OffsetAndEpoch}
 import kafka.utils._
 import org.apache.kafka.common.errors._
 import org.apache.kafka.common.message.FetchResponseData
 import org.apache.kafka.common.record.FileRecords.TimestampAndOffset
 import org.apache.kafka.common.record._
 import org.apache.kafka.common.requests.FetchResponse.AbortedTransaction
+import org.apache.kafka.common.requests.OffsetsForLeaderEpochResponse.UNDEFINED_EPOCH_OFFSET
 import org.apache.kafka.common.requests.ProduceResponse.RecordError
-import org.apache.kafka.common.requests.{EpochEndOffset, ListOffsetRequest}
+import org.apache.kafka.common.requests.ListOffsetRequest
 import org.apache.kafka.common.utils.{Time, Utils}
 import org.apache.kafka.common.{InvalidRecordException, KafkaException, TopicPartition}
 
+import scala.jdk.CollectionConverters._
 import scala.collection.mutable.{ArrayBuffer, ListBuffer}
 import scala.collection.{Seq, Set, mutable}
-import scala.jdk.CollectionConverters._
 
 /**
  * LogAppendInfo的伴生对象 定义了一些工厂方法 用于创建特定的LogAppendInfo对象
  */
 object LogAppendInfo {
-  val UnknownLogAppendInfo = LogAppendInfo(None, -1, RecordBatch.NO_TIMESTAMP, -1L, RecordBatch.NO_TIMESTAMP, -1L,
+  val UnknownLogAppendInfo = LogAppendInfo(None, -1, None, RecordBatch.NO_TIMESTAMP, -1L, RecordBatch.NO_TIMESTAMP, -1L,
     RecordConversionStats.EMPTY, NoCompressionCodec, NoCompressionCodec, -1, -1, offsetsMonotonic = false, -1L)
 
   def unknownLogAppendInfoWithLogStartOffset(logStartOffset: Long): LogAppendInfo =
-    LogAppendInfo(None, -1, RecordBatch.NO_TIMESTAMP, -1L, RecordBatch.NO_TIMESTAMP, logStartOffset,
+    LogAppendInfo(None, -1, None, RecordBatch.NO_TIMESTAMP, -1L, RecordBatch.NO_TIMESTAMP, logStartOffset,
       RecordConversionStats.EMPTY, NoCompressionCodec, NoCompressionCodec, -1, -1,
       offsetsMonotonic = false, -1L)
 
@@ -67,7 +68,7 @@ object LogAppendInfo {
    * in unknownLogAppendInfoWithLogStartOffset, but with additiona fields recordErrors and errorMessage
    */
   def unknownLogAppendInfoWithAdditionalInfo(logStartOffset: Long, recordErrors: Seq[RecordError], errorMessage: String): LogAppendInfo =
-    LogAppendInfo(None, -1, RecordBatch.NO_TIMESTAMP, -1L, RecordBatch.NO_TIMESTAMP, logStartOffset,
+    LogAppendInfo(None, -1, None, RecordBatch.NO_TIMESTAMP, -1L, RecordBatch.NO_TIMESTAMP, logStartOffset,
       RecordConversionStats.EMPTY, NoCompressionCodec, NoCompressionCodec, -1, -1,
       offsetsMonotonic = false, -1L, recordErrors, errorMessage)
 }
@@ -94,6 +95,7 @@ object LeaderHwChange {
  * @param firstOffset            The first offset in the message set unless the message format is less than V2 and we are appending
  *                               to the follower.
  * @param lastOffset             The last offset in the message set
+ * @param lastLeaderEpoch The partition leader epoch corresponding to the last offset, if available.
  * @param maxTimestamp           The maximum timestamp of the message set.
  * @param offsetOfMaxTimestamp   The offset of the message with the maximum timestamp.
  * @param logAppendTime          The log append time (if used) of the message set, otherwise Message.NoTimestamp
@@ -111,6 +113,7 @@ object LeaderHwChange {
  */
 case class LogAppendInfo(var firstOffset: Option[Long],
                          var lastOffset: Long, // 消息集合最后一条消息的位移值
+                         var lastLeaderEpoch: Option[Int],
                          var maxTimestamp: Long, // 消息集合最大消息时间戳
                          var offsetOfMaxTimestamp: Long, // 消息集合最大消息时间戳所属消息的位移值
                          var logAppendTime: Long, // 写入消息时间戳
@@ -1410,7 +1413,7 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径(�
   def endOffsetForEpoch(leaderEpoch: Int): Option[OffsetAndEpoch] = {
     leaderEpochCache.flatMap { cache =>
       val (foundEpoch, foundOffset) = cache.endOffsetFor(leaderEpoch)
-      if (foundOffset == EpochEndOffset.UNDEFINED_EPOCH_OFFSET)
+      if (foundOffset == UNDEFINED_EPOCH_OFFSET)
         None
       else
         Some(OffsetAndEpoch(foundOffset, foundEpoch))
@@ -1520,6 +1523,7 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径(�
     var validBytesCount = 0
     var firstOffset: Option[Long] = None
     var lastOffset = -1L
+    var lastLeaderEpoch = RecordBatch.NO_PARTITION_LEADER_EPOCH
     var sourceCodec: CompressionCodec = NoCompressionCodec
     var monotonic = true
     var maxTimestamp = RecordBatch.NO_TIMESTAMP
@@ -1557,6 +1561,7 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径(�
       // update the last offset seen
       // 4.1.使用当前batch最后一条消息的位移值去更新lastOffset
       lastOffset = batch.lastOffset
+      lastLeaderEpoch = batch.partitionLeaderEpoch
 
       // Check if the message sizes are valid.
       val batchSize = batch.sizeInBytes
@@ -1593,8 +1598,12 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径(�
     // 获取Broker端设置的压缩器类型 即Broker端参数compression.type值
     // 该参数默认值是producer 表示sourceCodec用的什么压缩器 targetCodec就用什么
     val targetCodec = BrokerCompressionCodec.getTargetCompressionCodec(config.compressionType, sourceCodec)
+    val lastLeaderEpochOpt: Option[Int] = if (lastLeaderEpoch != RecordBatch.NO_PARTITION_LEADER_EPOCH)
+      Some(lastLeaderEpoch)
+    else
+      None
     // 8.生成LogAppendInfo对象并返回
-    LogAppendInfo(firstOffset, lastOffset, maxTimestamp, offsetOfMaxTimestamp, RecordBatch.NO_TIMESTAMP, logStartOffset,
+    LogAppendInfo(firstOffset, lastOffset, lastLeaderEpochOpt, maxTimestamp, offsetOfMaxTimestamp, RecordBatch.NO_TIMESTAMP, logStartOffset,
       RecordConversionStats.EMPTY, sourceCodec, targetCodec, shallowMessageCount, validBytesCount, monotonic, lastOffsetOfFirstBatch)
   }
 

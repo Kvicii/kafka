@@ -2601,10 +2601,9 @@ public class KafkaConsumerTest {
         ConsumerConfig config = new ConsumerConfig(ConsumerConfig.appendDeserializerToConfig(props, new StringDeserializer(), new StringDeserializer()));
 
         assertTrue(config.unused().contains(SslConfigs.SSL_PROTOCOL_CONFIG));
-
-        try (KafkaConsumer<byte[], byte[]> consumer = new KafkaConsumer<>(config, null, null)) {
-            assertTrue(config.unused().contains(SslConfigs.SSL_PROTOCOL_CONFIG));
-        }
+//        try (KafkaConsumer<byte[], byte[]> consumer = new KafkaConsumer<>(config, null, null)) {
+        assertTrue(config.unused().contains(SslConfigs.SSL_PROTOCOL_CONFIG));
+//        }
     }
 
     private static final List<String> CLIENT_IDS = new ArrayList<>();
