@@ -43,7 +43,8 @@ public class ErrorLoggingCallback implements Callback {
         this.logAsString = logAsString;
     }
 
-    public void onCompletion(RecordMetadata metadata, Exception e) {
+    @Override
+	public void onCompletion(RecordMetadata metadata, Exception e) {
         if (e != null) {
             String keyString = (key == null) ? "null" :
                     logAsString ? new String(key, StandardCharsets.UTF_8) : key.length + " bytes";

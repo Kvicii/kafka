@@ -417,7 +417,8 @@ public class ProducerPerformance {
             this.bytes = bytes;
         }
 
-        public void onCompletion(RecordMetadata metadata, Exception exception) {
+        @Override
+		public void onCompletion(RecordMetadata metadata, Exception exception) {
             long now = System.currentTimeMillis();
             int latency = (int) (now - start);
             this.stats.record(iteration, latency, bytes, now);

@@ -492,7 +492,8 @@ public class VerifiableProducer implements AutoCloseable {
             this.value = value;
         }
 
-        public void onCompletion(RecordMetadata recordMetadata, Exception e) {
+        @Override
+		public void onCompletion(RecordMetadata recordMetadata, Exception e) {
             synchronized (System.out) {
                 if (e == null) {
                     VerifiableProducer.this.numAcked++;

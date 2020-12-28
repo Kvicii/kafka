@@ -85,6 +85,9 @@ public class ProducerConfig extends AbstractConfig {
 
     /** <code>acks</code> */
     public static final String ACKS_CONFIG = "acks";
+    // ack = 0: request发送给broker 不需要任何等待 不进行任何重试
+    // ack = -1(all): leader需要等待ISR列表中所有follower都写入成功才认为是成功
+    // ack = 1(默认值): request发送给broker leader写入成功就认为成功 此时消息刚刚写入leader leader挂了 消息会丢失
     private static final String ACKS_DOC = "The number of acknowledgments the producer requires the leader to have received before considering a request complete. This controls the "
                                            + " durability of records that are sent. The following settings are allowed: "
                                            + " <ul>"
@@ -167,6 +170,7 @@ public class ProducerConfig extends AbstractConfig {
 
     /** <code>buffer.memory</code> */
     public static final String BUFFER_MEMORY_CONFIG = "buffer.memory";
+    // 发往send buffer的速度远远快于消息发往broker的速度 buffer满了 Producer就会把发送的请求block住(默认1min) block时间过后如果还不行就抛出异常
     private static final String BUFFER_MEMORY_DOC = "The total bytes of memory the producer can use to buffer records waiting to be sent to the server. If records are "
                                                     + "sent faster than they can be delivered to the server the producer will block for <code>" + MAX_BLOCK_MS_CONFIG + "</code> after which it will throw an exception."
                                                     + "<p>"

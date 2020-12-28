@@ -35,16 +35,16 @@ import java.util.Set;
 public final class Cluster {
 
     private final boolean isBootstrapConfigured;
-    private final List<Node> nodes;
-    private final Set<String> unauthorizedTopics;
+    private final List<Node> nodes; // Kafka的broker集合
+    private final Set<String> unauthorizedTopics;  // 权限控制 如果客户端如果没有权限访问某个Topic 就会放在该列表
     private final Set<String> invalidTopics;
     private final Set<String> internalTopics;
     private final Node controller;
-    private final Map<TopicPartition, PartitionInfo> partitionsByTopicPartition;
-    private final Map<String, List<PartitionInfo>> partitionsByTopic;
-    private final Map<String, List<PartitionInfo>> availablePartitionsByTopic;
-    private final Map<Integer, List<PartitionInfo>> partitionsByNode;
-    private final Map<Integer, Node> nodesById;
+    private final Map<TopicPartition, PartitionInfo> partitionsByTopicPartition;    // partition id 和 topic name确定partition详细信息
+    private final Map<String, List<PartitionInfo>> partitionsByTopic;   // Topic下对应的所有分区
+    private final Map<String, List<PartitionInfo>> availablePartitionsByTopic;  // Topic下对应的当前可用的分区
+    private final Map<Integer, List<PartitionInfo>> partitionsByNode;   // broker下对应的所有分区
+    private final Map<Integer, Node> nodesById; // broker id对应的broker
     private final ClusterResource clusterResource;
 
     /**

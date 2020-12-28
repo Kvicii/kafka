@@ -758,6 +758,7 @@ project(':core') {
     compile libs.scalaReflect
     compile libs.scalaLogging
     compile libs.slf4jApi
+    compile libs.slf4jNop
     compile(libs.zookeeper) {
       exclude module: 'slf4j-log4j12'
       exclude module: 'log4j'
@@ -1908,6 +1909,7 @@ project(':connect:runtime') {
     compile project(':connect:transforms')
 
     compile libs.slf4jApi
+    compile libs.slf4jNop
     compile libs.jacksonJaxrsJsonProvider
     compile libs.jerseyContainerServlet
     compile libs.jerseyHk2

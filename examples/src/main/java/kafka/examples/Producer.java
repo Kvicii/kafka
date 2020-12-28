@@ -116,6 +116,7 @@ class DemoCallBack implements Callback {
      *                  with -1 value for all fields except for topicPartition will be returned if an error occurred.
      * @param exception The exception thrown during processing of this record. Null if no error occurred.
      */
+    @Override
     public void onCompletion(RecordMetadata metadata, Exception exception) {
         long elapsedTime = System.currentTimeMillis() - startTime;
         if (metadata != null) {
