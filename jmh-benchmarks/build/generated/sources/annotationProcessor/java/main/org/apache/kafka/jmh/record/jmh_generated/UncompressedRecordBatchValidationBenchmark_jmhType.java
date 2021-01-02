@@ -1,0 +1,4 @@
+package org.apache.kafka.jmh.record.jmh_generated;
+public class UncompressedRecordBatchValidationBenchmark_jmhType extends UncompressedRecordBatchValidationBenchmark_jmhType_B3 {
+}
+

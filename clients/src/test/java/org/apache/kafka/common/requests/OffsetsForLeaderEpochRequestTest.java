@@ -17,45 +17,42 @@
 package org.apache.kafka.common.requests;
 
 import org.apache.kafka.common.errors.UnsupportedVersionException;
-import org.apache.kafka.common.message.OffsetForLeaderEpochRequestData;
+import org.apache.kafka.common.message.OffsetForLeaderEpochRequestData.OffsetForLeaderTopicCollection;
 import org.apache.kafka.common.protocol.ApiKeys;
 import org.junit.Test;
-
-import java.util.Collections;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertThrows;
 
 public class OffsetsForLeaderEpochRequestTest {
 
-	@Test
-	public void testForConsumerRequiresVersion3() {
-		OffsetsForLeaderEpochRequest.Builder builder = OffsetsForLeaderEpochRequest.Builder.forConsumer(new OffsetForLeaderEpochRequestData.OffsetForLeaderTopicCollection());
-		for (short version = 0; version < 3; version++) {
-			final short v = version;
-			assertThrows(UnsupportedVersionException.class, () -> builder.build(v));
-		}
+    @Test
+    public void testForConsumerRequiresVersion3() {
+        OffsetsForLeaderEpochRequest.Builder builder = OffsetsForLeaderEpochRequest.Builder.forConsumer(new OffsetForLeaderTopicCollection());
+        for (short version = 0; version < 3; version++) {
+            final short v = version;
+            assertThrows(UnsupportedVersionException.class, () -> builder.build(v));
+        }
 
-		for (short version = 3; version < ApiKeys.OFFSET_FOR_LEADER_EPOCH.latestVersion(); version++) {
-			OffsetsForLeaderEpochRequest request = builder.build((short) 3);
-			assertEquals(OffsetsForLeaderEpochRequest.CONSUMER_REPLICA_ID, request.replicaId());
-		}
-	}
+        for (short version = 3; version < ApiKeys.OFFSET_FOR_LEADER_EPOCH.latestVersion(); version++) {
+            OffsetsForLeaderEpochRequest request = builder.build((short) 3);
+            assertEquals(OffsetsForLeaderEpochRequest.CONSUMER_REPLICA_ID, request.replicaId());
+        }
+    }
 
-	@Test
-	public void testDefaultReplicaId() {
-		for (short version = 0; version < ApiKeys.OFFSET_FOR_LEADER_EPOCH.latestVersion(); version++) {
-			int replicaId = 1;
-			OffsetsForLeaderEpochRequest.Builder builder = OffsetsForLeaderEpochRequest.Builder.forFollower(
-					version, Collections.emptyMap(), replicaId);
-			OffsetsForLeaderEpochRequest request = builder.build();
-			OffsetsForLeaderEpochRequest parsed = (OffsetsForLeaderEpochRequest) AbstractRequest.parseRequest(
-					ApiKeys.OFFSET_FOR_LEADER_EPOCH, version, request.toStruct());
-			if (version < 3)
-				assertEquals(OffsetsForLeaderEpochRequest.DEBUGGING_REPLICA_ID, parsed.replicaId());
-			else
-				assertEquals(replicaId, parsed.replicaId());
-		}
-	}
+    @Test
+    public void testDefaultReplicaId() {
+        for (short version = 0; version < ApiKeys.OFFSET_FOR_LEADER_EPOCH.latestVersion(); version++) {
+            int replicaId = 1;
+            OffsetsForLeaderEpochRequest.Builder builder = OffsetsForLeaderEpochRequest.Builder.forFollower(
+                    version, new OffsetForLeaderTopicCollection(), replicaId);
+            OffsetsForLeaderEpochRequest request = builder.build();
+            OffsetsForLeaderEpochRequest parsed = OffsetsForLeaderEpochRequest.parse(request.serialize(), version);
+            if (version < 3)
+                assertEquals(OffsetsForLeaderEpochRequest.DEBUGGING_REPLICA_ID, parsed.replicaId());
+            else
+                assertEquals(replicaId, parsed.replicaId());
+        }
+    }
 
 }

@@ -22,7 +22,6 @@ import org.apache.kafka.common.network.ClientInformation;
 import org.apache.kafka.common.network.ListenerName;
 import org.apache.kafka.common.network.Send;
 import org.apache.kafka.common.protocol.ApiKeys;
-import org.apache.kafka.common.protocol.types.Struct;
 import org.apache.kafka.common.security.auth.KafkaPrincipal;
 import org.apache.kafka.common.security.auth.KafkaPrincipalSerde;
 import org.apache.kafka.common.security.auth.SecurityProtocol;
@@ -45,47 +44,47 @@ public class RequestContext implements AuthorizableRequestContext {
 	public final boolean fromPrivilegedListener;
 	public final Optional<KafkaPrincipalSerde> principalSerde;
 
-	public RequestContext(RequestHeader header,
-						  String connectionId,
-						  InetAddress clientAddress,
-						  KafkaPrincipal principal,
-						  ListenerName listenerName,
-						  SecurityProtocol securityProtocol,
-						  ClientInformation clientInformation,
-						  boolean fromPrivilegedListener) {
-		this(header,
-				connectionId,
-				clientAddress,
-				principal,
-				listenerName,
-				securityProtocol,
-				clientInformation,
-				fromPrivilegedListener,
-				Optional.empty());
-	}
+    public RequestContext(RequestHeader header,
+                          String connectionId,
+                          InetAddress clientAddress,
+                          KafkaPrincipal principal,
+                          ListenerName listenerName,
+                          SecurityProtocol securityProtocol,
+                          ClientInformation clientInformation,
+                          boolean fromPrivilegedListener) {
+        this(header,
+            connectionId,
+            clientAddress,
+            principal,
+            listenerName,
+            securityProtocol,
+            clientInformation,
+            fromPrivilegedListener,
+            Optional.empty());
+    }
 
-	public RequestContext(RequestHeader header,
-						  String connectionId,
-						  InetAddress clientAddress,
-						  KafkaPrincipal principal,
-						  ListenerName listenerName,
-						  SecurityProtocol securityProtocol,
-						  ClientInformation clientInformation,
-						  boolean fromPrivilegedListener,
-						  Optional<KafkaPrincipalSerde> principalSerde) {
-		this.header = header;
-		this.connectionId = connectionId;
-		this.clientAddress = clientAddress;
-		this.principal = principal;
-		this.listenerName = listenerName;
-		this.securityProtocol = securityProtocol;
-		this.clientInformation = clientInformation;
-		this.fromPrivilegedListener = fromPrivilegedListener;
-		this.principalSerde = principalSerde;
-	}
+    public RequestContext(RequestHeader header,
+                          String connectionId,
+                          InetAddress clientAddress,
+                          KafkaPrincipal principal,
+                          ListenerName listenerName,
+                          SecurityProtocol securityProtocol,
+                          ClientInformation clientInformation,
+                          boolean fromPrivilegedListener,
+                          Optional<KafkaPrincipalSerde> principalSerde) {
+        this.header = header;
+        this.connectionId = connectionId;
+        this.clientAddress = clientAddress;
+        this.principal = principal;
+        this.listenerName = listenerName;
+        this.securityProtocol = securityProtocol;
+        this.clientInformation = clientInformation;
+        this.fromPrivilegedListener = fromPrivilegedListener;
+        this.principalSerde = principalSerde;
+    }
 
 	/**
-	 * 从给定的ByteBuffer中提取出Request和对应的Size值
+	 *从给定的ByteBuffer中提取出Request和对应的Size值
 	 *
 	 * @param buffer
 	 * @return
@@ -96,40 +95,36 @@ public class RequestContext implements AuthorizableRequestContext {
 		// 这主要是考虑到了客户端和服务器端版本的兼容问题
 		// 客户端发送请求给 Broker 的时候很可能不知道 Broker 到底支持哪些版本的请求 它需要使用 ApiVersionsRequest 去获取完整的请求版本支持列表
 		// 但是 如果不做这个判断 Broker 可能无法处理客户端发送的 ApiVersionsRequest
-		if (isUnsupportedApiVersionsRequest()) {
-			// Unsupported ApiVersion requests are treated as v0 requests and are not parsed
+        if (isUnsupportedApiVersionsRequest()) {
+            // Unsupported ApiVersion requests are treated as v0 requests and are not parsed
 			// 不支持的ApiVersions请求类型被视为是V0版本的请求 并且不做解析操作 直接返回
-			ApiVersionsRequest apiVersionsRequest = new ApiVersionsRequest(new ApiVersionsRequestData(), (short) 0, header.apiVersion());
-			return new RequestAndSize(apiVersionsRequest, 0);
-		} else {
+            ApiVersionsRequest apiVersionsRequest = new ApiVersionsRequest(new ApiVersionsRequestData(), (short) 0, header.apiVersion());
+            return new RequestAndSize(apiVersionsRequest, 0);
+        } else {
 			// 从请求头部数据中获取ApiKey信息
-			ApiKeys apiKey = header.apiKey();
-			try {
+            ApiKeys apiKey = header.apiKey();
+            try {
 				// 从请求头部数据中获取版本信息
 				short apiVersion = header.apiVersion();
-				// 解析请求
-				Struct struct = apiKey.parseRequest(apiVersion, buffer);
-				AbstractRequest body = AbstractRequest.parseRequest(apiKey, apiVersion, struct);
-				// 封装解析后的请求对象以及请求大小返回
-				return new RequestAndSize(body, struct.sizeOf());
-			} catch (Throwable ex) {
+				// 解析请求 封装解析后的请求对象以及请求大小返回
+				return AbstractRequest.parseRequest(apiKey, apiVersion, buffer);
+            } catch (Throwable ex) {
 				// 解析过程中出现任何问题都视为无效请求抛出异常
-				throw new InvalidRequestException("Error getting request for apiKey: " + apiKey +
-						", apiVersion: " + header.apiVersion() +
-						", connectionId: " + connectionId +
-						", listenerName: " + listenerName +
-						", principal: " + principal, ex);
-			}
-		}
-	}
+                throw new InvalidRequestException("Error getting request for apiKey: " + apiKey +
+                        ", apiVersion: " + header.apiVersion() +
+                        ", connectionId: " + connectionId +
+                        ", listenerName: " + listenerName +
+                        ", principal: " + principal, ex);
+            }
+        }
+    }
 
     /**
      * Build a {@link Send} for direct transmission of the provided response
      * over the network.
      */
     public Send buildResponseSend(AbstractResponse body) {
-        ResponseHeader responseHeader = header.toResponseHeader();
-        return body.toSend(connectionId, responseHeader, apiVersion());
+        return body.toSend(header.toResponseHeader(), apiVersion());
     }
 
     /**
@@ -143,8 +138,7 @@ public class RequestContext implements AuthorizableRequestContext {
      * so we do not lose the benefit of "zero copy" transfers from disk.
      */
     public ByteBuffer buildResponseEnvelopePayload(AbstractResponse body) {
-        ResponseHeader responseHeader = header.toResponseHeader();
-        return RequestUtils.serialize(responseHeader.toStruct(), body.toStruct(header.apiVersion()));
+        return body.serializeWithHeader(header.toResponseHeader(), apiVersion());
     }
 
 	private boolean isUnsupportedApiVersionsRequest() {

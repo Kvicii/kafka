@@ -21,23 +21,23 @@ import java.util
 import java.util.Collections
 import java.util.concurrent.locks.ReentrantReadWriteLock
 
-import kafka.api._
+import scala.collection.{Seq, Set, mutable}
+import scala.jdk.CollectionConverters._
 import kafka.cluster.{Broker, EndPoint}
+import kafka.api._
 import kafka.controller.StateChangeLogger
 import kafka.utils.CoreUtils._
-import kafka.utils.Implicits._
 import kafka.utils.Logging
+import kafka.utils.Implicits._
 import org.apache.kafka.common.internals.Topic
-import org.apache.kafka.common.message.MetadataResponseData.{MetadataResponsePartition, MetadataResponseTopic}
 import org.apache.kafka.common.message.UpdateMetadataRequestData.UpdateMetadataPartitionState
+import org.apache.kafka.common.{Cluster, Node, PartitionInfo, TopicPartition, Uuid}
+import org.apache.kafka.common.message.MetadataResponseData.MetadataResponseTopic
+import org.apache.kafka.common.message.MetadataResponseData.MetadataResponsePartition
 import org.apache.kafka.common.network.ListenerName
 import org.apache.kafka.common.protocol.Errors
 import org.apache.kafka.common.requests.{MetadataResponse, UpdateMetadataRequest}
 import org.apache.kafka.common.security.auth.SecurityProtocol
-import org.apache.kafka.common.{Cluster, Node, PartitionInfo, TopicPartition}
-
-import scala.collection.{Seq, Set, mutable}
-import scala.jdk.CollectionConverters._
 
 /**
  * A cache for the state (e.g., current leader) of each partition. This cache is updated through
@@ -60,8 +60,9 @@ class MetadataCache(brokerId: Int) extends Logging {
   //multiple reads of this value risk getting different snapshots.
   // 保存了实际的元数据信息 它是 MetadataCache 类中最重要的字段
   @volatile private var metadataSnapshot: MetadataSnapshot = MetadataSnapshot(partitionStates = mutable.AnyRefMap.empty,
-    controllerId = None, aliveBrokers = mutable.LongMap.empty, aliveNodes = mutable.LongMap.empty)
   // 仅仅用于日志输出
+    topicIds = Map.empty, controllerId = None, aliveBrokers = mutable.LongMap.empty, aliveNodes = mutable.LongMap.empty)
+
   this.logIdent = s"[MetadataCache brokerId=$brokerId] "
   // 仅仅用于日志输出
   private val stateChangeLogger = new StateChangeLogger(brokerId, inControllerContext = false, None)
@@ -126,7 +127,7 @@ class MetadataCache(brokerId: Int) extends Logging {
               .setIsrNodes(filteredIsr)
               .setOfflineReplicas(offlineReplicas)
 
-          case Some(leader) =>
+          case Some(_) =>
             val error = if (filteredReplicas.size < replicas.size) {
               debug(s"Error while fetching metadata for $topicPartition: replica information not available for " +
                 s"following brokers ${replicas.asScala.filterNot(filteredReplicas.contains).mkString(",")}")
@@ -182,6 +183,7 @@ class MetadataCache(brokerId: Int) extends Logging {
         new MetadataResponseTopic()
           .setErrorCode(Errors.NONE.code)
           .setName(topic)
+          .setTopicId(snapshot.topicIds.getOrElse(topic, Uuid.ZERO_UUID))
           .setIsInternal(Topic.isInternal(topic))
           .setPartitions(partitionMetadata.toBuffer.asJava)
       }
@@ -375,12 +377,23 @@ class MetadataCache(brokerId: Int) extends Logging {
         }
       }
 
-      // 构造已删除分区数组 将其作为方法返回结果
+//       构造已删除分区数组 将其作为方法返回结果
+//      val deletedPartitions = new mutable.ArrayBuffer[TopicPartition]
+//      if (!updateMetadataRequest.partitionStates.iterator.hasNext) { // UpdateMetadataRequest请求没有携带任何分区信息
+//         构造新的MetadataSnapshot对象 使用之前的分区信息和新的Broker列表信息
+//        metadataSnapshot = MetadataSnapshot(metadataSnapshot.partitionStates, controllerIdOpt, aliveBrokers, aliveNodes)
+//      } else { // 否则进入到方法最后一部分  主要工作是提取 UpdateMetadataRequest 请求中的数据 然后填充元数据缓存
+      val newTopicIds = updateMetadataRequest.topicStates().asScala
+        .map(topicState => (topicState.topicName(), topicState.topicId()))
+        .filter(_._2 != Uuid.ZERO_UUID).toMap
+      val topicIds = mutable.Map.empty[String, Uuid]
+      topicIds ++= metadataSnapshot.topicIds
+      topicIds ++= newTopicIds
+
       val deletedPartitions = new mutable.ArrayBuffer[TopicPartition]
-      if (!updateMetadataRequest.partitionStates.iterator.hasNext) { // UpdateMetadataRequest请求没有携带任何分区信息
-        // 构造新的MetadataSnapshot对象 使用之前的分区信息和新的Broker列表信息
-        metadataSnapshot = MetadataSnapshot(metadataSnapshot.partitionStates, controllerIdOpt, aliveBrokers, aliveNodes)
-      } else { // 否则进入到方法最后一部分  主要工作是提取 UpdateMetadataRequest 请求中的数据 然后填充元数据缓存
+      if (!updateMetadataRequest.partitionStates.iterator.hasNext) {
+        metadataSnapshot = MetadataSnapshot(metadataSnapshot.partitionStates, topicIds.toMap, controllerIdOpt, aliveBrokers, aliveNodes)
+      } else {
         //since kafka may do partial metadata updates, we start by copying the previous state
         val partitionStates = new mutable.AnyRefMap[String, mutable.LongMap[UpdateMetadataPartitionState]](metadataSnapshot.partitionStates.size)
         // 备份现有元数据缓存中的分区数据
@@ -399,8 +412,8 @@ class MetadataCache(brokerId: Int) extends Logging {
         newStates.foreach { state =>
           // per-partition logging here can be very expensive due going through all partitions in the cluster
           val tp = new TopicPartition(state.topicName, state.partitionIndex)
-          if (state.leader == LeaderAndIsr.LeaderDuringDelete) { // 如果分区处于被删除过程中
-            removePartitionInfo(partitionStates, tp.topic, tp.partition) // 将分区从元数据缓存中移除
+          if (state.leader == LeaderAndIsr.LeaderDuringDelete) {  // 如果分区处于被删除过程中
+            removePartitionInfo(partitionStates, topicIds, tp.topic, tp.partition)  // 将分区从元数据缓存中移除
             if (traceEnabled)
               stateChangeLogger.trace(s"Deleted partition $tp from metadata cache in response to UpdateMetadata " +
                 s"request sent by controller $controllerId epoch $controllerEpoch with correlation id $correlationId")
@@ -416,7 +429,7 @@ class MetadataCache(brokerId: Int) extends Logging {
         stateChangeLogger.info(s"Add $cachedPartitionsCount partitions and deleted ${deletedPartitions.size} partitions from metadata cache " +
           s"in response to UpdateMetadata request sent by controller $controllerId epoch $controllerEpoch with correlation id $correlationId")
         // 使用更新过的分区元数据和第一部分计算的存活Broker列表及节点列表 构建最新的元数据缓存
-        metadataSnapshot = MetadataSnapshot(partitionStates, controllerIdOpt, aliveBrokers, aliveNodes)
+        metadataSnapshot = MetadataSnapshot(partitionStates, topicIds.toMap, controllerIdOpt, aliveBrokers, aliveNodes)
       }
       deletedPartitions // 返回已删除分区列表数组
     }
@@ -442,10 +455,13 @@ class MetadataCache(brokerId: Int) extends Logging {
   def contains(tp: TopicPartition): Boolean = getPartitionInfo(tp.topic, tp.partition).isDefined
 
   private def removePartitionInfo(partitionStates: mutable.AnyRefMap[String, mutable.LongMap[UpdateMetadataPartitionState]],
-                                  topic: String, partitionId: Int): Boolean = {
+                                  topicIds: mutable.Map[String, Uuid], topic: String, partitionId: Int): Boolean = {
     partitionStates.get(topic).exists { infos =>
       infos.remove(partitionId)
-      if (infos.isEmpty) partitionStates.remove(topic)
+      if (infos.isEmpty) {
+        partitionStates.remove(topic)
+        topicIds.remove(topic)
+      }
       true
     }
   }
@@ -461,6 +477,7 @@ class MetadataCache(brokerId: Int) extends Logging {
    * @param aliveNodes      一个 Map 的 Map 类型 其 Key 是 Broker ID 序号 Value 是 Map 类型(其 Key 是 ListenerName 即 Broker 监听器类型 而 Value 是 Broker 节点对象)
    */
   case class MetadataSnapshot(partitionStates: mutable.AnyRefMap[String, mutable.LongMap[UpdateMetadataPartitionState]],
+                              topicIds: Map[String, Uuid],
                               controllerId: Option[Int],
                               aliveBrokers: mutable.LongMap[Broker],
                               aliveNodes: mutable.LongMap[collection.Map[ListenerName, Node]])

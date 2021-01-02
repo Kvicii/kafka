@@ -57,9 +57,9 @@ public class StickyPartitionCache {
                 newPart = random % partitions.size();
             } else if (availablePartitions.size() == 1) {   // 可用分区 == 1 直接选择
                 newPart = availablePartitions.get(0).partition();
-            } else {    //
+            } else {
                 while (newPart == null || newPart.equals(oldPart)) {    // 所选分区不能与之前的相同
-                    Integer random = Utils.toPositive(ThreadLocalRandom.current().nextInt());
+                    int random = Utils.toPositive(ThreadLocalRandom.current().nextInt());
                     newPart = availablePartitions.get(random % availablePartitions.size()).partition();
                 }
             }

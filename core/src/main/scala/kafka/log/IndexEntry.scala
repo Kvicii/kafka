@@ -17,7 +17,7 @@
 
 package kafka.log
 
-import org.apache.kafka.common.requests.ListOffsetResponse
+import org.apache.kafka.common.requests.ListOffsetsResponse
 
 /**
  * 定义了一种类似于Map结构的用于存储k-v的集合 供 {@link OffsetPosition} 和 {@link TimestampOffset} 实现
@@ -56,5 +56,5 @@ case class TimestampOffset(timestamp: Long, offset: Long) extends IndexEntry {
 }
 
 object TimestampOffset {
-  val Unknown = TimestampOffset(ListOffsetResponse.UNKNOWN_TIMESTAMP, ListOffsetResponse.UNKNOWN_OFFSET)
+  val Unknown = TimestampOffset(ListOffsetsResponse.UNKNOWN_TIMESTAMP, ListOffsetsResponse.UNKNOWN_OFFSET)
 }

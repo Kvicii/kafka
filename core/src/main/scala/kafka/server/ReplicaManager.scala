@@ -19,7 +19,7 @@ package kafka.server
 import java.io.File
 import java.util.Optional
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.{AtomicBoolean, AtomicLong}
+import java.util.concurrent.atomic.{AtomicBoolean}
 import java.util.concurrent.locks.Lock
 
 import com.yammer.metrics.core.Meter
@@ -36,12 +36,13 @@ import kafka.server.checkpoints.{LazyOffsetCheckpoints, OffsetCheckpointFile, Of
 import kafka.utils._
 import kafka.utils.Implicits._
 import kafka.zk.KafkaZkClient
-import org.apache.kafka.common.{ElectionType, IsolationLevel, Node, TopicPartition}
+import org.apache.kafka.common.{ElectionType, IsolationLevel, Node, TopicPartition, Uuid}
 import org.apache.kafka.common.errors._
 import org.apache.kafka.common.internals.Topic
 import org.apache.kafka.common.message.LeaderAndIsrRequestData.LeaderAndIsrPartitionState
 import org.apache.kafka.common.message.DeleteRecordsResponseData.DeleteRecordsPartitionResult
 import org.apache.kafka.common.message.{DescribeLogDirsResponseData, FetchResponseData, LeaderAndIsrResponseData}
+import org.apache.kafka.common.message.LeaderAndIsrResponseData.LeaderAndIsrTopicError
 import org.apache.kafka.common.message.LeaderAndIsrResponseData.LeaderAndIsrPartitionError
 import org.apache.kafka.common.message.OffsetForLeaderEpochRequestData.{OffsetForLeaderTopic}
 import org.apache.kafka.common.message.OffsetForLeaderEpochResponseData.{OffsetForLeaderTopicResult, EpochEndOffset}
@@ -168,26 +169,8 @@ object HostedPartition {
 
 }
 
-case class IsrChangePropagationConfig(
-  // How often to check for ISR
-  checkIntervalMs: Long,
-
-  // Maximum time that an ISR change may be delayed before sending the notification
-  maxDelayMs: Long,
-
-  // Maximum time to await additional changes before sending the notification
-  lingerMs: Long
-)
-
 object ReplicaManager {
   val HighWatermarkFilename = "replication-offset-checkpoint"
-
-  // This field is mutable to allow overriding change notification behavior in test cases
-  @volatile var DefaultIsrPropagationConfig: IsrChangePropagationConfig = IsrChangePropagationConfig(
-    checkIntervalMs = 2500,
-    lingerMs = 5000,
-    maxDelayMs = 60000,
-  )
 }
 
 class ReplicaManager(val config: KafkaConfig,
@@ -253,11 +236,6 @@ class ReplicaManager(val config: KafkaConfig,
   this.logIdent = s"[ReplicaManager broker=$localBrokerId] "
   private val stateChangeLogger = new StateChangeLogger(localBrokerId, inControllerContext = false, None)
 
-  private val isrChangeNotificationConfig = ReplicaManager.DefaultIsrPropagationConfig
-  private val isrChangeSet: mutable.Set[TopicPartition] = new mutable.HashSet[TopicPartition]()
-  private val lastIsrChangeMs = new AtomicLong(time.milliseconds())
-  private val lastIsrPropagationMs = new AtomicLong(time.milliseconds())
-
   private var logDirFailureHandler: LogDirFailureHandler = null
 
   private class LogDirFailureHandler(name: String, haltBrokerOnDirFailure: Boolean) extends ShutdownableThread(name) {
@@ -296,41 +274,40 @@ class ReplicaManager(val config: KafkaConfig,
       scheduler.schedule("highwatermark-checkpoint", checkpointHighWatermarks _, period = config.replicaHighWatermarkCheckpointIntervalMs, unit = TimeUnit.MILLISECONDS)
   }
 
-  /**
-   * 1. 一旦isr-expiration线程成功执行了ISR收缩 调用该方法将相应分区加入到isrChangeSet中
-   * 2. Follower副本从Leader副本拉取消息后会尝试将自己加入到ISR中 此时可能执行ISR扩容操作 代码同样会调用该方法将相应分区加入到isrChangeSet中
-   *
-   * @param topicPartition
-   */
-  def recordIsrChange(topicPartition: TopicPartition): Unit = {
-    if (!config.interBrokerProtocolVersion.isAlterIsrSupported) {
-      isrChangeSet synchronized {
-        isrChangeSet += topicPartition
-        lastIsrChangeMs.set(time.milliseconds())
-      }
-    }
-  }
-
-  /**
-   * This function periodically runs to see if ISR needs to be propagated. It propagates ISR when:
-   * 1. There is ISR change not propagated yet.
-   * 2. There is no ISR Change in the last five seconds, or it has been more than 60 seconds since the last ISR propagation.
-   * This allows an occasional ISR change to be propagated within a few seconds, and avoids overwhelming controller and
-   * other brokers when large amount of ISR change occurs.
-   */
-  def maybePropagateIsrChanges(): Unit = {
-    val now = time.milliseconds()
-    isrChangeSet synchronized {
-      if (isrChangeSet.nonEmpty &&
-        (lastIsrChangeMs.get() + isrChangeNotificationConfig.lingerMs < now ||
-          lastIsrPropagationMs.get() + isrChangeNotificationConfig.maxDelayMs < now)) {
-        zkClient.propagateIsrChanges(isrChangeSet)
-        isrChangeSet.clear()
-        lastIsrPropagationMs.set(now)
-      }
-    }
-  }
-
+//  /**
+//   * 1. 一旦isr-expiration线程成功执行了ISR收缩 调用该方法将相应分区加入到isrChangeSet中
+//   * 2. Follower副本从Leader副本拉取消息后会尝试将自己加入到ISR中 此时可能执行ISR扩容操作 代码同样会调用该方法将相应分区加入到isrChangeSet中
+//   *
+//   * @param topicPartition
+//   */
+//  def recordIsrChange(topicPartition: TopicPartition): Unit = {
+//    if (!config.interBrokerProtocolVersion.isAlterIsrSupported) {
+//      isrChangeSet synchronized {
+//        isrChangeSet += topicPartition
+//        lastIsrChangeMs.set(time.milliseconds())
+//      }
+//    }
+//  }
+//
+//  /**
+//   * This function periodically runs to see if ISR needs to be propagated. It propagates ISR when:
+//   * 1. There is ISR change not propagated yet.
+//   * 2. There is no ISR Change in the last five seconds, or it has been more than 60 seconds since the last ISR propagation.
+//   * This allows an occasional ISR change to be propagated within a few seconds, and avoids overwhelming controller and
+//   * other brokers when large amount of ISR change occurs.
+//   */
+//  def maybePropagateIsrChanges(): Unit = {
+//    val now = time.milliseconds()
+//    isrChangeSet synchronized {
+//      if (isrChangeSet.nonEmpty &&
+//        (lastIsrChangeMs.get() + isrChangeNotificationConfig.lingerMs < now ||
+//          lastIsrPropagationMs.get() + isrChangeNotificationConfig.maxDelayMs < now)) {
+//        zkClient.propagateIsrChanges(isrChangeSet)
+//        isrChangeSet.clear()
+//        lastIsrPropagationMs.set(now)
+//      }
+//    }
+//  }
   // When ReplicaAlterDirThread finishes replacing a current replica with a future replica, it will
   // remove the partition from the partition state map. But it will not close itself even if the
   // partition state map is empty. Thus we need to call shutdownIdleReplicaAlterDirThread() periodically
@@ -353,13 +330,6 @@ class ReplicaManager(val config: KafkaConfig,
     // A follower can lag behind leader for up to config.replicaLagTimeMaxMs x 1.5 before it is removed from ISR
     // ReplicaManager启动时会创建该异步线程(isr-expiration)定期去查看是否需要为集群中所有online分区执行ISR收缩
     scheduler.schedule("isr-expiration", maybeShrinkIsr _, period = config.replicaLagTimeMaxMs / 2, unit = TimeUnit.MILLISECONDS)
-    // If using AlterIsr, we don't need the znode ISR propagation
-    if (!config.interBrokerProtocolVersion.isAlterIsrSupported) {
-      scheduler.schedule("isr-change-propagation", maybePropagateIsrChanges _,
-        period = isrChangeNotificationConfig.checkIntervalMs, unit = TimeUnit.MILLISECONDS)
-    } else {
-      alterIsrManager.start()
-    }
     scheduler.schedule("shutdown-idle-replica-alter-log-dirs-thread", shutdownIdleReplicaAlterLogDirsThread _, period = 10000L, unit = TimeUnit.MILLISECONDS)
 
     // If inter-broker protocol (IBP) < 1.0, the controller will send LeaderAndIsrRequest V0 which does not include isNew field.
@@ -1344,6 +1314,7 @@ class ReplicaManager(val config: KafkaConfig,
             s"correlation id $correlationId from controller $controllerId " +
             s"epoch ${leaderAndIsrRequest.controllerEpoch}")
         }
+      val topicIds = leaderAndIsrRequest.topicIds()
 
       val response = {
         if (leaderAndIsrRequest.controllerEpoch < controllerEpoch) {
@@ -1450,6 +1421,24 @@ class ReplicaManager(val config: KafkaConfig,
            */
             if (localLog(topicPartition).isEmpty)
               markPartitionOffline(topicPartition)
+            else {
+              val id = topicIds.get(topicPartition.topic())
+              // Ensure we have not received a request from an older protocol
+              if (id != null && !id.equals(Uuid.ZERO_UUID)) {
+                val log = localLog(topicPartition).get
+                // Check if topic ID is in memory, if not, it must be new to the broker and does not have a metadata file.
+                // This is because if the broker previously wrote it to file, it would be recovered on restart after failure.
+                if (log.topicId.equals(Uuid.ZERO_UUID)) {
+                  log.partitionMetadataFile.get.write(id)
+                  log.topicId = id
+                  // Warn if the topic ID in the request does not match the log.
+                } else if (!log.topicId.equals(id)) {
+                  stateChangeLogger.warn(s"Topic Id in memory: ${log.topicId.toString} does not" +
+                    s" match the topic Id provided in the request: " +
+                    s"${id.toString}.")
+                }
+              }
+            }
           }
 
           // we initialize highwatermark thread after the first leaderisrrequest. This ensures that all the partitions
@@ -1461,15 +1450,38 @@ class ReplicaManager(val config: KafkaConfig,
           replicaFetcherManager.shutdownIdleFetcherThreads()
           replicaAlterLogDirsManager.shutdownIdleFetcherThreads()
           onLeadershipChange(partitionsBecomeLeader, partitionsBecomeFollower)
-          val responsePartitions = responseMap.iterator.map { case (tp, error) =>
-            new LeaderAndIsrPartitionError()
-              .setTopicName(tp.topic)
-              .setPartitionIndex(tp.partition)
-              .setErrorCode(error.code)
-          }.toBuffer
-          new LeaderAndIsrResponse(new LeaderAndIsrResponseData()
-            .setErrorCode(Errors.NONE.code)
-            .setPartitionErrors(responsePartitions.asJava))
+          if (leaderAndIsrRequest.version() < 5) {
+            val responsePartitions = responseMap.iterator.map { case (tp, error) =>
+              new LeaderAndIsrPartitionError()
+                .setTopicName(tp.topic)
+                .setPartitionIndex(tp.partition)
+                .setErrorCode(error.code)
+            }.toBuffer
+            new LeaderAndIsrResponse(new LeaderAndIsrResponseData()
+              .setErrorCode(Errors.NONE.code)
+              .setPartitionErrors(responsePartitions.asJava), leaderAndIsrRequest.version())
+          } else {
+            val topics = new mutable.HashMap[String, List[LeaderAndIsrPartitionError]]
+            responseMap.asJava.forEach { case (tp, error) =>
+              if (!topics.contains(tp.topic)) {
+                topics.put(tp.topic, List(new LeaderAndIsrPartitionError()
+                                                                .setPartitionIndex(tp.partition)
+                                                                .setErrorCode(error.code)))
+              } else {
+                topics.put(tp.topic, new LeaderAndIsrPartitionError()
+                  .setPartitionIndex(tp.partition)
+                  .setErrorCode(error.code)::topics(tp.topic))
+              }
+            }
+            val topicErrors = topics.iterator.map { case (topic, partitionError) =>
+              new LeaderAndIsrTopicError()
+                .setTopicId(topicIds.get(topic))
+                .setPartitionErrors(partitionError.asJava)
+            }.toBuffer
+            new LeaderAndIsrResponse(new LeaderAndIsrResponseData()
+              .setErrorCode(Errors.NONE.code)
+              .setTopics(topicErrors.asJava), leaderAndIsrRequest.version())
+          }
         }
       }
       val endMs = time.milliseconds()

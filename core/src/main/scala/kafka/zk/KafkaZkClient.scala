@@ -524,9 +524,9 @@ class KafkaZkClient private[zk](zooKeeperClient: ZooKeeperClient, isSecure: Bool
 
   /**
    * Sets the topic znode with the given assignment.
-   *
-   * @param topic                            the topic whose assignment is being set.
-   * @param assignment                       the partition to replica mapping to set for the given topic
+   * @param topic the topic whose assignment is being set.
+   * @param topicId unique topic ID for the topic
+   * @param assignment the partition to replica mapping to set for the given topic
    * @param expectedControllerEpochZkVersion expected controller epoch zkVersion.
    * @return SetDataResponse
    */

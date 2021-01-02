@@ -26,25 +26,24 @@ import java.util.Optional
 import java.util.concurrent.atomic._
 import java.util.concurrent.{ConcurrentNavigableMap, ConcurrentSkipListMap, TimeUnit}
 import java.util.regex.Pattern
-
 import kafka.api.{ApiVersion, KAFKA_0_10_0_IV0}
 import kafka.common.{LogSegmentOffsetOverflowException, LongRef, OffsetsOutOfOrderException, UnexpectedAppendOffsetException}
 import kafka.message.{BrokerCompressionCodec, CompressionCodec, NoCompressionCodec}
 import kafka.metrics.KafkaMetricsGroup
 import kafka.server.checkpoints.LeaderEpochCheckpointFile
 import kafka.server.epoch.LeaderEpochFileCache
-import kafka.server.{BrokerTopicStats, FetchDataInfo, FetchHighWatermark, FetchIsolation, FetchLogEnd, FetchTxnCommitted, LogDirFailureChannel, LogOffsetMetadata, OffsetAndEpoch}
+import kafka.server.{BrokerTopicStats, FetchDataInfo, FetchHighWatermark, FetchIsolation, FetchLogEnd, FetchTxnCommitted, LogDirFailureChannel, LogOffsetMetadata, OffsetAndEpoch, PartitionMetadataFile}
 import kafka.utils._
 import org.apache.kafka.common.errors._
 import org.apache.kafka.common.message.FetchResponseData
 import org.apache.kafka.common.record.FileRecords.TimestampAndOffset
 import org.apache.kafka.common.record._
 import org.apache.kafka.common.requests.FetchResponse.AbortedTransaction
+import org.apache.kafka.common.requests.ListOffsetsRequest
 import org.apache.kafka.common.requests.OffsetsForLeaderEpochResponse.UNDEFINED_EPOCH_OFFSET
 import org.apache.kafka.common.requests.ProduceResponse.RecordError
-import org.apache.kafka.common.requests.ListOffsetRequest
 import org.apache.kafka.common.utils.{Time, Utils}
-import org.apache.kafka.common.{InvalidRecordException, KafkaException, TopicPartition}
+import org.apache.kafka.common.{InvalidRecordException, KafkaException, TopicPartition, Uuid}
 
 import scala.jdk.CollectionConverters._
 import scala.collection.mutable.{ArrayBuffer, ListBuffer}
@@ -337,6 +336,10 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径(�
   /**
    * Log类的初始化逻辑
    */
+  @volatile var partitionMetadataFile : Option[PartitionMetadataFile] = None
+
+  @volatile var topicId : Uuid = Uuid.ZERO_UUID
+
   locally {
     // create the log directory if it doesn't exist
     // 1.创建分区日志路径 保存Log对象磁盘文件
@@ -344,6 +347,8 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径(�
     // 2.初始化Leader Epoch Cache
     initializeLeaderEpochCache()
     // 3.加载所有日志段 并返回该Log对象下一条消息的位移值
+    initializePartitionMetadata()
+
     val nextOffset = loadSegments()
 
     /* Calculate the offset of the next message. */
@@ -367,6 +372,12 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径(�
     // deletion.
     producerStateManager.removeStraySnapshots(segments.values().asScala.map(_.baseOffset).toSeq)
     loadProducerState(logEndOffset, reloadFromCleanShutdown = hadCleanShutdown)
+
+    // Recover topic ID if present
+    partitionMetadataFile.foreach { file =>
+      if (!file.isEmpty())
+        topicId = file.read().topicId
+    }
   }
 
   def dir: File = _dir
@@ -595,7 +606,12 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径(�
   /** The name of this log */
   def name = dir.getName()
 
-  def recordVersion: RecordVersion = config.messageFormatVersion.recordVersion
+  private def recordVersion: RecordVersion = config.messageFormatVersion.recordVersion
+
+  private def initializePartitionMetadata(): Unit = lock synchronized {
+    val partitionMetadata = PartitionMetadataFile.newFile(dir)
+    partitionMetadataFile = Some(new PartitionMetadataFile(partitionMetadata, logDirFailureChannel))
+  }
 
   private def initializeLeaderEpochCache(): Unit = lock synchronized {
 
@@ -854,11 +870,13 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径(�
       // 4.2.返回恢复之后的分区日志LEO值
       nextOffset
     } else {
-      if (logSegments.isEmpty) {
-        addSegment(LogSegment.open(dir = dir, baseOffset = 0,
-          config, time = time, fileAlreadyExists = false,
-          initFileSize = this.initFileSize, preallocate = false))
-      }
+       if (logSegments.isEmpty) {
+          addSegment(LogSegment.open(dir = dir,
+            baseOffset = 0,
+            config,
+            time = time,
+            initFileSize = this.initFileSize))
+       }
       0
     }
   }
@@ -970,9 +988,12 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径(�
     if (logSegments.isEmpty) {
       // no existing segments, create a new mutable segment beginning at logStartOffset
       // 日志段集合为空 创建一个新的日志段 以logStartOffset为日志段的起始位移 并加入日志段集合中
-      addSegment(LogSegment.open(dir = dir, baseOffset = logStartOffset,
-        config, time = time, fileAlreadyExists = false,
-        initFileSize = this.initFileSize, preallocate = config.preallocate))
+      addSegment(LogSegment.open(dir = dir,
+        baseOffset = logStartOffset,
+        config,
+        time = time,
+        initFileSize = this.initFileSize,
+        preallocate = config.preallocate))
     }
     // 更新上一次恢复点属性并返回
     recoveryPoint = activeSegment.readNextOffset
@@ -985,7 +1006,6 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径(�
                                    reloadFromCleanShutdown: Boolean,
                                    producerStateManager: ProducerStateManager): Unit = lock synchronized {
     checkIfMemoryMappedBufferClosed()
-    val messageFormatVersion = config.messageFormatVersion.recordVersion.value
     val segments = logSegments
     val offsetsToSnapshot =
       if (segments.nonEmpty) {
@@ -994,7 +1014,7 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径(�
       } else {
         Seq(Some(lastOffset))
       }
-    info(s"Loading producer state till offset $lastOffset with message format version $messageFormatVersion")
+    info(s"Loading producer state till offset $lastOffset with message format version ${recordVersion.value}")
 
     // We want to avoid unnecessary scanning of the log to build the producer state when the broker is being
     // upgraded. The basic idea is to use the absence of producer snapshot files to detect the upgrade case,
@@ -1008,8 +1028,8 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径(�
     // offset (see below). The next time the log is reloaded, we will load producer state using this snapshot
     // (or later snapshots). Otherwise, if there is no snapshot file, then we have to rebuild producer state
     // from the first segment.
-    if (messageFormatVersion < RecordBatch.MAGIC_VALUE_V2 ||
-      (producerStateManager.latestSnapshotOffset.isEmpty && reloadFromCleanShutdown)) {
+    if (recordVersion.value < RecordBatch.MAGIC_VALUE_V2 ||
+        (producerStateManager.latestSnapshotOffset.isEmpty && reloadFromCleanShutdown)) {
       // To avoid an expensive scan through all of the segments, we take empty snapshots from the start of the
       // last two segments and the last offset. This should avoid the full scan in the case that the log needs
       // truncation.
@@ -1050,7 +1070,7 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径(�
             maxPosition = maxPosition,
             minOneMessage = false)
           if (fetchDataInfo != null)
-            loadProducersFromLog(producerStateManager, fetchDataInfo.records)
+            loadProducersFromRecords(producerStateManager, fetchDataInfo.records)
         }
       }
       producerStateManager.updateMapEndOffset(lastOffset)
@@ -1061,22 +1081,6 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径(�
   private def loadProducerState(lastOffset: Long, reloadFromCleanShutdown: Boolean): Unit = lock synchronized {
     rebuildProducerState(lastOffset, reloadFromCleanShutdown, producerStateManager)
     maybeIncrementFirstUnstableOffset()
-  }
-
-  private def loadProducersFromLog(producerStateManager: ProducerStateManager, records: Records): Unit = {
-    val loadedProducers = mutable.Map.empty[Long, ProducerAppendInfo]
-    val completedTxns = ListBuffer.empty[CompletedTxn]
-    records.batches.forEach { batch =>
-      if (batch.hasProducerId) {
-        val maybeCompletedTxn = updateProducers(batch,
-          loadedProducers,
-          firstOffsetMetadata = None,
-          origin = AppendOrigin.Replication)
-        maybeCompletedTxn.foreach(completedTxns += _)
-      }
-    }
-    loadedProducers.values.foreach(producerStateManager.update)
-    completedTxns.foreach(producerStateManager.completeTxn)
   }
 
   private[log] def activeProducersWithLastSequence: Map[Long, Int] = lock synchronized {
@@ -1136,6 +1140,7 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径(�
           // re-initialize leader epoch cache so that LeaderEpochCheckpointFile.checkpoint can correctly reference
           // the checkpoint file in renamed log directory
           initializeLeaderEpochCache()
+          initializePartitionMetadata()
         }
       }
     }
@@ -1488,7 +1493,7 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径(�
         else
           None
 
-        val maybeCompletedTxn = updateProducers(batch, updatedProducers, firstOffsetMetadata, origin)
+        val maybeCompletedTxn = updateProducers(producerStateManager, batch, updatedProducers, firstOffsetMetadata, origin)
         maybeCompletedTxn.foreach(completedTxns += _)
       }
 
@@ -1605,15 +1610,6 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径(�
     // 8.生成LogAppendInfo对象并返回
     LogAppendInfo(firstOffset, lastOffset, lastLeaderEpochOpt, maxTimestamp, offsetOfMaxTimestamp, RecordBatch.NO_TIMESTAMP, logStartOffset,
       RecordConversionStats.EMPTY, sourceCodec, targetCodec, shallowMessageCount, validBytesCount, monotonic, lastOffsetOfFirstBatch)
-  }
-
-  private def updateProducers(batch: RecordBatch,
-                              producers: mutable.Map[Long, ProducerAppendInfo],
-                              firstOffsetMetadata: Option[LogOffsetMetadata],
-                              origin: AppendOrigin): Option[CompletedTxn] = {
-    val producerId = batch.producerId
-    val appendInfo = producers.getOrElseUpdate(producerId, producerStateManager.prepareUpdate(producerId, origin))
-    appendInfo.append(batch, firstOffsetMetadata)
   }
 
   /**
@@ -1807,8 +1803,8 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径(�
       debug(s"Searching offset for timestamp $targetTimestamp")
 
       if (config.messageFormatVersion < KAFKA_0_10_0_IV0 &&
-        targetTimestamp != ListOffsetRequest.EARLIEST_TIMESTAMP &&
-        targetTimestamp != ListOffsetRequest.LATEST_TIMESTAMP)
+        targetTimestamp != ListOffsetsRequest.EARLIEST_TIMESTAMP &&
+        targetTimestamp != ListOffsetsRequest.LATEST_TIMESTAMP)
         throw new UnsupportedForMessageFormatException(s"Cannot search offsets based on timestamp because message format version " +
           s"for partition $topicPartition is ${config.messageFormatVersion} which is earlier than the minimum " +
           s"required version $KAFKA_0_10_0_IV0")
@@ -1817,7 +1813,7 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径(�
       // constant time access while being safe to use with concurrent collections unlike `toArray`.
       val segmentsCopy = logSegments.toBuffer
       // For the earliest and latest, we do not need to return the timestamp.
-      if (targetTimestamp == ListOffsetRequest.EARLIEST_TIMESTAMP) {
+      if (targetTimestamp == ListOffsetsRequest.EARLIEST_TIMESTAMP) {
         // The first cached epoch usually corresponds to the log start offset, but we have to verify this since
         // it may not be true following a message format version bump as the epoch will not be available for
         // log entries written in the older format.
@@ -1827,7 +1823,7 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径(�
           case _ => Optional.empty[Integer]()
         }
         Some(new TimestampAndOffset(RecordBatch.NO_TIMESTAMP, logStartOffset, epochOpt))
-      } else if (targetTimestamp == ListOffsetRequest.LATEST_TIMESTAMP) {
+      } else if (targetTimestamp == ListOffsetsRequest.LATEST_TIMESTAMP) {
         val latestEpochOpt = leaderEpochCache.flatMap(_.latestEpoch).map(_.asInstanceOf[Integer])
         val epochOptional = Optional.ofNullable(latestEpochOpt.orNull)
         Some(new TimestampAndOffset(RecordBatch.NO_TIMESTAMP, logEndOffset, epochOptional))
@@ -1858,9 +1854,9 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径(�
 
     var startIndex = -1
     timestamp match {
-      case ListOffsetRequest.LATEST_TIMESTAMP =>
+      case ListOffsetsRequest.LATEST_TIMESTAMP =>
         startIndex = offsetTimeArray.length - 1
-      case ListOffsetRequest.EARLIEST_TIMESTAMP =>
+      case ListOffsetsRequest.EARLIEST_TIMESTAMP =>
         startIndex = 0
       case _ =>
         var isFound = false
@@ -2157,7 +2153,6 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径(�
           baseOffset = newOffset,
           config,
           time = time,
-          fileAlreadyExists = false,
           initFileSize = initFileSize,
           preallocate = config.preallocate)
         addSegment(segment)
@@ -2308,7 +2303,6 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径(�
           baseOffset = newOffset,
           config = config,
           time = time,
-          fileAlreadyExists = false,
           initFileSize = initFileSize,
           preallocate = config.preallocate))
         updateLogEndOffset(newOffset)
@@ -2875,6 +2869,34 @@ object Log {
 
   private def isLogFile(file: File): Boolean =
     file.getPath.endsWith(LogFileSuffix)
+
+  private def loadProducersFromRecords(producerStateManager: ProducerStateManager, records: Records): Unit = {
+    val loadedProducers = mutable.Map.empty[Long, ProducerAppendInfo]
+    val completedTxns = ListBuffer.empty[CompletedTxn]
+    records.batches.forEach { batch =>
+      if (batch.hasProducerId) {
+        val maybeCompletedTxn = updateProducers(
+          producerStateManager,
+          batch,
+          loadedProducers,
+          firstOffsetMetadata = None,
+          origin = AppendOrigin.Replication)
+        maybeCompletedTxn.foreach(completedTxns += _)
+      }
+    }
+    loadedProducers.values.foreach(producerStateManager.update)
+    completedTxns.foreach(producerStateManager.completeTxn)
+  }
+
+  private def updateProducers(producerStateManager: ProducerStateManager,
+                              batch: RecordBatch,
+                              producers: mutable.Map[Long, ProducerAppendInfo],
+                              firstOffsetMetadata: Option[LogOffsetMetadata],
+                              origin: AppendOrigin): Option[CompletedTxn] = {
+    val producerId = batch.producerId
+    val appendInfo = producers.getOrElseUpdate(producerId, producerStateManager.prepareUpdate(producerId, origin))
+    appendInfo.append(batch, firstOffsetMetadata)
+  }
 
 }
 

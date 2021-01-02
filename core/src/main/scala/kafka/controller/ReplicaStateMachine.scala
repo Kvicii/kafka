@@ -87,11 +87,11 @@ abstract class ReplicaStateMachine(controllerContext: ControllerContext) extends
  * replica can only get become follower state change request.  Valid previous
  * state is NonExistentReplica
  * 2. OnlineReplica     : Once a replica is started and part of the assigned replicas for its partition, it is in this
- * state. In this state, it can get either become leader or become follower state change requests.
- * Valid previous state are NewReplica, OnlineReplica or OfflineReplica
+ *                        state. In this state, it can get either become leader or become follower state change requests.
+ *                        Valid previous state are NewReplica, OnlineReplica, OfflineReplica and ReplicaDeletionIneligible
  * 3. OfflineReplica    : If a replica dies, it moves to this state. This happens when the broker hosting the replica
- * is down. Valid previous state are NewReplica, OnlineReplica
- * 4. ReplicaDeletionStarted: If replica deletion starts, it is moved to this state. Valid previous state is OfflineReplic
+ *                        is down. Valid previous state are NewReplica, OnlineReplica, OfflineReplica and ReplicaDeletionIneligible
+ * 4. ReplicaDeletionStarted: If replica deletion starts, it is moved to this state. Valid previous state is OfflineReplica
  * 5. ReplicaDeletionSuccessful: If replica responds with no error code in response to a delete replica request, it is
  * moved to this state. Valid previous state is ReplicaDeletionStarted
  * 6. ReplicaDeletionIneligible: If replica deletion fails, it is moved to this state. Valid previous states are
