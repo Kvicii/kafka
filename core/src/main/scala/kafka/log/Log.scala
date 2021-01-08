@@ -94,7 +94,7 @@ object LeaderHwChange {
  * @param firstOffset            The first offset in the message set unless the message format is less than V2 and we are appending
  *                               to the follower.
  * @param lastOffset             The last offset in the message set
- * @param lastLeaderEpoch The partition leader epoch corresponding to the last offset, if available.
+ * @param lastLeaderEpoch        The partition leader epoch corresponding to the last offset, if available.
  * @param maxTimestamp           The maximum timestamp of the message set.
  * @param offsetOfMaxTimestamp   The offset of the message with the maximum timestamp.
  * @param logAppendTime          The log append time (if used) of the message set, otherwise Message.NoTimestamp
@@ -303,6 +303,10 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径(�
   /* 永远指向下一条待插入消息的位移值 也就是说这个位置是没有值的(和LEO等价 <--> Log End Offset 日志当前的末端位移)  */
   @volatile private var nextOffsetMetadata: LogOffsetMetadata = _
 
+  // Log dir failure is handled asynchronously we need to prevent threads
+  // from reading inconsistent state caused by a failure in another thread
+  @volatile private var logDirOffline = false
+
   /* The earliest offset which is part of an incomplete transaction. This is used to compute the
    * last stable offset (LSO) in ReplicaManager. Note that it is possible that the "true" first unstable offset
    * gets removed from the log (through record or segment deletion). In this case, the first unstable offset
@@ -336,9 +340,9 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径(�
   /**
    * Log类的初始化逻辑
    */
-  @volatile var partitionMetadataFile : Option[PartitionMetadataFile] = None
+  @volatile var partitionMetadataFile: Option[PartitionMetadataFile] = None
 
-  @volatile var topicId : Uuid = Uuid.ZERO_UUID
+  @volatile var topicId: Uuid = Uuid.ZERO_UUID
 
   locally {
     // create the log directory if it doesn't exist
@@ -870,13 +874,13 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径(�
       // 4.2.返回恢复之后的分区日志LEO值
       nextOffset
     } else {
-       if (logSegments.isEmpty) {
-          addSegment(LogSegment.open(dir = dir,
-            baseOffset = 0,
-            config,
-            time = time,
-            initFileSize = this.initFileSize))
-       }
+      if (logSegments.isEmpty) {
+        addSegment(LogSegment.open(dir = dir,
+          baseOffset = 0,
+          config,
+          time = time,
+          initFileSize = this.initFileSize))
+      }
       0
     }
   }
@@ -1029,7 +1033,7 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径(�
     // (or later snapshots). Otherwise, if there is no snapshot file, then we have to rebuild producer state
     // from the first segment.
     if (recordVersion.value < RecordBatch.MAGIC_VALUE_V2 ||
-        (producerStateManager.latestSnapshotOffset.isEmpty && reloadFromCleanShutdown)) {
+      (producerStateManager.latestSnapshotOffset.isEmpty && reloadFromCleanShutdown)) {
       // To avoid an expensive scan through all of the segments, we take empty snapshots from the start of the
       // last two segments and the last offset. This should avoid the full scan in the case that the log needs
       // truncation.
@@ -1219,23 +1223,24 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径(�
                      assignOffsets: Boolean,
                      leaderEpoch: Int,
                      ignoreRecordSize: Boolean): LogAppendInfo = {
-    maybeHandleIOException(s"Error while appending records to $topicPartition in dir ${dir.getParent}") {
-      // 1.分析和验证待写入消息集合并返回校验结果
-      val appendInfo = analyzeAndValidateRecords(records, origin, ignoreRecordSize)
 
-      // return if we have no valid messages or if this is a duplicate of the last appended entry
-      // 如果就不需要写入任何消息直接返回即可
-      if (appendInfo.shallowCount == 0) appendInfo
-      else {
+    val appendInfo = analyzeAndValidateRecords(records, origin, ignoreRecordSize) // 1.分析和验证待写入消息集合并返回校验结果
 
-        // trim any invalid bytes or partial messages before appending it to the on-disk log
-        // 2.消息格式规整 删除无效格式消息或无效字节
-        // 判断思路是比较第一步中的总字节数和消息集合实际字节数 如果不一样说明存在无效字节 直接执行截断操作 截断标准是以第一步中的总字节数为准
-        var validRecords = trimInvalidBytes(records, appendInfo)
+    // return if we have no valid messages or if this is a duplicate of the last appended entry
+    // 如果就不需要写入任何消息直接返回即可
+    if (appendInfo.shallowCount == 0) appendInfo
+    else {
 
-        // they are valid, insert them in the log
-        lock synchronized {
+      // trim any invalid bytes or partial messages before appending it to the on-disk log
+      // 2.消息格式规整 删除无效格式消息或无效字节
+      // 判断思路是比较第一步中的总字节数和消息集合实际字节数 如果不一样说明存在无效字节 直接执行截断操作 截断标准是以第一步中的总字节数为准
+      var validRecords = trimInvalidBytes(records, appendInfo)
+
+      // they are valid, insert them in the log
+      lock synchronized {
+        maybeHandleIOException(s"Error while appending records to $topicPartition in dir ${dir.getParent}") {
           checkIfMemoryMappedBufferClosed() // 确保Log对象未关闭
+
           if (assignOffsets) { // 需要分配位移
             // assign offsets to the message set
             // 3.使用当前LEO值作为待写入消息集合中第一条消息的位移值
@@ -1404,6 +1409,12 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径(�
           appendInfo
         }
       }
+    }
+  }
+
+  private def checkForLogDirFailure(): Unit = {
+    if (logDirOffline) {
+      throw new KafkaStorageException(s"The log dir $parentDir is offline due to a previous IO exception.");
     }
   }
 
@@ -2544,9 +2555,11 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径(�
 
   private def maybeHandleIOException[T](msg: => String)(fun: => T): T = {
     try {
+      checkForLogDirFailure()
       fun
     } catch {
       case e: IOException =>
+        logDirOffline = true
         logDirFailureChannel.maybeAddOfflineLogDir(dir.getParent, msg, e)
         throw new KafkaStorageException(msg, e)
     }
