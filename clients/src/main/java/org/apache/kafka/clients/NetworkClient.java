@@ -1182,7 +1182,7 @@ public class NetworkClient implements KafkaClient {
                 this.requestVersion = requestVersion;
                 this.isPartialUpdate = isPartialUpdate;
             }
-        };
+        }
 
     }
 

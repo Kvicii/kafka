@@ -429,31 +429,28 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径(�
    * @return the updated high watermark offset
    */
   def updateHighWatermark(hw: Long): Long = {
-    // 1.新的高水位值一定介于[Log Start Offset，Log End Offset]之间 如果越界取边界
-    val newHighWatermark = if (hw < logStartOffset)
-      logStartOffset
-    else if (hw > logEndOffset)
-      logEndOffset
-    else
-      hw
-    // 2.调用设置高水位值方法
-    updateHighWatermarkMetadata(LogOffsetMetadata(newHighWatermark))
-    // 3.返回新的高水位值
-    newHighWatermark
+    updateHighWatermark(LogOffsetMetadata(hw))
   }
 
-  def updateHighWatermarkOffsetMetadata(hw: LogOffsetMetadata): Long = {
-    val newHighWatermark = if (hw.messageOffset < logStartOffset) {
-      updateHighWatermarkMetadata(LogOffsetMetadata(logStartOffset))
-      logStartOffset
-    } else if (hw.messageOffset > logEndOffset) {
-      updateHighWatermarkMetadata(logEndOffsetMetadata)
-      logEndOffset
+  /**
+   * Update high watermark with offset metadata. The new high watermark will be lower
+   * bounded by the log start offset and upper bounded by the log end offset.
+   *
+   * @param highWatermarkMetadata the suggested high watermark with offset metadata
+   * @return the updated high watermark offset
+   */
+  def updateHighWatermark(highWatermarkMetadata: LogOffsetMetadata): Long = {
+    val endOffsetMetadata = logEndOffsetMetadata
+    val newHighWatermarkMetadata = if (highWatermarkMetadata.messageOffset < logStartOffset) {
+      LogOffsetMetadata(logStartOffset)
+    } else if (highWatermarkMetadata.messageOffset >= endOffsetMetadata.messageOffset) {
+      endOffsetMetadata
     } else {
-      updateHighWatermarkMetadata(hw)
-      hw.messageOffset
+      highWatermarkMetadata
     }
-    newHighWatermark
+
+    updateHighWatermarkMetadata(newHighWatermarkMetadata)
+    newHighWatermarkMetadata.messageOffset
   }
 
   /**
@@ -521,7 +518,11 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径(�
       throw new IllegalArgumentException("High watermark offset should be non-negative")
 
     lock synchronized { // 保护Log对象修改的Monitor锁
-      highWatermarkMetadata = newHighWatermark // 赋值新的高水位值
+      if (newHighWatermark.messageOffset < highWatermarkMetadata.messageOffset) {
+        warn(s"Non-monotonic update of high watermark from $highWatermarkMetadata to $newHighWatermark")
+      }
+
+      highWatermarkMetadata = newHighWatermark  // 赋值新的高水位值
       producerStateManager.onHighWatermarkUpdated(newHighWatermark.messageOffset) // 处理事务状态管理器的高水位值更新逻辑
       maybeIncrementFirstUnstableOffset() // First Unstable Offset是Kafka事务机制的一部分
     }
@@ -2288,10 +2289,12 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径(�
             val deletable = logSegments.filter(segment => segment.baseOffset > targetOffset)
             removeAndDeleteSegments(deletable, asyncDelete = true, LogTruncation)
             activeSegment.truncateTo(targetOffset)
-            updateLogEndOffset(targetOffset)
-            updateLogStartOffset(math.min(targetOffset, this.logStartOffset))
             leaderEpochCache.foreach(_.truncateFromEnd(targetOffset))
-            loadProducerState(targetOffset, reloadFromCleanShutdown = false)
+
+            completeTruncation(
+              startOffset = math.min(targetOffset, logStartOffset),
+              endOffset = targetOffset
+            )
           }
           true
         }
@@ -2316,15 +2319,26 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径(�
           time = time,
           initFileSize = initFileSize,
           preallocate = config.preallocate))
-        updateLogEndOffset(newOffset)
         leaderEpochCache.foreach(_.clearAndFlush())
+        producerStateManager.truncateFullyAndStartAt(newOffset)
 
-        producerStateManager.truncate()
-        producerStateManager.updateMapEndOffset(newOffset)
-        maybeIncrementFirstUnstableOffset()
-        updateLogStartOffset(newOffset)
+        completeTruncation(
+          startOffset = newOffset,
+          endOffset = newOffset
+        )
       }
     }
+  }
+
+  private def completeTruncation(
+    startOffset: Long,
+    endOffset: Long
+  ): Unit = {
+    logStartOffset = startOffset
+    nextOffsetMetadata = LogOffsetMetadata(endOffset, activeSegment.baseOffset, activeSegment.size)
+    recoveryPoint = math.min(recoveryPoint, endOffset)
+    rebuildProducerState(endOffset, reloadFromCleanShutdown = false, producerStateManager)
+    updateHighWatermark(math.min(highWatermark, endOffset))
   }
 
   /**

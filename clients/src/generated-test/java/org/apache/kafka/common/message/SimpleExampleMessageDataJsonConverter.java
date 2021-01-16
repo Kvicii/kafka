@@ -181,6 +181,16 @@ public class SimpleExampleMessageDataJsonConverter {
         } else {
             _object.myOtherCommonStruct = TestCommonStructJsonConverter.read(_myOtherCommonStructNode, _version);
         }
+        JsonNode _myUint16Node = _node.get("myUint16");
+        if (_myUint16Node == null) {
+            if (_version >= 1) {
+                throw new RuntimeException("SimpleExampleMessageData: unable to locate field 'myUint16', which is mandatory in version " + _version);
+            } else {
+                _object.myUint16 = 33000;
+            }
+        } else {
+            _object.myUint16 = MessageUtil.jsonNodeToUnsignedShort(_myUint16Node, "SimpleExampleMessageData");
+        }
         return _object;
     }
     public static JsonNode write(SimpleExampleMessageData _object, short _version, boolean _serializeRecords) {
@@ -308,6 +318,13 @@ public class SimpleExampleMessageDataJsonConverter {
         }
         _node.set("myCommonStruct", TestCommonStructJsonConverter.write(_object.myCommonStruct, _version, _serializeRecords));
         _node.set("myOtherCommonStruct", TestCommonStructJsonConverter.write(_object.myOtherCommonStruct, _version, _serializeRecords));
+        if (_version >= 1) {
+            _node.set("myUint16", new IntNode(_object.myUint16));
+        } else {
+            if (_object.myUint16 != 33000) {
+                throw new UnsupportedVersionException("Attempted to write a non-default myUint16 at version " + _version);
+            }
+        }
         return _node;
     }
     public static JsonNode write(SimpleExampleMessageData _object, short _version) {

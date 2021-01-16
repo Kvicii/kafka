@@ -66,6 +66,7 @@ public class SimpleExampleMessageData implements ApiMessage {
     TaggedStruct myTaggedStruct;
     TestCommonStruct myCommonStruct;
     TestCommonStruct myOtherCommonStruct;
+    int myUint16;
     private List<RawTaggedField> _unknownTaggedFields;
     
     public static final Schema SCHEMA_0 =
@@ -81,6 +82,7 @@ public class SimpleExampleMessageData implements ApiMessage {
             new Field("nullable_zero_copy_byte_buffer", Type.COMPACT_NULLABLE_BYTES, ""),
             new Field("my_common_struct", TestCommonStruct.SCHEMA_1, ""),
             new Field("my_other_common_struct", TestCommonStruct.SCHEMA_1, ""),
+            new Field("my_uint16", Type.UINT16, ""),
             TaggedFieldsSection.of(
                 0, new Field("my_tagged_int_array", new CompactArrayOf(Type.INT32), ""),
                 1, new Field("my_nullable_string", Type.COMPACT_NULLABLE_STRING, ""),
@@ -99,6 +101,7 @@ public class SimpleExampleMessageData implements ApiMessage {
             new Field("my_struct", MyStruct.SCHEMA_2, "Test Struct field"),
             new Field("my_common_struct", TestCommonStruct.SCHEMA_1, ""),
             new Field("my_other_common_struct", TestCommonStruct.SCHEMA_1, ""),
+            new Field("my_uint16", Type.UINT16, ""),
             TaggedFieldsSection.of(
                 0, new Field("my_tagged_int_array", new CompactArrayOf(Type.INT32), ""),
                 1, new Field("my_nullable_string", Type.COMPACT_NULLABLE_STRING, ""),
@@ -145,6 +148,7 @@ public class SimpleExampleMessageData implements ApiMessage {
         this.myTaggedStruct = new TaggedStruct();
         this.myCommonStruct = new TestCommonStruct();
         this.myOtherCommonStruct = new TestCommonStruct();
+        this.myUint16 = 33000;
     }
     
     @Override
@@ -220,6 +224,11 @@ public class SimpleExampleMessageData implements ApiMessage {
         }
         {
             this.myOtherCommonStruct = new TestCommonStruct(_readable, _version);
+        }
+        if (_version >= 1) {
+            this.myUint16 = _readable.readUnsignedShort();
+        } else {
+            this.myUint16 = 33000;
         }
         this._unknownTaggedFields = null;
         if (_version >= 1) {
@@ -430,6 +439,13 @@ public class SimpleExampleMessageData implements ApiMessage {
         }
         myCommonStruct.write(_writable, _cache, _version);
         myOtherCommonStruct.write(_writable, _cache, _version);
+        if (_version >= 1) {
+            _writable.writeUnsignedShort(myUint16);
+        } else {
+            if (this.myUint16 != 33000) {
+                throw new UnsupportedVersionException("Attempted to write a non-default myUint16 at version " + _version);
+            }
+        }
         RawTaggedFieldWriter _rawWriter = RawTaggedFieldWriter.forFields(_unknownTaggedFields);
         _numTaggedFields += _rawWriter.numFields();
         if (_version >= 1) {
@@ -636,6 +652,11 @@ public class SimpleExampleMessageData implements ApiMessage {
         this.myCommonStruct = new TestCommonStruct((Struct) struct.get("my_common_struct"), _version);
         this.myOtherCommonStruct = new TestCommonStruct((Struct) struct.get("my_other_common_struct"), _version);
         if (_version >= 1) {
+            this.myUint16 = struct.getUnsignedShort("my_uint16");
+        } else {
+            this.myUint16 = 33000;
+        }
+        if (_version >= 1) {
             if (!_taggedFields.isEmpty()) {
                 this._unknownTaggedFields = new ArrayList<>(_taggedFields.size());
                 for (Entry<Integer, Object> entry : _taggedFields.entrySet()) {
@@ -768,6 +789,13 @@ public class SimpleExampleMessageData implements ApiMessage {
         }
         struct.set("my_common_struct", this.myCommonStruct.toStruct(_version));
         struct.set("my_other_common_struct", this.myOtherCommonStruct.toStruct(_version));
+        if (_version >= 1) {
+            struct.set("my_uint16", this.myUint16);
+        } else {
+            if (this.myUint16 != 33000) {
+                throw new UnsupportedVersionException("Attempted to write a non-default myUint16 at version " + _version);
+            }
+        }
         if (_version >= 1) {
             struct.set("_tagged_fields", _taggedFields);
         }
@@ -916,6 +944,9 @@ public class SimpleExampleMessageData implements ApiMessage {
             this.myOtherCommonStruct.addSize(_size, _cache, _version);
             int _structSize = _size.totalSize() - _sizeBeforeStruct;
         }
+        if (_version >= 1) {
+            _size.addBytes(2);
+        }
         if (_unknownTaggedFields != null) {
             _numTaggedFields += _unknownTaggedFields.size();
             for (RawTaggedField _field : _unknownTaggedFields) {
@@ -980,6 +1011,7 @@ public class SimpleExampleMessageData implements ApiMessage {
         } else {
             if (!this.myOtherCommonStruct.equals(other.myOtherCommonStruct)) return false;
         }
+        if (myUint16 != other.myUint16) return false;
         return MessageUtil.compareRawTaggedFields(_unknownTaggedFields, other._unknownTaggedFields);
     }
     
@@ -1001,6 +1033,7 @@ public class SimpleExampleMessageData implements ApiMessage {
         hashCode = 31 * hashCode + (myTaggedStruct == null ? 0 : myTaggedStruct.hashCode());
         hashCode = 31 * hashCode + (myCommonStruct == null ? 0 : myCommonStruct.hashCode());
         hashCode = 31 * hashCode + (myOtherCommonStruct == null ? 0 : myOtherCommonStruct.hashCode());
+        hashCode = 31 * hashCode + myUint16;
         return hashCode;
     }
     
@@ -1038,6 +1071,7 @@ public class SimpleExampleMessageData implements ApiMessage {
         _duplicate.myTaggedStruct = myTaggedStruct.duplicate();
         _duplicate.myCommonStruct = myCommonStruct.duplicate();
         _duplicate.myOtherCommonStruct = myOtherCommonStruct.duplicate();
+        _duplicate.myUint16 = myUint16;
         return _duplicate;
     }
     
@@ -1059,6 +1093,7 @@ public class SimpleExampleMessageData implements ApiMessage {
             + ", myTaggedStruct=" + myTaggedStruct.toString()
             + ", myCommonStruct=" + myCommonStruct.toString()
             + ", myOtherCommonStruct=" + myOtherCommonStruct.toString()
+            + ", myUint16=" + myUint16
             + ")";
     }
     
@@ -1120,6 +1155,10 @@ public class SimpleExampleMessageData implements ApiMessage {
     
     public TestCommonStruct myOtherCommonStruct() {
         return this.myOtherCommonStruct;
+    }
+    
+    public int myUint16() {
+        return this.myUint16;
     }
     
     @Override
@@ -1202,6 +1241,14 @@ public class SimpleExampleMessageData implements ApiMessage {
     
     public SimpleExampleMessageData setMyOtherCommonStruct(TestCommonStruct v) {
         this.myOtherCommonStruct = v;
+        return this;
+    }
+    
+    public SimpleExampleMessageData setMyUint16(int v) {
+        if (v < 0 || v > 65535) {
+            throw new RuntimeException("Invalid value " + v + "for unsigned short field.");
+        }
+        this.myUint16 = v;
         return this;
     }
     

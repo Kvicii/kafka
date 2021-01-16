@@ -243,7 +243,11 @@ subprojects {
     }
   }
 
-  def shouldUseJUnit5 = ["tools", "raft"].contains(it.project.name)
+  // Remove the relevant project name once it's converted to JUnit 5
+  def shouldUseJUnit5 = !(["api", "connect", "core", "file", "generator", "mirror",
+    "runtime", "examples", "streams-scala", "streams"].contains(it.project.name) ||
+    it.project.name.startsWith("upgrade-system-tests-"))
+
   def testLoggingEvents = ["passed", "skipped", "failed"]
   def testShowStandardStreams = false
   def testExceptionFormat = 'full'
@@ -1013,6 +1017,53 @@ project(':core') {
   }
 }
 
+project(':metadata') {
+  archivesBaseName = "kafka-metadata"
+
+  dependencies {
+    compile project(':clients')
+    compile libs.jacksonDatabind
+    compile libs.jacksonJDK8Datatypes
+    compileOnly libs.log4j
+    testCompile libs.junitJupiter
+    testCompile libs.hamcrest
+    testCompile libs.slf4jlog4j
+    testCompile project(':clients').sourceSets.test.output
+  }
+
+  task processMessages(type:JavaExec) {
+    main = "org.apache.kafka.message.MessageGenerator"
+    classpath = project(':generator').sourceSets.main.runtimeClasspath
+    args = [ "-p", "org.apache.kafka.common.metadata",
+             "-o", "src/generated/java/org/apache/kafka/common/metadata",
+             "-i", "src/main/resources/common/metadata",
+             "-m", "MessageDataGenerator", "JsonConverterGenerator",
+             "-t", "MetadataRecordTypeGenerator", "MetadataJsonConvertersGenerator"
+           ]
+    inputs.dir("src/main/resources/common/metadata")
+    outputs.dir("src/generated/java/org/apache/kafka/common/metadata")
+  }
+
+  compileJava.dependsOn 'processMessages'
+
+  sourceSets {
+    main {
+      java {
+        srcDirs = ["src/generated/java", "src/main/java"]
+      }
+    }
+    test {
+      java {
+        srcDirs = ["src/generated/java", "src/test/java"]
+      }
+    }
+  }
+
+  javadoc {
+    enabled = false
+  }
+}
+
 project(':examples') {
   archivesBaseName = "kafka-examples"
 
@@ -1070,8 +1121,7 @@ project(':clients') {
     jacksonDatabindConfig libs.jacksonDatabind // to publish as provided scope dependency.
 
     testCompile libs.bcpkix
-    testCompile libs.junitJupiterApi
-    testCompile libs.junitVintageEngine
+    testCompile libs.junitJupiter
     testCompile libs.mockitoCore
 
     testRuntime libs.slf4jlog4j
@@ -1160,6 +1210,7 @@ project(':clients') {
     include "**/org/apache/kafka/common/header/*"
     include "**/org/apache/kafka/common/metrics/*"
     include "**/org/apache/kafka/common/metrics/stats/*"
+    include "**/org/apache/kafka/common/quota/*"
     include "**/org/apache/kafka/common/resource/*"
     include "**/org/apache/kafka/common/serialization/*"
     include "**/org/apache/kafka/common/config/*"
@@ -1492,8 +1543,7 @@ project(':streams:test-utils') {
     compile project(':clients')
 
     testCompile project(':clients').sourceSets.test.output
-    testCompile libs.junitJupiterApi
-    testCompile libs.junitVintageEngine
+    testCompile libs.junitJupiter
     testCompile libs.easymock
     testCompile libs.hamcrest
 
@@ -1529,8 +1579,8 @@ project(':streams:examples') {
 
     testCompile project(':streams:test-utils')
     testCompile project(':clients').sourceSets.test.output // for org.apache.kafka.test.IntegrationTest
-    testCompile libs.junitJupiterApi
-    testCompile libs.junitVintageEngine
+    testCompile libs.junitJupiter
+    testCompile libs.hamcrest
   }
 
   javadoc {
@@ -1785,8 +1835,8 @@ project(':log4j-appender') {
     compile libs.slf4jlog4j
 
     testCompile project(':clients').sourceSets.test.output
-    testCompile libs.junitJupiterApi
-    testCompile libs.junitVintageEngine
+    testCompile libs.junitJupiter
+    testCompile libs.hamcrest
     testCompile libs.easymock
   }
 
@@ -1846,8 +1896,7 @@ project(':connect:transforms') {
     compile libs.slf4jApi
 
     testCompile libs.easymock
-    testCompile libs.junitJupiterApi
-    testCompile libs.junitVintageEngine
+    testCompile libs.junitJupiter
     testCompile libs.powermockJunit4
     testCompile libs.powermockEasymock
 
@@ -1887,8 +1936,7 @@ project(':connect:json') {
     compile libs.slf4jApi
 
     testCompile libs.easymock
-    testCompile libs.junitJupiterApi
-    testCompile libs.junitVintageEngine
+    testCompile libs.junitJupiter
     testCompile libs.powermockJunit4
     testCompile libs.powermockEasymock
 
@@ -2072,10 +2120,7 @@ project(':connect:basic-auth-extension') {
 
     testCompile libs.bcpkix
     testCompile libs.easymock
-    testCompile libs.junitJupiterApi
-    testCompile libs.junitVintageEngine
-    testCompile libs.powermockJunit4
-    testCompile libs.powermockEasymock
+    testCompile libs.junitJupiter
     testCompile project(':clients').sourceSets.test.output
 
     testRuntime libs.slf4jlog4j
@@ -2125,6 +2170,7 @@ project(':connect:mirror') {
 
     testRuntime project(':connect:runtime')
     testRuntime libs.slf4jlog4j
+    testRuntime libs.bcpkix
   }
 
   javadoc {
@@ -2156,8 +2202,7 @@ project(':connect:mirror-client') {
     compile project(':clients')
     compile libs.slf4jApi
 
-    testCompile libs.junitJupiterApi
-    testCompile libs.junitVintageEngine
+    testCompile libs.junitJupiter
     testCompile project(':clients').sourceSets.test.output
 
     testRuntime libs.slf4jlog4j
