@@ -192,7 +192,7 @@ public class MetadataCache {
                 null, Cluster.bootstrap(addresses));
     }
 
-    static MetadataCache empty() {
+    public static MetadataCache empty() {
         return new MetadataCache(null, Collections.emptyMap(), Collections.emptyList(),
                 Collections.emptySet(), Collections.emptySet(), Collections.emptySet(), null, Cluster.empty());
     }

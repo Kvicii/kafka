@@ -142,6 +142,7 @@ public class Metadata implements Closeable {
      * Request an update of the current cluster metadata info, return the current updateVersion before the update
      */
     public synchronized int requestUpdate() {
+        // 元数据拉取标志位
         this.needFullUpdate = true;
         return this.updateVersion;
     }
@@ -254,8 +255,9 @@ public class Metadata implements Closeable {
      */
     public synchronized void update(int requestVersion, MetadataResponse response, boolean isPartialUpdate, long nowMs) {
         Objects.requireNonNull(response, "Metadata response cannot be null");
-        if (isClosed())
+        if (isClosed()) {
             throw new IllegalStateException("Update requested after metadata close");
+        }
 
         this.needPartialUpdate = requestVersion < this.requestVersion;
         this.lastRefreshMs = nowMs;
@@ -319,11 +321,13 @@ public class Metadata implements Closeable {
         for (MetadataResponse.TopicMetadata metadata : metadataResponse.topicMetadata()) {
             topics.add(metadata.topic());
 
-            if (!retainTopic(metadata.topic(), metadata.isInternal(), nowMs))
+            if (!retainTopic(metadata.topic(), metadata.isInternal(), nowMs)) {
                 continue;
+            }
 
-            if (metadata.isInternal())
+            if (metadata.isInternal()) {
                 internalTopics.add(metadata.topic());
+            }
 
             if (metadata.error() == Errors.NONE) {
                 for (MetadataResponse.PartitionMetadata partitionMetadata : metadata.partitionMetadata()) {
@@ -344,21 +348,23 @@ public class Metadata implements Closeable {
                     requestUpdate();
                 }
 
-                if (metadata.error() == Errors.INVALID_TOPIC_EXCEPTION)
+                if (metadata.error() == Errors.INVALID_TOPIC_EXCEPTION) {
                     invalidTopics.add(metadata.topic());
-                else if (metadata.error() == Errors.TOPIC_AUTHORIZATION_FAILED)
+                } else if (metadata.error() == Errors.TOPIC_AUTHORIZATION_FAILED) {
                     unauthorizedTopics.add(metadata.topic());
+                }
             }
         }
 
         Map<Integer, Node> nodes = metadataResponse.brokersById();
-        if (isPartialUpdate)
+        if (isPartialUpdate) {
             return this.cache.mergeWith(metadataResponse.clusterId(), nodes, partitions,
-                unauthorizedTopics, invalidTopics, internalTopics, metadataResponse.controller(),
-                (topic, isInternal) -> !topics.contains(topic) && retainTopic(topic, isInternal, nowMs));
-        else
+                    unauthorizedTopics, invalidTopics, internalTopics, metadataResponse.controller(),
+                    (topic, isInternal) -> !topics.contains(topic) && retainTopic(topic, isInternal, nowMs));
+        } else {
             return new MetadataCache(metadataResponse.clusterId(), nodes, partitions,
-                unauthorizedTopics, invalidTopics, internalTopics, metadataResponse.controller());
+                    unauthorizedTopics, invalidTopics, internalTopics, metadataResponse.controller());
+        }
     }
 
     /**
@@ -366,8 +372,7 @@ public class Metadata implements Closeable {
      * available and reliable).
      */
     private Optional<MetadataResponse.PartitionMetadata> updateLatestMetadata(
-            MetadataResponse.PartitionMetadata partitionMetadata,
-            boolean hasReliableLeaderEpoch) {
+            MetadataResponse.PartitionMetadata partitionMetadata, boolean hasReliableLeaderEpoch) {
         TopicPartition tp = partitionMetadata.topicPartition;
         if (hasReliableLeaderEpoch && partitionMetadata.leaderEpoch.isPresent()) {
             int newEpoch = partitionMetadata.leaderEpoch.get();

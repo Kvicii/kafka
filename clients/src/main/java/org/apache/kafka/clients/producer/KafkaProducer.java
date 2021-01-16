@@ -442,6 +442,7 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
             this.sender = newSender(logContext, kafkaClient, this.metadata);
             String ioThreadName = NETWORK_THREAD_PREFIX + " | " + clientId;
             // 实际的sender线程 即KafkaThread 线程名字 kafka-producer-network-thread | clientId
+            // NetworkClient包装在Sender中 Sender包装在KafkaThread中
             this.ioThread = new KafkaThread(ioThreadName, this.sender, true);
             // 启动线程
             this.ioThread.start();
@@ -935,6 +936,7 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
             ClusterAndWaitTime clusterAndWaitTime;
             try {
                 // 调用同步阻塞方法 获取Topic元数据信息并进行缓存 下次再发送时就不需要再次拉取了(lazy init思想)
+                // maxBlockTimeMs决定了在一些异常的情况下 最多被阻塞多长时间
                 clusterAndWaitTime = waitOnMetadata(record.topic(), record.partition(), nowMs, maxBlockTimeMs);
             } catch (KafkaException e) {
                 if (metadata.isClosed()) {
@@ -1051,6 +1053,7 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
      * @param partition A specific partition expected to exist in metadata, or null if there's no preference
      * @param nowMs The current time in ms
      * @param maxWaitMs The maximum time in ms for waiting on the metadata
+	 *                  决定了调用该方法时会阻塞多长时间 也就是send时阻塞的时间
      * @return The cluster containing topic metadata and the amount of time we waited in ms
      * @throws TimeoutException if metadata could not be refreshed within {@code max.block.ms}
      * @throws KafkaException for all Kafka-related exceptions, including the case where this method is called after producer close
@@ -1065,11 +1068,11 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
 
         metadata.add(topic, nowMs);
 
-        Integer partitionsCount = cluster.partitionCountForTopic(topic);
+        Integer partitionsCount = cluster.partitionCountForTopic(topic);    // Topic对应的分区数量
         // Return cached metadata if we have it, and if the record's partition is either undefined
         // or within the known partition range
-        if (partitionsCount != null && (partition == null || partition < partitionsCount)) {
-            return new ClusterAndWaitTime(cluster, 0);
+        if (partitionsCount != null && (partition == null || partition < partitionsCount)) { // 如果已经缓存过相应的Topic信息 直接返回
+            return new ClusterAndWaitTime(cluster, 0);  // 返回分区信息(阻塞时长为0) 无需阻塞
         }
 
         long remainingWaitMs = maxWaitMs;
@@ -1084,18 +1087,18 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
                 log.trace("Requesting metadata update for topic {}.", topic);
             }
             metadata.add(topic, nowMs + elapsed);
-            int version = metadata.requestUpdateForTopic(topic);
-            sender.wakeup();
+            // 更新元数据拉取标志位
+            int version = metadata.requestUpdateForTopic(topic);    // 集群元数据的版本号
+            sender.wakeup();    // 唤醒sender线程 拉取集群元数据
             try {
-                metadata.awaitUpdate(version, remainingWaitMs);
+                metadata.awaitUpdate(version, remainingWaitMs); // 获取元数据 阻塞等待最多60s
             } catch (TimeoutException ex) {
                 // Rethrow with original maxWaitMs to prevent logging exception with remainingWaitMs
                 throw new TimeoutException(
-                        String.format("Topic %s not present in metadata after %d ms.",
-                                topic, maxWaitMs));
+                        String.format("Topic %s not present in metadata after %d ms.", topic, maxWaitMs));
             }
             cluster = metadata.fetch();
-            elapsed = time.milliseconds() - nowMs;
+            elapsed = time.milliseconds() - nowMs;  // 拉取元数据耗费的时间
             if (elapsed >= maxWaitMs) {
                 throw new TimeoutException(partitionsCount == null ?
                         String.format("Topic %s not present in metadata after %d ms.",
@@ -1108,7 +1111,7 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
             partitionsCount = cluster.partitionCountForTopic(topic);
         } while (partitionsCount == null || (partition != null && partition >= partitionsCount));
 
-        return new ClusterAndWaitTime(cluster, elapsed);
+        return new ClusterAndWaitTime(cluster, elapsed);    // 返回拉取元数据花费的时长
     }
 
     /**

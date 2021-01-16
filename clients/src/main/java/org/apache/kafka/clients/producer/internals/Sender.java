@@ -120,6 +120,24 @@ public class Sender implements Runnable {
 	// A per-partition queue of batches ordered by creation time for tracking the in-flight batches
 	private final Map<TopicPartition, List<ProducerBatch>> inFlightBatches;
 
+	/**
+	 * 构造函数
+	 *
+	 * @param logContext
+	 * @param client
+	 * @param metadata              Producer元数据管理器
+	 * @param accumulator           缓冲区累加器
+	 * @param guaranteeMessageOrder 是否确保消息顺序
+	 * @param maxRequestSize        请求最大的值
+	 * @param acks
+	 * @param retries               最多重试次数
+	 * @param metricsRegistry
+	 * @param time                  当前时间
+	 * @param requestTimeoutMs      请求超时时间
+	 * @param retryBackoffMs
+	 * @param transactionManager
+	 * @param apiVersions
+	 */
 	public Sender(LogContext logContext,
 				  KafkaClient client,
 				  ProducerMetadata metadata,
@@ -324,6 +342,7 @@ public class Sender implements Runnable {
 
 		long currentTimeMs = time.milliseconds();
 		long pollTimeout = sendProducerData(currentTimeMs);
+		// 更新Producer元数据
 		client.poll(pollTimeout, currentTimeMs);
 	}
 

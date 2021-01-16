@@ -112,6 +112,9 @@ public class ProducerMetadata extends Metadata {
 
     /**
      * Wait for metadata update until the current version is larger than the last version we know of
+	 *
+     * 如果拉取成功 会元数据版本号一定会累加 只要判断版本号有无累加即可确定元数据是否拉取成功了
+     * 更新Topic元数据 直到超过上一个版本号
      */
     public synchronized void awaitUpdate(final int lastVersion, final long timeoutMs) throws InterruptedException {
         long currentTimeMs = time.milliseconds();
@@ -122,12 +125,14 @@ public class ProducerMetadata extends Metadata {
             return updateVersion() > lastVersion || isClosed();
         }, deadlineMs);
 
-        if (isClosed())
+        if (isClosed()) {
             throw new KafkaException("Requested metadata update after close");
+        }
     }
 
     @Override
     public synchronized void update(int requestVersion, MetadataResponse response, boolean isPartialUpdate, long nowMs) {
+        // 调用父类进行元数据的更新
         super.update(requestVersion, response, isPartialUpdate, nowMs);
 
         // Remove all topics in the response that are in the new topic set. Note that if an error was encountered for a
@@ -137,7 +142,7 @@ public class ProducerMetadata extends Metadata {
                 newTopics.remove(metadata.topic());
             }
         }
-
+        // 调用父类Metadata更新所有的元数据之后 唤醒主线程
         notifyAll();
     }
 

@@ -30,6 +30,8 @@ import java.util.Optional;
 /**
  * The interface used by `NetworkClient` to request cluster metadata info to be updated and to retrieve the cluster nodes
  * from such metadata. This is an internal class.
+ *
+ * 核心组件 用于更新元数据
  * <p>
  * This class is not thread-safe!
  */

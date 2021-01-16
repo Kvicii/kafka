@@ -45,16 +45,16 @@ public class SystemTime implements Time {
     public void waitObject(Object obj, Supplier<Boolean> condition, long deadlineMs) throws InterruptedException {
         synchronized (obj) {
             while (true) {
-                if (condition.get())
+                if (condition.get()) {
                     return;
+                }
 
-                long currentTimeMs = milliseconds();
-                if (currentTimeMs >= deadlineMs)
+                long currentTimeMs = milliseconds();    // 当前时间
+                if (currentTimeMs >= deadlineMs) { // 当前时间 >= 计算好的时间(+60s之后的结果) 抛出异常
                     throw new TimeoutException("Condition not satisfied before deadline");
-
-                obj.wait(deadlineMs - currentTimeMs);
+                }
+                obj.wait(deadlineMs - currentTimeMs); // 继续等待
             }
         }
     }
-
 }
