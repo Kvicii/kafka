@@ -101,9 +101,10 @@ public final class ProducerBatch {
      * @return The RecordSend corresponding to this record or null if there isn't sufficient room.
      */
     public FutureRecordMetadata tryAppend(long timestamp, byte[] key, byte[] value, Header[] headers, Callback callback, long now) {
-        if (!recordsBuilder.hasRoomFor(timestamp, key, value, headers)) {
+        if (!recordsBuilder.hasRoomFor(timestamp, key, value, headers)) { // ByteBuffer中没有空间写入(以写满)直接返回
             return null;
         } else {
+            // 将消息按照二进制协议的规范写入ByteBuffer
             Long checksum = this.recordsBuilder.append(timestamp, key, value, headers);
             this.maxRecordSize = Math.max(this.maxRecordSize, AbstractRecords.estimateSizeInBytesUpperBound(magic(),
                     recordsBuilder.compressionType(), key, value, headers));

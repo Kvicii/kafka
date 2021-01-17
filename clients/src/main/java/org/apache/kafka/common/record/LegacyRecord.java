@@ -425,6 +425,7 @@ public final class LegacyRecord {
                              TimestampType timestampType) throws IOException {
         byte attributes = computeAttributes(magic, compressionType, timestampType);
         long crc = computeChecksum(magic, attributes, timestamp, key, value);
+        // 实际写入
         write(out, magic, crc, attributes, timestamp, key, value);
         return crc;
     }
@@ -451,11 +452,13 @@ public final class LegacyRecord {
                               long timestamp,
                               ByteBuffer key,
                               ByteBuffer value) throws IOException {
-        if (magic != RecordBatch.MAGIC_VALUE_V0 && magic != RecordBatch.MAGIC_VALUE_V1)
+        if (magic != RecordBatch.MAGIC_VALUE_V0 && magic != RecordBatch.MAGIC_VALUE_V1) {
             throw new IllegalArgumentException("Invalid magic value " + magic);
-        if (timestamp < 0 && timestamp != RecordBatch.NO_TIMESTAMP)
+        }
+        if (timestamp < 0 && timestamp != RecordBatch.NO_TIMESTAMP) {
             throw new IllegalArgumentException("Invalid message timestamp " + timestamp);
-
+        }
+        // 写入crc -> 写magic -> 写attributes -> 写timestamp -> 写key -> 写value
         // write crc
         out.writeInt((int) (crc & 0xffffffffL));
         // write magic value
@@ -464,8 +467,9 @@ public final class LegacyRecord {
         out.writeByte(attributes);
 
         // maybe write timestamp
-        if (magic > RecordBatch.MAGIC_VALUE_V0)
+        if (magic > RecordBatch.MAGIC_VALUE_V0) {
             out.writeLong(timestamp);
+        }
 
         // write the key
         if (key == null) {
@@ -496,14 +500,17 @@ public final class LegacyRecord {
     // visible only for testing
     public static byte computeAttributes(byte magic, CompressionType type, TimestampType timestampType) {
         byte attributes = 0;
-        if (type.id > 0)
+        if (type.id > 0) {
             attributes |= COMPRESSION_CODEC_MASK & type.id;
+        }
         if (magic > RecordBatch.MAGIC_VALUE_V0) {
-            if (timestampType == TimestampType.NO_TIMESTAMP_TYPE)
+            if (timestampType == TimestampType.NO_TIMESTAMP_TYPE) {
                 throw new IllegalArgumentException("Timestamp type must be provided to compute attributes for " +
                         "message format v1");
-            if (timestampType == TimestampType.LOG_APPEND_TIME)
+            }
+            if (timestampType == TimestampType.LOG_APPEND_TIME) {
                 attributes |= TIMESTAMP_TYPE_MASK;
+            }
         }
         return attributes;
     }
@@ -520,8 +527,9 @@ public final class LegacyRecord {
         Crc32 crc = new Crc32();
         crc.update(magic);
         crc.update(attributes);
-        if (magic > RecordBatch.MAGIC_VALUE_V0)
+        if (magic > RecordBatch.MAGIC_VALUE_V0) {
             Checksums.updateLong(crc, timestamp);
+        }
         // update for the key
         if (key == null) {
             Checksums.updateInt(crc, -1);
@@ -542,10 +550,11 @@ public final class LegacyRecord {
     }
 
     static int recordOverhead(byte magic) {
-        if (magic == 0)
+        if (magic == 0) {
             return RECORD_OVERHEAD_V0;
-        else if (magic == 1)
+        } else if (magic == 1) {
             return RECORD_OVERHEAD_V1;
+        }
         throw new IllegalArgumentException("Invalid magic used in LegacyRecord: " + magic);
     }
 

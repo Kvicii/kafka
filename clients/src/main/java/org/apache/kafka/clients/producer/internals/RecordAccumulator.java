@@ -77,6 +77,11 @@ public final class RecordAccumulator {
     private final BufferPool free;
     private final Time time;
     private final ApiVersions apiVersions;
+    /**
+     * CopyOnWriteMap实现的Map 意味着读多写少:
+     * 对于每个分区 创建一个Deque 写Map的次数是很少的 受限于分区数量 大量的操作都集中读取
+     * 对于高并发的写入 实际是写入了内部的Deque 实际上已经和CopyOnWriteMap没有关系了
+     */
     private final ConcurrentMap<TopicPartition, Deque<ProducerBatch>> batches;
     private final IncompleteBatches incomplete;
     // The following variables are only accessed by the sender thread, so we don't need to protect them.
@@ -188,20 +193,27 @@ public final class RecordAccumulator {
                                      long nowMs) throws InterruptedException {
         // We keep track of the number of appending thread to make sure we do not miss batches in
         // abortIncompleteBatches().
+        // 累加线程计数 即有多少个线程尝试把消息写入到内存缓冲
         appendsInProgress.incrementAndGet();
         ByteBuffer buffer = null;
-        if (headers == null) headers = Record.EMPTY_HEADERS;
+        if (headers == null) {
+            headers = Record.EMPTY_HEADERS;
+        }
         try {
             // check if we have an in-progress batch
+            // 获取分区对应的Deque 其中Deque是一个队列 内部存放了许多个batch(即该分区对应的多个batch)
             Deque<ProducerBatch> dq = getOrCreateDeque(tp);
             synchronized (dq) {
-                if (closed)
+                if (closed) {
                     throw new KafkaException("Producer closed while send in progress");
+                }
+                // 尝试将数据放入到Deque 如果此时没有创建batch会放入失败
                 RecordAppendResult appendResult = tryAppend(timestamp, key, value, headers, callback, dq, nowMs);
-                if (appendResult != null)
+                if (appendResult != null) { // 消息放入batch成功 直接返回
                     return appendResult;
+                }
             }
-
+            // 没有放入成功 说明batch是不存在的 需要先分配一块内存再进行放入
             // we don't have an in-progress record batch try to allocate a new batch
             if (abortOnNewBatch) {
                 // Return a result that will cause another call to append.
@@ -209,29 +221,43 @@ public final class RecordAccumulator {
             }
 
             byte maxUsableMagic = apiVersions.maxUsableProduceMagic();
+            // batchSize 默认16KB 取当前消息和batchSize二者中的最大的那个
+            // 对于batchSize的调优是有必要的 如果每个batch只有一条消息 batch打包的作用就没有了
+            // 如果消息是默认的batchSize大小 再使用完之后会清空并加入到BufferPool的Deque中进行复用 如果是不规则的消息大小(如53KB) 使用完之后会等待GC线程进行回收
             int size = Math.max(this.batchSize, AbstractRecords.estimateSizeInBytesUpperBound(maxUsableMagic, compression, key, value, headers));
             log.trace("Allocating a new {} byte message buffer for topic {} partition {} with remaining timeout {}ms", size, tp.topic(), tp.partition(), maxTimeToBlock);
+            // 使用BufferPool给batch分配一块内存
+            // 称之为Pool 意味着内存可以复用
+            // 在分配给batch一块内存使用完之后(规格化的大小16KB才能进行复用) 下次可以给其他batch进行复用 避免频繁的创建内存块 丢弃对象 垃圾回收
+			// 有可能是多线程进行分配 所以下面使用了Double Check
             buffer = free.allocate(size, maxTimeToBlock);
 
             // Update the current time in case the buffer allocation blocked above.
             nowMs = time.milliseconds();
+            // 线程1 | 2 | 3 同时分配了内存块 只有一个线程执行到放入Deque逻辑 将消息写入到分配好的ByteBuffer构造出来的batch 之后放入Deque
+            // 其他线程只能执行到Double Check逻辑 使用tryAppend将消息放入到Deque中最后一个batch中 其他线程分配出来的ByteBuffer将在finally块中进行释放 加入到BufferPool的Deque中进行复用
             synchronized (dq) {
                 // Need to check if producer is closed again after grabbing the dequeue lock.
-                if (closed)
+                if (closed) {
                     throw new KafkaException("Producer closed while send in progress");
-
+                }
+                // Double Check
+                // 再次尝试将数据放入到Deque
+                // 如果batch被写满 会返回null 此时重新执行放入Deque逻辑 尝试分配内存块
                 RecordAppendResult appendResult = tryAppend(timestamp, key, value, headers, callback, dq, nowMs);
                 if (appendResult != null) {
                     // Somebody else found us a batch, return the one we waited for! Hopefully this doesn't happen often...
                     return appendResult;
                 }
-
+                // ------------------------放入Deque逻辑------------------------
                 MemoryRecordsBuilder recordsBuilder = recordsBuilder(buffer, maxUsableMagic);
                 ProducerBatch batch = new ProducerBatch(tp, recordsBuilder, nowMs);
+                // 由于执行到此处肯定是初次进行分配 所以future不为null 不需要进行处理
                 FutureRecordMetadata future = Objects.requireNonNull(batch.tryAppend(timestamp, key, value, headers,
                         callback, nowMs));
-
+                // 将batch放入到内存队列Deque
                 dq.addLast(batch);
+                // 将batch放入到未完成列表(没有发送出去的batch)
                 incomplete.add(batch);
 
                 // Don't deallocate this buffer in the finally block as it's being used in the record batch
@@ -239,8 +265,11 @@ public final class RecordAccumulator {
                 return new RecordAppendResult(future, dq.size() > 1 || batch.isFull(), true, false);
             }
         } finally {
-            if (buffer != null)
+            if (buffer != null) {
+                // ByteBuffer的释放
                 free.deallocate(buffer);
+            }
+            // 递减线程计数
             appendsInProgress.decrementAndGet();
         }
     }
@@ -265,12 +294,15 @@ public final class RecordAccumulator {
                                          Callback callback, Deque<ProducerBatch> deque, long nowMs) {
         ProducerBatch last = deque.peekLast();
         if (last != null) {
+            // 从队列中取出最近一个batch 如果存在 将消息添加到该batch中(内部基于二进制的协议规范以IO流的方式写入batch底层的ByteBuffer中)
             FutureRecordMetadata future = last.tryAppend(timestamp, key, value, headers, callback, nowMs);
-            if (future == null)
-                last.closeForRecordAppends();
-            else
+            if (future == null) {   // 追加写入有可能导致ByteBuffer写满 从而使tryAppend返回null(说明写满)
+                last.closeForRecordAppends();   // 关掉batch底层的ByteBuffer的IO流
+            } else {
                 return new RecordAppendResult(future, deque.size() > 1 || last.isFull(), false, false);
+            }
         }
+        // batch不存在 || batch写满 返回null
         return null;
     }
 
@@ -647,14 +679,16 @@ public final class RecordAccumulator {
      */
     private Deque<ProducerBatch> getOrCreateDeque(TopicPartition tp) {
         Deque<ProducerBatch> d = this.batches.get(tp);
-        if (d != null)
+        if (d != null) {
             return d;
+        }
         d = new ArrayDeque<>();
         Deque<ProducerBatch> previous = this.batches.putIfAbsent(tp, d);
-        if (previous == null)
+        if (previous == null) {
             return d;
-        else
+        } else {
             return previous;
+        }
     }
 
     /**

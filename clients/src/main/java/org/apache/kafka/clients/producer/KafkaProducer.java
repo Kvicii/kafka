@@ -231,6 +231,7 @@ import java.util.concurrent.atomic.AtomicReference;
  * certain client features.  For instance, the transactional APIs need broker versions 0.11.0 or later. You will receive an
  * <code>UnsupportedVersionException</code> when invoking an API that is not available in the running broker version.
  * </p>
+ * 多线程并发安全
  */
 public class KafkaProducer<K, V> implements Producer<K, V> {
 
@@ -945,6 +946,7 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
                 throw e;
             }
             nowMs += clusterAndWaitTime.waitedOnMetadataMs;
+            // 消息send最多可以阻塞的时间
             long remainingWaitMs = Math.max(0, maxBlockTimeMs - clusterAndWaitTime.waitedOnMetadataMs);
             Cluster cluster = clusterAndWaitTime.cluster;
             // 将key序列化为字节数组
@@ -972,9 +974,10 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
             setReadOnly(record.headers());
             Header[] headers = record.headers().toArray();
 
+            // 获取要发送的消息大小
             int serializedSize = AbstractRecords.estimateSizeInBytesUpperBound(apiVersions.maxUsableProduceMagic(),
                     compressionType, serializedKey, serializedValue, headers);
-            // 检查发送的消息是否超过了请求最大大小以及内存缓冲大小
+            // 检查发送的消息是否超过了请求最大大小(1MB)以及内存缓冲大小(32MB)
             ensureValidRecordSize(serializedSize);
             long timestamp = record.timestamp() == null ? nowMs : record.timestamp();
             if (log.isTraceEnabled()) {
@@ -1326,6 +1329,7 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
         Integer partition = record.partition();
         return partition != null ?
                 partition :
+                // 默认使用DefaultPartitioner分区器组件
                 partitioner.partition(
                         record.topic(), record.key(), serializedKey, record.value(), serializedValue, cluster);
     }

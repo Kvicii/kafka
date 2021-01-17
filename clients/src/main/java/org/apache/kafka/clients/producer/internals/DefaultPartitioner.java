@@ -76,7 +76,8 @@ public class DefaultPartitioner implements Partitioner {
             return stickyPartitionCache.partition(topic, cluster);
         }
         // hash the keyBytes to choose a partition
-        return Utils.toPositive(Utils.murmur2(keyBytes)) % numPartitions;   // 提供了key key的散列值对分区数量取模选择分区
+        // murmur的作用是将一个字节数组转化为一个int类型的hash值
+        return Utils.toPositive(Utils.murmur2(keyBytes)) % numPartitions;   // 提供了key key的散列值对分区数量取模选择分区 相当于将同一个key对应的消息都分发到同一个partition
     }
 
     public void close() {

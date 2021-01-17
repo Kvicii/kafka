@@ -68,12 +68,12 @@ public class BufferPool {
      * @param metricGrpName logical group name for metrics
      */
     public BufferPool(long memory, int poolableSize, Metrics metrics, Time time, String metricGrpName) {
-        this.poolableSize = poolableSize;
+        this.poolableSize = poolableSize;   // 每一块内存空间的大小 默认16KB
         this.lock = new ReentrantLock();
-        this.free = new ArrayDeque<>();
+        this.free = new ArrayDeque<>(); // Deque
         this.waiters = new ArrayDeque<>();
-        this.totalMemory = memory;
-        this.nonPooledAvailableMemory = memory;
+        this.totalMemory = memory;  // 总缓冲大小 默认32MB
+        this.nonPooledAvailableMemory = memory; // 当前可用的内存空间
         this.metrics = metrics;
         this.time = time;
         this.waitTime = this.metrics.sensor(WAIT_TIME_SENSOR_NAME);
@@ -105,13 +105,15 @@ public class BufferPool {
      *         forever)
      */
     public ByteBuffer allocate(int size, long maxTimeToBlockMs) throws InterruptedException {
-        if (size > this.totalMemory)
+        if (size > this.totalMemory) {
             throw new IllegalArgumentException("Attempt to allocate " + size
-                                               + " bytes, but there is a hard limit of "
-                                               + this.totalMemory
-                                               + " on memory allocations.");
+                    + " bytes, but there is a hard limit of "
+                    + this.totalMemory
+                    + " on memory allocations.");
+        }
 
         ByteBuffer buffer = null;
+        // 使用ReentrantLock灵活加锁
         this.lock.lock();
 
         if (this.closed) {
@@ -121,18 +123,25 @@ public class BufferPool {
 
         try {
             // check if we have a free buffer of the right size pooled
-            if (size == poolableSize && !this.free.isEmpty())
-                return this.free.pollFirst();
+            // BufferPool中也有一个Deque的free字段 内部缓存了一些ByteBuffer以供复用
+            if (size == poolableSize && !this.free.isEmpty()) { // 可复用前提 如果满足直接返回
+                return this.free.pollFirst();   // 从Deque中取出第一个ByteBuffer直接返回
+            }
 
             // now check if the request is immediately satisfiable with the
             // memory on hand or if we need to block
+            // Deque中ByteBuffer的数量 * 每个ByteBuffer大小 = 已缓存的内存空间大小
             int freeListSize = freeSize() * this.poolableSize;
-            if (this.nonPooledAvailableMemory + freeListSize >= size) {
+            // nonPooledAvailableMemory = 剩余还可以使用的内存空间大小
+            // nonPooledAvailableMemory = 32MB(默认) - Deque<ByteBuffer> - batch总大小
+            // 当前可用的内存应该是 = nonPooledAvailableMemory + Deque<ByteBuffer> = 32MB(默认) - batch总大小
+            if (this.nonPooledAvailableMemory + freeListSize >= size) { // 可用空间 >= 消息写入的大小
                 // we have enough unallocated or pooled memory to immediately
                 // satisfy the request, but need to allocate the buffer
                 freeUp(size);
+                // 剩余可用内存中扣除掉分配的内存 将size作为分配大小在方法最后进行返回
                 this.nonPooledAvailableMemory -= size;
-            } else {
+            } else {    // 内存耗尽
                 // we are out of memory and will have to block
                 int accumulated = 0;
                 Condition moreMemory = this.lock.newCondition();
@@ -141,11 +150,11 @@ public class BufferPool {
                     this.waiters.addLast(moreMemory);
                     // loop over and over until we have a buffer or have reserved
                     // enough memory to allocate one
-                    while (accumulated < size) {
+                    while (accumulated < size) {    // 循环累加 直到达到足够的消息大小
                         long startWaitNs = time.nanoseconds();
                         long timeNs;
                         boolean waitingTimeElapsed;
-                        try {
+                        try {   // 最多只能阻塞remainingTimeToBlockNs时间
                             waitingTimeElapsed = !moreMemory.await(remainingTimeToBlockNs, TimeUnit.NANOSECONDS);
                         } finally {
                             long endWaitNs = time.nanoseconds();
@@ -153,10 +162,11 @@ public class BufferPool {
                             recordWaitTime(timeNs);
                         }
 
-                        if (this.closed)
+                        if (this.closed) {
                             throw new KafkaException("Producer closed while allocating memory");
+                        }
 
-                        if (waitingTimeElapsed) {
+                        if (waitingTimeElapsed) {   // 在超过了超时时间之后仍未能申请到足够的内存 抛出异常
                             this.metrics.sensor("buffer-exhausted-records").record();
                             throw new BufferExhaustedException("Failed to allocate memory within the configured max blocking time " + maxTimeToBlockMs + " ms.");
                         }
@@ -165,11 +175,11 @@ public class BufferPool {
 
                         // check if we can satisfy this request from the free list,
                         // otherwise allocate memory
-                        if (accumulated == 0 && size == this.poolableSize && !this.free.isEmpty()) {
+                        if (accumulated == 0 && size == this.poolableSize && !this.free.isEmpty()) {    // 如果能从BufferPool中获取 直接从BufferPool获取一个ByteBuffer
                             // just grab a buffer from the free list
                             buffer = this.free.pollFirst();
                             accumulated = size;
-                        } else {
+                        } else {    // 累加accumulated
                             // we'll need to allocate memory, but we may only get
                             // part of what we need on this iteration
                             freeUp(size - accumulated);
@@ -190,18 +200,20 @@ public class BufferPool {
             // signal any additional waiters if there is more memory left
             // over for them
             try {
-                if (!(this.nonPooledAvailableMemory == 0 && this.free.isEmpty()) && !this.waiters.isEmpty())
+                if (!(this.nonPooledAvailableMemory == 0 && this.free.isEmpty()) && !this.waiters.isEmpty()) {
                     this.waiters.peekFirst().signal();
+                }
             } finally {
                 // Another finally... otherwise find bugs complains
                 lock.unlock();
             }
         }
 
-        if (buffer == null)
+        if (buffer == null) {
             return safeAllocateByteBuffer(size);
-        else
+        } else {
             return buffer;
+        }
     }
 
     // Protected for testing
@@ -243,8 +255,9 @@ public class BufferPool {
      * buffers (if needed)
      */
     private void freeUp(int size) {
-        while (!this.free.isEmpty() && this.nonPooledAvailableMemory < size)
+        while (!this.free.isEmpty() && this.nonPooledAvailableMemory < size) {
             this.nonPooledAvailableMemory += this.free.pollLast().capacity();
+        }
     }
 
     /**
@@ -258,15 +271,16 @@ public class BufferPool {
     public void deallocate(ByteBuffer buffer, int size) {
         lock.lock();
         try {
-            if (size == this.poolableSize && size == buffer.capacity()) {
-                buffer.clear();
-                this.free.add(buffer);
-            } else {
-                this.nonPooledAvailableMemory += size;
+            if (size == this.poolableSize && size == buffer.capacity()) {   // 如果是规格化的内存块 16KB
+                buffer.clear(); // 清空ByteBuffer
+                this.free.add(buffer);  // 加入到Deque供其他线程进行复用
+            } else {    // 如果是消息随机大小的内存块 不做处理 等待垃圾回收线程GC
+                this.nonPooledAvailableMemory += size;  // 增加可用内存
             }
             Condition moreMem = this.waiters.peekFirst();
-            if (moreMem != null)
+            if (moreMem != null) {
                 moreMem.signal();
+            }
         } finally {
             lock.unlock();
         }

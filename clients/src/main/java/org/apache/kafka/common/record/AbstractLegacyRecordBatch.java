@@ -270,6 +270,7 @@ public abstract class AbstractLegacyRecordBatch extends AbstractRecordBatch impl
     }
 
     static void writeHeader(DataOutputStream out, long offset, int size) throws IOException {
+    	// 写入offset和size
         out.writeLong(offset);
         out.writeInt(size);
     }

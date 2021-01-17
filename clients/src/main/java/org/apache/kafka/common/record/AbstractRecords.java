@@ -155,6 +155,4 @@ public abstract class AbstractRecords implements Records {
             return 0;
         }
     }
-
-
 }

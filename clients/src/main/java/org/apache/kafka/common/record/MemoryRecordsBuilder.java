@@ -55,6 +55,7 @@ public class MemoryRecordsBuilder implements AutoCloseable {
     // Used to hold a reference to the underlying ByteBuffer so that we can write the record batch header and access
     // the written bytes. ByteBufferOutputStream allocates a new ByteBuffer if the existing one is not large enough,
     // so it's not safe to hold a direct reference to the underlying ByteBuffer.
+    // 内部报过了ByteBuffer 进行实际的写入操作
     private final ByteBufferOutputStream bufferStream;
     private final byte magic;
     private final int initialPosition;
@@ -70,6 +71,7 @@ public class MemoryRecordsBuilder implements AutoCloseable {
     private float estimatedCompressionRatio = 1.0F;
 
     // Used to append records, may compress data on the fly
+	// 写入操作的Stream 内部包裹了ByteBufferOutputStream
     private DataOutputStream appendStream;
     private boolean isTransactional;
     private long producerId;
@@ -99,15 +101,19 @@ public class MemoryRecordsBuilder implements AutoCloseable {
                                 boolean isControlBatch,
                                 int partitionLeaderEpoch,
                                 int writeLimit) {
-        if (magic > RecordBatch.MAGIC_VALUE_V0 && timestampType == TimestampType.NO_TIMESTAMP_TYPE)
+        if (magic > RecordBatch.MAGIC_VALUE_V0 && timestampType == TimestampType.NO_TIMESTAMP_TYPE) {
             throw new IllegalArgumentException("TimestampType must be set for magic >= 0");
+        }
         if (magic < RecordBatch.MAGIC_VALUE_V2) {
-            if (isTransactional)
+            if (isTransactional) {
                 throw new IllegalArgumentException("Transactional records are not supported for magic " + magic);
-            if (isControlBatch)
+            }
+            if (isControlBatch) {
                 throw new IllegalArgumentException("Control records are not supported for magic " + magic);
-            if (compressionType == CompressionType.ZSTD)
+            }
+            if (compressionType == CompressionType.ZSTD) {
                 throw new IllegalArgumentException("ZStandard compression is not supported for magic " + magic);
+            }
         }
 
         this.magic = magic;
@@ -131,6 +137,7 @@ public class MemoryRecordsBuilder implements AutoCloseable {
 
         bufferStream.position(initialPosition + batchHeaderSizeInBytes);
         this.bufferStream = bufferStream;
+        // 根据不同的压缩算法选择将ByteBufferOutputStream包裹在不同的压缩流中
         this.appendStream = new DataOutputStream(compressionType.wrapForOutput(this.bufferStream, magic));
     }
 
@@ -402,26 +409,31 @@ public class MemoryRecordsBuilder implements AutoCloseable {
     private Long appendWithOffset(long offset, boolean isControlRecord, long timestamp, ByteBuffer key,
                                   ByteBuffer value, Header[] headers) {
         try {
-            if (isControlRecord != isControlBatch)
+            if (isControlRecord != isControlBatch) {
                 throw new IllegalArgumentException("Control records can only be appended to control batches");
+            }
 
-            if (lastOffset != null && offset <= lastOffset)
+            if (lastOffset != null && offset <= lastOffset) {
                 throw new IllegalArgumentException(String.format("Illegal offset %s following previous offset %s " +
                         "(Offsets must increase monotonically).", offset, lastOffset));
+            }
 
-            if (timestamp < 0 && timestamp != RecordBatch.NO_TIMESTAMP)
+            if (timestamp < 0 && timestamp != RecordBatch.NO_TIMESTAMP) {
                 throw new IllegalArgumentException("Invalid negative timestamp " + timestamp);
+            }
 
-            if (magic < RecordBatch.MAGIC_VALUE_V2 && headers != null && headers.length > 0)
+            if (magic < RecordBatch.MAGIC_VALUE_V2 && headers != null && headers.length > 0) {
                 throw new IllegalArgumentException("Magic v" + magic + " does not support record headers");
+            }
 
-            if (firstTimestamp == null)
+            if (firstTimestamp == null) {
                 firstTimestamp = timestamp;
+            }
 
             if (magic > RecordBatch.MAGIC_VALUE_V1) {
                 appendDefaultRecord(offset, timestamp, key, value, headers);
                 return null;
-            } else {
+            } else {    // 低版本Kafka写入消息逻辑
                 return appendLegacyRecord(offset, timestamp, key, value, magic);
             }
         } catch (IOException e) {
@@ -702,14 +714,18 @@ public class MemoryRecordsBuilder implements AutoCloseable {
 
     private long appendLegacyRecord(long offset, long timestamp, ByteBuffer key, ByteBuffer value, byte magic) throws IOException {
         ensureOpenForRecordAppend();
-        if (compressionType == CompressionType.NONE && timestampType == TimestampType.LOG_APPEND_TIME)
+        if (compressionType == CompressionType.NONE && timestampType == TimestampType.LOG_APPEND_TIME) {
             timestamp = logAppendTime;
+        }
 
         int size = LegacyRecord.recordSize(magic, key, value);
+        // 1. 写入Header(offset和size)
         AbstractLegacyRecordBatch.writeHeader(appendStream, toInnerOffset(offset), size);
 
-        if (timestampType == TimestampType.LOG_APPEND_TIME)
+        if (timestampType == TimestampType.LOG_APPEND_TIME) {
             timestamp = logAppendTime;
+        }
+        // 2. 写入其他value
         long crc = LegacyRecord.write(appendStream, magic, timestamp, key, value, CompressionType.NONE, timestampType);
         recordWritten(offset, timestamp, size + Records.LOG_OVERHEAD);
         return crc;
@@ -717,17 +733,20 @@ public class MemoryRecordsBuilder implements AutoCloseable {
 
     private long toInnerOffset(long offset) {
         // use relative offsets for compressed messages with magic v1
-        if (magic > 0 && compressionType != CompressionType.NONE)
+        if (magic > 0 && compressionType != CompressionType.NONE) {
             return offset - baseOffset;
+        }
         return offset;
     }
 
     private void recordWritten(long offset, long timestamp, int size) {
-        if (numRecords == Integer.MAX_VALUE)
+        if (numRecords == Integer.MAX_VALUE) {
             throw new IllegalArgumentException("Maximum number of records per batch exceeded, max records: " + Integer.MAX_VALUE);
-        if (offset - baseOffset > Integer.MAX_VALUE)
+        }
+        if (offset - baseOffset > Integer.MAX_VALUE) {
             throw new IllegalArgumentException("Maximum offset delta exceeded, base offset: " + baseOffset +
                     ", last offset: " + offset);
+        }
 
         numRecords += 1;
         uncompressedRecordsSizeInBytes += size;
@@ -740,15 +759,18 @@ public class MemoryRecordsBuilder implements AutoCloseable {
     }
 
     private void ensureOpenForRecordAppend() {
-        if (appendStream == CLOSED_STREAM)
+        if (appendStream == CLOSED_STREAM) {
             throw new IllegalStateException("Tried to append a record, but MemoryRecordsBuilder is closed for record appends");
+        }
     }
 
     private void ensureOpenForRecordBatchWrite() {
-        if (isClosed())
+        if (isClosed()) {
             throw new IllegalStateException("Tried to write record batch header, but MemoryRecordsBuilder is closed");
-        if (aborted)
+        }
+        if (aborted) {
             throw new IllegalStateException("Tried to write record batch header, but MemoryRecordsBuilder is aborted");
+        }
     }
 
     /**
@@ -788,12 +810,14 @@ public class MemoryRecordsBuilder implements AutoCloseable {
      * re-allocation in the underlying byte buffer stream.
      */
     public boolean hasRoomFor(long timestamp, ByteBuffer key, ByteBuffer value, Header[] headers) {
-        if (isFull())
+        if (isFull()) {
             return false;
+        }
 
         // We always allow at least one record to be appended (the ByteBufferOutputStream will grow as needed)
-        if (numRecords == 0)
+        if (numRecords == 0) {
             return true;
+        }
 
         final int recordSize;
         if (magic < RecordBatch.MAGIC_VALUE_V2) {
@@ -815,6 +839,7 @@ public class MemoryRecordsBuilder implements AutoCloseable {
     public boolean isFull() {
         // note that the write limit is respected only after the first record is added which ensures we can always
         // create non-empty batches (this is used to disable batching when the producer's batch size is set to 0).
+        // 写入数量 >= writeLimit 说明batch已满
         return appendStream == CLOSED_STREAM || (this.numRecords > 0 && this.writeLimit <= estimatedBytesWritten());
     }
 

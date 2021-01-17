@@ -430,6 +430,7 @@ public final class Utils {
 
     /**
      * Generates 32 bit murmur2 hash from byte array
+     *
      * @param data byte array to hash
      * @return 32 bit hash of the given array
      */
