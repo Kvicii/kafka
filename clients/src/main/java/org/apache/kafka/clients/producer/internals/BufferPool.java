@@ -50,6 +50,7 @@ public class BufferPool {
     private final int poolableSize;
     private final ReentrantLock lock;
     private final Deque<ByteBuffer> free;
+    // BufferPool进行内存分配时 内存耗尽的情况下通过该等待队列进行阻塞等待
     private final Deque<Condition> waiters;
     /** Total available memory is the sum of nonPooledAvailableMemory and the number of byte buffers in free * poolableSize.  */
     private long nonPooledAvailableMemory;
@@ -236,8 +237,9 @@ public class BufferPool {
                 this.lock.lock();
                 try {
                     this.nonPooledAvailableMemory += size;
-                    if (!this.waiters.isEmpty())
+                    if (!this.waiters.isEmpty()) {
                         this.waiters.peekFirst().signal();
+                    }
                 } finally {
                     this.lock.unlock();
                 }
@@ -358,8 +360,9 @@ public class BufferPool {
         this.lock.lock();
         this.closed = true;
         try {
-            for (Condition waiter : this.waiters)
+            for (Condition waiter : this.waiters) {
                 waiter.signal();
+            }
         } finally {
             this.lock.unlock();
         }

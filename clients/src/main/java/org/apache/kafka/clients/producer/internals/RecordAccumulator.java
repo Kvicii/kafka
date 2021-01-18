@@ -236,7 +236,7 @@ public final class RecordAccumulator {
             nowMs = time.milliseconds();
             // 线程1 | 2 | 3 同时分配了内存块 只有一个线程执行到放入Deque逻辑 将消息写入到分配好的ByteBuffer构造出来的batch 之后放入Deque
             // 其他线程只能执行到Double Check逻辑 使用tryAppend将消息放入到Deque中最后一个batch中 其他线程分配出来的ByteBuffer将在finally块中进行释放 加入到BufferPool的Deque中进行复用
-            synchronized (dq) {
+            synchronized (dq) { // 对Deque进行写并发控制
                 // Need to check if producer is closed again after grabbing the dequeue lock.
                 if (closed) {
                     throw new KafkaException("Producer closed while send in progress");
@@ -255,7 +255,7 @@ public final class RecordAccumulator {
                 // 由于执行到此处肯定是初次进行分配 所以future不为null 不需要进行处理
                 FutureRecordMetadata future = Objects.requireNonNull(batch.tryAppend(timestamp, key, value, headers,
                         callback, nowMs));
-                // 将batch放入到内存队列Deque
+                // 将batch放入到内存队列Deque尾部
                 dq.addLast(batch);
                 // 将batch放入到未完成列表(没有发送出去的batch)
                 incomplete.add(batch);
@@ -455,8 +455,9 @@ public final class RecordAccumulator {
      * Get a list of nodes whose partitions are ready to be sent, and the earliest time at which any non-sendable
      * partition will be ready; Also return the flag for whether there are any unknown leaders for the accumulated
      * partition batches.
+     * 用于判断batch是否可以发送
      * <p>
-     * A destination node is ready to send data if:
+     *  destination node is ready to send data if:
      * <ol>
      * <li>There is at least one partition that is not backing off its send
      * <li><b>and</b> those partitions are not muted (to prevent reordering if
@@ -471,46 +472,81 @@ public final class RecordAccumulator {
      *     <li>The accumulator has been closed</li>
      * </ul>
      * </ol>
+     *
+     * @param cluster
+     * @param nowMs
+     * @return leader broker & 下一次检查是否有batch可以发送的时间间隔 & partition对应的leader broker元数据还未找到的partition集合
      */
     public ReadyCheckResult ready(Cluster cluster, long nowMs) {
         Set<Node> readyNodes = new HashSet<>();
         long nextReadyCheckDelayMs = Long.MAX_VALUE;
         Set<String> unknownLeaderTopics = new HashSet<>();
-
+        // 1. 说明BufferPool内存耗尽 有线程在排队等待申请内存
         boolean exhausted = this.free.queued() > 0;
         for (Map.Entry<TopicPartition, Deque<ProducerBatch>> entry : this.batches.entrySet()) {
             Deque<ProducerBatch> deque = entry.getValue();
-            synchronized (deque) {
+            synchronized (deque) {  // 对Deque进行读并发控制
                 // When producing to a large number of partitions, this path is hot and deques are often empty.
                 // We check whether a batch exists first to avoid the more expensive checks whenever possible.
+                // 从Deque头部取出第一个batch处理 意味着这个batch极有可能是已经被写满的 || 在Deque中时间最长的 所以不需要对一个partition的所有batch做处理
+                // 如果Deque头部第一个batch都不符合发送的条件 此时会利用该batch计算nextReadyCheckDelayMs
+                // 假设共有10个partition 有4个partition的first batch可以发送
+                // 这4个partition leader分别对应在2个broker上 每个broker有两个partition leader 此时readyNodes里就有两个Node(2个leader broker会在里面)
+                // 但是如果partition的first batch都不可以发送 此时会利用这个batch来计算一下nextReadyCheckDelayMs
+                // 假设此时有6个partition的first batch都不可以发送 会综合利用这个6个partition的first batch的timeToLeft(linger.ms - 已经等待的时间)
+                // 取一个最小值(即最快可以发送的那个batch的等待时间)
                 ProducerBatch batch = deque.peekFirst();
                 if (batch != null) {
                     TopicPartition part = entry.getKey();
                     Node leader = cluster.leaderFor(part);
-                    if (leader == null) {
+                    if (leader == null) {   // 2. leader为null 加到unknownLeaderTopics集合 等待后续更新标志位 进行元数据拉取
                         // This is a partition for which leader is not known, but messages are available to send.
                         // Note that entries are currently not removed from batches when deque is empty.
                         unknownLeaderTopics.add(part.topic());
-                    } else if (!readyNodes.contains(leader) && !isMuted(part)) {
+                    } else if (!readyNodes.contains(leader) && !isMuted(part)) {    // 判断batch可以发送的算法
+                        // 当前时间 - 上一次发送这个batch的时间 假设一个batch从未发送过 那么waitedTimeMs = 当前时间 - batch被创建出来的时间
+                        // 即没有进行发送过的batch的waitedTimeMs代表这个batch被创建出来多久了
                         long waitedTimeMs = batch.waitedTimeMs(nowMs);
+                        // 与请求重试有关系 请求失败开始重试 该判断逻辑就会进行判断
+                        // attempts()返回重试的次数
+                        // 重试次数 > 0 && 当前时间 < 重试间隔时间(默认100ms) + 上次发送batch的时间 backingOff = true
+                        // 重试阶段 每次发送batch都必须得超过重试的间隔时间(100ms)才可以再次进行batch的发送
                         boolean backingOff = batch.attempts() > 0 && waitedTimeMs < retryBackoffMs;
+                        // batch从创建开始算 最多还需要等待多久才可以进行发送
+                        // 如果有重试 timeToWaitMs = retryBackoffMs
+                        // 如果是非重试 timeToWaitMs = lingerMs(默认0)
                         long timeToWaitMs = backingOff ? retryBackoffMs : lingerMs;
+                        // batch是否已满
+                        // 如果deque的batch超过了一个 || batch的大小超过了16KB 说明peekFirst取出的batch已被写满
                         boolean full = deque.size() > 1 || batch.isFull();
+                        // 当前Batch已经等待的时间(如120ms) >= batch最多只能等待的时间(如100ms) 已经超出了linger.ms的时间范围了
+                        // 否则60ms < 100ms 此时就没有过期 如果linger.ms默认是0 意味着只要batch创建出来了 在这个地方一定是expired = true
                         boolean expired = waitedTimeMs >= timeToWaitMs;
+                        // 综合上述所有条件来判断 这个batch是否需要发送出去
+                        // a. 如果batch已满必须得发送
+                        // b. 如果batch没有写满但是expired也必须得发送出去
+                        // c. 如果说batch没有写满而且也没有expired 但是内存已经消耗完毕也必须发送出去
+                        // d. 如果上述条件都不满足 此时处于closed(即当前客户端要关闭掉) 此时就必须立马把内存缓冲的batch都发送出去
+                        // e. 强制必须把所有数据都flush出去到网络里面去 此时就必须得发送
                         boolean sendable = full || expired || exhausted || closed || flushInProgress();
-                        if (sendable && !backingOff) {
-                            readyNodes.add(leader);
+                        if (sendable && !backingOff) {  // 3. 如果batch是符合发送条件的 此时会将该batch对应的partition的leader放入集合
+                            // 对于一个broker 是有多个partition的batch可以发送过去的
+                            readyNodes.add(leader); // 实际上是找到可以向哪些leader broker发送数据 使用Set去重
                         } else {
-                            long timeLeftMs = Math.max(timeToWaitMs - waitedTimeMs, 0);
+                            // 不满足发送条件 会计算出所有partition的batch中 暂时不能发送的那些batch 需要等待最小的时间(从而进行发送)
+                            // 需要等待的时间就设置为nextReadyCheckDelayMs 这样下次再检查是否有batch可以发送时 至少要等待nextReadyCheckDelayMs时间之后才可以
+                            long timeLeftMs = Math.max(timeToWaitMs - waitedTimeMs, 0); // timeLeftMs = 应该需要等待的时间 - 已经等待的时间
                             // Note that this results in a conservative estimate since an un-sendable partition may have
                             // a leader that will later be found to have sendable data. However, this is good enough
                             // since we'll just wake up and then sleep again for the remaining time.
+                            // nextReadyCheckDelayMs = 下一次检查是否有batch可以发送的时间间隔
                             nextReadyCheckDelayMs = Math.min(timeLeftMs, nextReadyCheckDelayMs);
                         }
                     }
                 }
             }
         }
+        // 复杂数据结果使用单独的数据结构进行封装
         return new ReadyCheckResult(readyNodes, nextReadyCheckDelayMs, unknownLeaderTopics);
     }
 

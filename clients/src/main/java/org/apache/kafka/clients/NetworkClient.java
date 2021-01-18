@@ -477,8 +477,9 @@ public class NetworkClient implements KafkaClient {
             // will be slightly different for some internal requests (for
             // example, ApiVersionsRequests can be sent prior to being in
             // READY state.)
-            if (!canSendRequest(nodeId, now))
+            if (!canSendRequest(nodeId, now)) {
                 throw new IllegalStateException("Attempt to send a request to node " + nodeId + " which is not ready.");
+            }
         }
         AbstractRequest.Builder<?> builder = clientRequest.requestBuilder();
         try {
@@ -489,9 +490,10 @@ public class NetworkClient implements KafkaClient {
             // information itself.  It is also the case when discoverBrokerVersions is set to false.
             if (versionInfo == null) {
                 version = builder.latestAllowedVersion();
-                if (discoverBrokerVersions && log.isTraceEnabled())
+                if (discoverBrokerVersions && log.isTraceEnabled()) {
                     log.trace("No version information found when sending {} with correlation id {} to node {}. " +
                             "Assuming version {}.", clientRequest.apiKey(), clientRequest.correlationId(), nodeId, version);
+                }
             } else {
                 version = versionInfo.latestUsableVersion(clientRequest.apiKey(), builder.oldestAllowedVersion(),
                         builder.latestAllowedVersion());
@@ -508,10 +510,11 @@ public class NetworkClient implements KafkaClient {
                     clientRequest.callback(), clientRequest.destination(), now, now,
                     false, unsupportedVersionException, null, null);
 
-            if (!isInternalRequest)
+            if (!isInternalRequest) {
                 abortedSends.add(clientResponse);
-            else if (clientRequest.apiKey() == ApiKeys.METADATA)
+            } else if (clientRequest.apiKey() == ApiKeys.METADATA) {
                 metadataUpdater.handleFailedRequest(now, Optional.of(unsupportedVersionException));
+            }
         }
     }
 
@@ -536,6 +539,7 @@ public class NetworkClient implements KafkaClient {
 
     /**
      * Do actual reads and writes to sockets.
+     * 负责实际的网络IO通信操作的核心方法 负责发送数据出去 也包括读取响应回来
      *
      * @param timeout The maximum amount of time to wait (in ms) for responses if there are none immediately,
      *                must be non-negative. The actual timeout will be the minimum of timeout, request timeout and
@@ -641,8 +645,9 @@ public class NetworkClient implements KafkaClient {
     }
 
     private void ensureActive() {
-        if (!active())
+        if (!active()) {
             throw new DisconnectException("NetworkClient is no longer active, state is " + state);
+        }
     }
 
     /**

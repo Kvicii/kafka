@@ -341,6 +341,7 @@ public class Sender implements Runnable {
 		}
 
 		long currentTimeMs = time.milliseconds();
+		// Producer发送一个一个的batch请求
 		long pollTimeout = sendProducerData(currentTimeMs);
 		// 更新Producer元数据
 		client.poll(pollTimeout, currentTimeMs);
@@ -349,9 +350,11 @@ public class Sender implements Runnable {
 	private long sendProducerData(long now) {
 		Cluster cluster = metadata.fetch();
 		// get the list of partitions with data ready to send
+		// 1. 获取已经可以发送消息的那些partition列表(即已经写满batch的partition <--> 16KB || batch创建的时间已超过linger.ms) 收集这些partition中的leader broker
 		RecordAccumulator.ReadyCheckResult result = this.accumulator.ready(cluster, now);
 
 		// if there are any partitions whose leaders are not known yet, force metadata update
+		// 2. 有的partition的leader元数据还未拉取到 进行标记使其更新元数据
 		if (!result.unknownLeaderTopics.isEmpty()) {
 			// The set of topics with unknown leader contains topics with leader election pending as well as
 			// topics which may have expired. Add the topic again to metadata to ensure it is included
@@ -368,6 +371,7 @@ public class Sender implements Runnable {
 		// remove any nodes we aren't ready to send to
 		Iterator<Node> iter = result.readyNodes.iterator();
 		long notReadyTimeout = Long.MAX_VALUE;
+		// 3. 遍历leader broker 检查是否可以向准备好的leader broker发送数据 如果此时还没和某个leader broker建立好连接 必须在此处建立好长连接(TCP)
 		while (iter.hasNext()) {
 			Node node = iter.next();
 			if (!this.client.ready(node, now)) {
@@ -377,6 +381,7 @@ public class Sender implements Runnable {
 		}
 
 		// create produce requests
+		// 4. 可以向很多个partition发送数据 有些partition的leader是在同一个broker上 此时按照broker对partition进行分组 找到一个broker对应的多个partition的所有batch
 		Map<Integer, List<ProducerBatch>> batches = this.accumulator.drain(cluster, result.readyNodes, this.maxRequestSize, now);
 		addToInflightBatches(batches);
 		if (guaranteeMessageOrder) {
@@ -389,6 +394,7 @@ public class Sender implements Runnable {
 		}
 
 		accumulator.resetNextBatchExpiryTime();
+		// 5. 如果一个batch已经在内存缓冲停留超过60s就丢弃
 		List<ProducerBatch> expiredInflightBatches = getExpiredInflightBatches(now);
 		List<ProducerBatch> expiredBatches = this.accumulator.expiredBatches(now);
 		expiredBatches.addAll(expiredInflightBatches);
@@ -426,6 +432,8 @@ public class Sender implements Runnable {
 			// otherwise the select time will be the time difference between now and the metadata expiry time;
 			pollTimeout = 0;
 		}
+		// 6. 对每个broker都创建一个ClientRequest 其中包括了多个batch(即在broker上的多个leader partition所对应的batch聚和在一起组成一个ClientRequest(请求)发送出去)
+		// 7. 通过NetworkClient进行底层的网络通信 把每个broker的ClientRequest发送出去
 		sendProduceRequests(batches, now);
 		return pollTimeout;
 	}
