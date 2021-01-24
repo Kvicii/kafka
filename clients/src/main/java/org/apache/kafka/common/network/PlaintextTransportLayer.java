@@ -47,9 +47,12 @@ public class PlaintextTransportLayer implements TransportLayer {
 
     @Override
     public boolean finishConnect() throws IOException {
+        // 3次握手建立连接
         boolean connected = socketChannel.finishConnect();
-        if (connected)
+        if (connected) {    // 连接已建立 Selector就不需要再关注OP_CONNECT事件了 之后增加对OP_READ事件的关注
+            // 一旦连接建立好之后 天然就会监听连接的OP_READ事件(客户端接收响应)
             key.interestOps(key.interestOps() & ~SelectionKey.OP_CONNECT | SelectionKey.OP_READ);
+        }
         return connected;
     }
 

@@ -68,17 +68,22 @@ final class ClusterConnectionStates {
     /**
      * Return true iff we can currently initiate a new connection. This will be the case if we are not
      * connected and haven't been connected for at least the minimum reconnection backoff period.
+     *
+     * 检查与broker是否可以建立连接
+     *
      * @param id the connection id to check
      * @param now the current time in ms
      * @return true if we can initiate a new connection
      */
     public boolean canConnect(String id, long now) {
+        // 找到对应的broker的连接状态
         NodeConnectionState state = nodeState.get(id);
-        if (state == null)
+        if (state == null) {    // 连接尚未建立 说明可以建立连接 返回true
             return true;
-        else
+        } else {    // 连接已存在 broker的状态为断开连接 && 上一次与broker尝试建立连接的时间与当前时间超过了重试时间 说明也可以建立连接 返回true
             return state.state.isDisconnected() &&
-                   now - state.lastConnectAttemptMs >= state.reconnectBackoffMs;
+                    now - state.lastConnectAttemptMs >= state.reconnectBackoffMs;
+        }
     }
 
     /**
@@ -398,8 +403,9 @@ final class ClusterConnectionStates {
      */
     private NodeConnectionState nodeState(String id) {
         NodeConnectionState state = this.nodeState.get(id);
-        if (state == null)
+        if (state == null) {
             throw new IllegalStateException("No entry found for connection " + id);
+        }
         return state;
     }
 

@@ -32,8 +32,9 @@ public class ByteBufferSend implements Send {
 
     public ByteBufferSend(ByteBuffer... buffers) {
         this.buffers = buffers;
-        for (ByteBuffer buffer : buffers)
+        for (ByteBuffer buffer : buffers) {
             remaining += buffer.remaining();
+        }
         this.size = remaining;
     }
 
@@ -43,8 +44,14 @@ public class ByteBufferSend implements Send {
         this.remaining = size;
     }
 
+    /**
+     * 判断是否还有数据未发送完
+     *
+     * @return 如果还有数据没有写完返回false
+     */
     @Override
     public boolean completed() {
+        // 如果没有未写出去的数据 && 没有待写的数据返回true
         return remaining <= 0 && !pending;
     }
 
@@ -55,10 +62,14 @@ public class ByteBufferSend implements Send {
 
     @Override
     public long writeTo(TransferableChannel channel) throws IOException {
+        // written --> 发送多少数据出去
         long written = channel.write(buffers);
-        if (written < 0)
+        if (written < 0) {
             throw new EOFException("Wrote negative bytes to channel. This shouldn't happen.");
+        }
+        // remaining --> buffers剩余多少数据没有发出去
         remaining -= written;
+        // 是否还有待写的数据
         pending = channel.hasPendingWrites();
         return written;
     }

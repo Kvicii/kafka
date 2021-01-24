@@ -55,6 +55,7 @@ public class PlaintextChannelBuilder implements ChannelBuilder {
     public KafkaChannel buildChannel(String id, SelectionKey key, int maxReceiveSize,
                                      MemoryPool memoryPool, ChannelMetadataRegistry metadataRegistry) throws KafkaException {
         try {
+            // SelectionKey封装到TransportLayer
             PlaintextTransportLayer transportLayer = buildTransportLayer(key);
             Supplier<Authenticator> authenticatorCreator = () -> new PlaintextAuthenticator(configs, transportLayer, listenerName);
             return buildChannel(id, transportLayer, authenticatorCreator, maxReceiveSize,

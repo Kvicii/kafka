@@ -153,8 +153,9 @@ public final class ProducerBatch {
      * @param exception The exception to use to complete the future and awaiting callbacks.
      */
     public void abort(RuntimeException exception) {
-        if (!finalState.compareAndSet(null, FinalState.ABORTED))
+        if (!finalState.compareAndSet(null, FinalState.ABORTED)) {
             throw new IllegalStateException("Batch has already been completed in final state " + finalState.get());
+        }
 
         log.trace("Aborting batch for partition {}", topicPartition, exception);
         completeFutureAndFireCallbacks(ProduceResponse.INVALID_OFFSET, RecordBatch.NO_TIMESTAMP, exception);
@@ -195,6 +196,7 @@ public final class ProducerBatch {
         }
 
         if (this.finalState.compareAndSet(null, tryFinalState)) {
+        	// 执行回调函数
             completeFutureAndFireCallbacks(baseOffset, logAppendTime, exception);
             return true;
         }
@@ -221,15 +223,18 @@ public final class ProducerBatch {
         produceFuture.set(baseOffset, logAppendTime, exception);
 
         // execute callbacks
-        for (Thunk thunk : thunks) {
+        for (Thunk thunk : thunks) {    // 遍历thunks
             try {
+                // 根据有无异常执行相应的回调 正常情况会回调每一条消息的回调函数
                 if (exception == null) {
                     RecordMetadata metadata = thunk.future.value();
-                    if (thunk.callback != null)
+                    if (thunk.callback != null) {
                         thunk.callback.onCompletion(metadata, null);
+                    }
                 } else {
-                    if (thunk.callback != null)
+                    if (thunk.callback != null) {
                         thunk.callback.onCompletion(null, exception);
+                    }
                 }
             } catch (Exception e) {
                 log.error("Error executing user-provided callback on message for topic-partition '{}'", topicPartition, e);
@@ -244,16 +249,19 @@ public final class ProducerBatch {
         MemoryRecords memoryRecords = recordsBuilder.build();
 
         Iterator<MutableRecordBatch> recordBatchIter = memoryRecords.batches().iterator();
-        if (!recordBatchIter.hasNext())
+        if (!recordBatchIter.hasNext()) {
             throw new IllegalStateException("Cannot split an empty producer batch.");
+        }
 
         RecordBatch recordBatch = recordBatchIter.next();
-        if (recordBatch.magic() < MAGIC_VALUE_V2 && !recordBatch.isCompressed())
+        if (recordBatch.magic() < MAGIC_VALUE_V2 && !recordBatch.isCompressed()) {
             throw new IllegalArgumentException("Batch splitting cannot be used with non-compressed messages " +
                     "with version v0 and v1");
+        }
 
-        if (recordBatchIter.hasNext())
+        if (recordBatchIter.hasNext()) {
             throw new IllegalArgumentException("A producer batch should only have one record batch.");
+        }
 
         Iterator<Thunk> thunkIter = thunks.iterator();
         // We always allocate batch size because we are already splitting a big batch.
@@ -263,8 +271,9 @@ public final class ProducerBatch {
         for (Record record : recordBatch) {
             assert thunkIter.hasNext();
             Thunk thunk = thunkIter.next();
-            if (batch == null)
+            if (batch == null) {
                 batch = createBatchOffAccumulatorForRecord(record, splitBatchSize);
+            }
 
             // A newly created batch can always host the first message.
             if (!batch.tryAppendForSplit(record.timestamp(), record.key(), record.value(), record.headers(), thunk)) {
@@ -343,9 +352,12 @@ public final class ProducerBatch {
     }
 
     void reenqueued(long now) {
+    	// 递增重试次数
         attempts.getAndIncrement();
+        // 重试 lastAttemptMs 和 lastAppendTime 设置为当前时间
         lastAttemptMs = Math.max(lastAppendTime, now);
         lastAppendTime = Math.max(lastAppendTime, now);
+        // retry状态设置为true
         retry = true;
     }
 
@@ -354,6 +366,7 @@ public final class ProducerBatch {
     }
 
     long waitedTimeMs(long nowMs) {
+        // lastAttemptMs 重新入队的时间
         return Math.max(0, nowMs - lastAttemptMs);
     }
 

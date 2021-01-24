@@ -58,8 +58,9 @@ final class InFlightRequests {
      */
     private Deque<NetworkClient.InFlightRequest> requestQueue(String node) {
         Deque<NetworkClient.InFlightRequest> reqs = requests.get(node);
-        if (reqs == null || reqs.isEmpty())
+        if (reqs == null || reqs.isEmpty()) {
             throw new IllegalStateException("There are no in-flight requests for node " + node);
+        }
         return reqs;
     }
 
@@ -74,7 +75,11 @@ final class InFlightRequests {
 
     /**
      * Get the last request we sent to the given node (but don't remove it from the queue)
+     *
+     * 获取该broker最近一次发送出去的请求
+     *
      * @param node The node id
+     *             broker节点
      */
     public NetworkClient.InFlightRequest lastSent(String node) {
         return requestQueue(node).peekFirst();
@@ -94,12 +99,16 @@ final class InFlightRequests {
     /**
      * Can we send more requests to this node?
      *
+     * 判断是否继续写
+     *
      * @param node Node in question
      * @return true iff we have no requests still being sent to the given node
      */
     public boolean canSendMore(String node) {
         Deque<NetworkClient.InFlightRequest> queue = requests.get(node);
+        // 队列中没有请求 说明可以发送
         return queue == null || queue.isEmpty() ||
+                // 判断上一次发送的数据是否已经发送完毕了(全部写出去了) && 发送完毕了 但是最多只能发送5个没有收到响应的请求
                (queue.peekFirst().send.completed() && queue.size() < this.maxInFlightRequestsPerConnection);
     }
 
@@ -159,8 +168,9 @@ final class InFlightRequests {
     private Boolean hasExpiredRequest(long now, Deque<NetworkClient.InFlightRequest> deque) {
         for (NetworkClient.InFlightRequest request : deque) {
             long timeSinceSend = Math.max(0, now - request.sendTimeMs);
-            if (timeSinceSend > request.requestTimeoutMs)
+            if (timeSinceSend > request.requestTimeoutMs) {
                 return true;
+            }
         }
         return false;
     }
@@ -176,8 +186,9 @@ final class InFlightRequests {
         for (Map.Entry<String, Deque<NetworkClient.InFlightRequest>> requestEntry : requests.entrySet()) {
             String nodeId = requestEntry.getKey();
             Deque<NetworkClient.InFlightRequest> deque = requestEntry.getValue();
-            if (hasExpiredRequest(now, deque))
+            if (hasExpiredRequest(now, deque)) {
                 nodeIds.add(nodeId);
+            }
         }
         return nodeIds;
     }

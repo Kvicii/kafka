@@ -84,8 +84,9 @@ public class MultiRecordsSend implements Send {
 
     @Override
     public long writeTo(TransferableChannel channel) throws IOException {
-        if (completed())
+        if (completed()) {
             throw new KafkaException("This operation cannot be invoked on a complete request.");
+        }
 
         int totalWrittenPerCall = 0;
         boolean sendComplete;
@@ -101,8 +102,9 @@ public class MultiRecordsSend implements Send {
 
         totalWritten += totalWrittenPerCall;
 
-        if (completed() && totalWritten != size)
+        if (completed() && totalWritten != size) {
             log.error("mismatch in sending bytes over socket; expected: {} actual: {}", size, totalWritten);
+        }
 
         log.trace("Bytes written as part of multi-send call: {}, total bytes written so far: {}, expected bytes to write: {}",
                 totalWrittenPerCall, totalWritten, size);

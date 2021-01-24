@@ -113,7 +113,13 @@ public class KafkaChannel implements AutoCloseable {
         THROTTLE_ENDED
     }
 
+    /**
+     * brokerId 每个客户端都需要和broker维护一个网络连接 一个网络连接对应一个KafkaChannel(NIO的SocketChannel -> 网络层面的Socket套接字通信)
+     */
     private final String id;
+    /**
+     * 封装底层NIO的SocketChannel
+     */
     private final TransportLayer transportLayer;
     private final Supplier<Authenticator> authenticatorCreator;
     private Authenticator authenticator;
@@ -123,7 +129,13 @@ public class KafkaChannel implements AutoCloseable {
     private final int maxReceiveSize;
     private final MemoryPool memoryPool;
     private final ChannelMetadataRegistry metadataRegistry;
+    /**
+     * Channel最近一次读出来的响应 暂存在该字段 也是会不断变换的 因为会不断读取新的响应数据
+     */
     private NetworkReceive receive;
+    /**
+     * 要交给底层Channel发送出去的请求 可能是会不断变换的 发送完一个请求需要发送下一个请求
+     */
     private NetworkSend send;
     // Track connection and mute state of channels to enable outstanding requests on channels to be
     // processed after the channel is disconnected.
@@ -174,8 +186,9 @@ public class KafkaChannel implements AutoCloseable {
     public void prepare() throws AuthenticationException, IOException {
         boolean authenticating = false;
         try {
-            if (!transportLayer.ready())
+            if (!transportLayer.ready()) {
                 transportLayer.handshake();
+            }
             if (transportLayer.ready() && !authenticator.complete()) {
                 authenticating = true;
                 authenticator.authenticate();
@@ -221,6 +234,7 @@ public class KafkaChannel implements AutoCloseable {
         if (socketChannel != null) {
             remoteAddress = socketChannel.getRemoteAddress();
         }
+        // 完成最终的连接建立
         boolean connected = transportLayer.finishConnect();
         if (connected) {
             if (ready()) {
@@ -251,7 +265,9 @@ public class KafkaChannel implements AutoCloseable {
      */
     void mute() {
         if (muteState == ChannelMuteState.NOT_MUTED) {
-            if (!disconnected) transportLayer.removeInterestOps(SelectionKey.OP_READ);
+            if (!disconnected) {
+                transportLayer.removeInterestOps(SelectionKey.OP_READ);
+            }
             muteState = ChannelMuteState.MUTED;
         }
     }
@@ -345,12 +361,18 @@ public class KafkaChannel implements AutoCloseable {
         //(receive == null) we dont mute. we also dont mute if whatever memory required has already been
         //successfully allocated (if none is required for the currently-being-read request
         //receive.memoryAllocated() is expected to return true)
-        if (receive == null || receive.memoryAllocated())
+        if (receive == null || receive.memoryAllocated()) {
             return false;
+        }
         //also cannot mute if underlying transport is not in the ready state
         return transportLayer.ready();
     }
 
+    /**
+     * 连接建立后 判断是否完成了认证和授权
+     *
+     * @return
+     */
     public boolean ready() {
         return transportLayer.ready() && authenticator.complete();
     }
@@ -371,26 +393,32 @@ public class KafkaChannel implements AutoCloseable {
 
     public String socketDescription() {
         Socket socket = transportLayer.socketChannel().socket();
-        if (socket.getInetAddress() == null)
+        if (socket.getInetAddress() == null) {
             return socket.getLocalAddress().toString();
+        }
         return socket.getInetAddress().toString();
     }
 
     public void setSend(NetworkSend send) {
-        if (this.send != null)
+        if (this.send != null) {
             throw new IllegalStateException("Attempt to begin a send operation with prior send operation still in progress, connection id is " + id);
+        }
         this.send = send;
         this.transportLayer.addInterestOps(SelectionKey.OP_WRITE);
     }
 
     public NetworkSend maybeCompleteSend() {
-        if (send != null && send.completed()) {
+        // 判断是否写完
+        if (send != null && send.completed()) { // 如果发送完数据
             midWrite = false;
+            // 取消对OP_WRITE事件的关注 如果数据未发送完还需要继续关注OP_WRITE事件
             transportLayer.removeInterestOps(SelectionKey.OP_WRITE);
             NetworkSend result = send;
+            // 发送完毕会将send置为null 下次进行复用
             send = null;
             return result;
         }
+        // 还有数据没有发送完 不会取消对OP_WRITE事件的关注
         return null;
     }
 
@@ -398,7 +426,7 @@ public class KafkaChannel implements AutoCloseable {
         if (receive == null) {
             receive = new NetworkReceive(maxReceiveSize, id, memoryPool);
         }
-
+        // 处理读事件的核心方法
         long bytesReceived = receive(this.receive);
 
         if (this.receive.requiredMemoryAmountKnown() && !this.receive.memoryAllocated() && isInMutableState()) {
@@ -413,7 +441,9 @@ public class KafkaChannel implements AutoCloseable {
     }
 
     public NetworkReceive maybeCompleteReceive() {
-        if (receive != null && receive.complete()) {
+    	// 如果发生了READABLE拆包 complete会返回false 该方法直接返回null
+        if (receive != null && receive.complete()) {    // 判断是否读完了一条消息 即存储分隔符(Integer类型)的ByteBuffer和存储实际数据的ByteBuffer都被读满
+            // 重置存储实际数据的ByteBuffer的position为0 存储Integer类型分隔符的ByteBuffer的position在读取数据时就已被置为0
             receive.payload().rewind();
             NetworkReceive result = receive;
             receive = null;
@@ -423,8 +453,9 @@ public class KafkaChannel implements AutoCloseable {
     }
 
     public long write() throws IOException {
-        if (send == null)
+        if (send == null) {
             return 0;
+        }
 
         midWrite = true;
         return send.writeTo(transportLayer);

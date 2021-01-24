@@ -72,15 +72,17 @@ public abstract class AbstractResponse implements AbstractRequestResponse {
 
     protected Map<Errors, Integer> errorCounts(Collection<Errors> errors) {
         Map<Errors, Integer> errorCounts = new HashMap<>();
-        for (Errors error : errors)
+        for (Errors error : errors) {
             updateErrorCounts(errorCounts, error);
+        }
         return errorCounts;
     }
 
     protected Map<Errors, Integer> apiErrorCounts(Map<?, ApiError> errors) {
         Map<Errors, Integer> errorCounts = new HashMap<>();
-        for (ApiError apiError : errors.values())
+        for (ApiError apiError : errors.values()) {
             updateErrorCounts(errorCounts, apiError.error());
+        }
         return errorCounts;
     }
 
@@ -92,6 +94,8 @@ public abstract class AbstractResponse implements AbstractRequestResponse {
     /**
      * Parse a response from the provided buffer. The buffer is expected to hold both
      * the {@link ResponseHeader} as well as the response payload.
+     *
+     * 解析响应结果
      */
     public static AbstractResponse parseResponse(ByteBuffer buffer, RequestHeader requestHeader) {
         ApiKeys apiKey = requestHeader.apiKey();
@@ -99,6 +103,7 @@ public abstract class AbstractResponse implements AbstractRequestResponse {
 
         ResponseHeader responseHeader = ResponseHeader.parse(buffer, apiKey.responseHeaderVersion(apiVersion));
 
+        // correlationId 全局唯一ID 用于标识一次请求 校验发送过去的和接收回来的消息是否是一致的 不一致抛出异常
         if (requestHeader.correlationId() != responseHeader.correlationId()) {
             throw new CorrelationIdMismatchException("Correlation id for response ("
                 + responseHeader.correlationId() + ") does not match request ("

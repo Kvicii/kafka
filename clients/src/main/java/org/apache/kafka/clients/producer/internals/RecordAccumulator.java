@@ -334,11 +334,13 @@ public final class RecordAccumulator {
             // expire the batches in the order of sending
             Deque<ProducerBatch> deque = entry.getValue();
             synchronized (deque) {
-                while (!deque.isEmpty()) {
+                while (!deque.isEmpty()) {  // 遍历每个分区的所有batch
                     ProducerBatch batch = deque.getFirst();
-                    if (batch.hasReachedDeliveryTimeout(deliveryTimeoutMs, now)) {
+                    if (batch.hasReachedDeliveryTimeout(deliveryTimeoutMs, now)) {  // 判断是否超时了
+                        // 出队
                         deque.poll();
                         batch.abortRecordAppends();
+                        // 将超时的batch加入到expiredBatches
                         expiredBatches.add(batch);
                     } else {
                         maybeUpdateNextBatchExpiryTime(batch);
@@ -359,13 +361,16 @@ public final class RecordAccumulator {
      * whether the batch has reached deliveryTimeoutMs or not. Hence we do not do the delivery timeout check here.
      */
     public void reenqueue(ProducerBatch batch, long now) {
+        // 对一些参数做了设置
         batch.reenqueued(now);
+        // 获取partition对应的Deque
         Deque<ProducerBatch> deque = getOrCreateDeque(batch.topicPartition);
         synchronized (deque) {
-            if (transactionManager != null)
+            if (transactionManager != null) {
                 insertInSequenceOrder(deque, batch);
-            else
+            } else {    // 非事务型消息 直接添加到Deque头部
                 deque.addFirst(batch);
+            }
         }
     }
 
@@ -411,13 +416,15 @@ public final class RecordAccumulator {
     // IllegalStateException instead.
     private void insertInSequenceOrder(Deque<ProducerBatch> deque, ProducerBatch batch) {
         // When we are requeing and have enabled idempotence, the reenqueued batch must always have a sequence.
-        if (batch.baseSequence() == RecordBatch.NO_SEQUENCE)
+        if (batch.baseSequence() == RecordBatch.NO_SEQUENCE) {
             throw new IllegalStateException("Trying to re-enqueue a batch which doesn't have a sequence even " +
-                "though idempotency is enabled.");
+                    "though idempotency is enabled.");
+        }
 
-        if (transactionManager.nextBatchBySequence(batch.topicPartition) == null)
+        if (transactionManager.nextBatchBySequence(batch.topicPartition) == null) {
             throw new IllegalStateException("We are re-enqueueing a batch which is not tracked as part of the in flight " +
-                "requests. batch.topicPartition: " + batch.topicPartition + "; batch.baseSequence: " + batch.baseSequence());
+                    "requests. batch.topicPartition: " + batch.topicPartition + "; batch.baseSequence: " + batch.baseSequence());
+        }
 
         ProducerBatch firstBatchInQueue = deque.peekFirst();
         if (firstBatchInQueue != null && firstBatchInQueue.hasSequence() && firstBatchInQueue.baseSequence() < batch.baseSequence()) {
@@ -508,8 +515,10 @@ public final class RecordAccumulator {
                         // 即没有进行发送过的batch的waitedTimeMs代表这个batch被创建出来多久了
                         long waitedTimeMs = batch.waitedTimeMs(nowMs);
                         // 与请求重试有关系 请求失败开始重试 该判断逻辑就会进行判断
-                        // attempts()返回重试的次数
-                        // 重试次数 > 0 && 当前时间 < 重试间隔时间(默认100ms) + 上次发送batch的时间 backingOff = true
+                        // attempts返回重试的次数
+                        // 重试次数 > 0 && 当前时间 < 重试间隔时间(默认100ms 一般保持默认) + 上次重试发送batch的时间
+                        // 当前时间距离上一次重新入队时间没有超过100ms 即 now - lastAttemptMs < retryBackoffMs -- backingOff = true 不能重试
+                        // 如果now - lastAttemptMs >= retryBackoffMs -- backingOff = false 可以重试
                         // 重试阶段 每次发送batch都必须得超过重试的间隔时间(100ms)才可以再次进行batch的发送
                         boolean backingOff = batch.attempts() > 0 && waitedTimeMs < retryBackoffMs;
                         // batch从创建开始算 最多还需要等待多久才可以进行发送
@@ -557,8 +566,9 @@ public final class RecordAccumulator {
         for (Map.Entry<TopicPartition, Deque<ProducerBatch>> entry : this.batches.entrySet()) {
             Deque<ProducerBatch> deque = entry.getValue();
             synchronized (deque) {
-                if (!deque.isEmpty())
+                if (!deque.isEmpty()) {
                     return true;
+                }
             }
         }
         return false;
@@ -567,13 +577,15 @@ public final class RecordAccumulator {
     private boolean shouldStopDrainBatchesForPartition(ProducerBatch first, TopicPartition tp) {
         ProducerIdAndEpoch producerIdAndEpoch = null;
         if (transactionManager != null) {
-            if (!transactionManager.isSendToPartitionAllowed(tp))
+            if (!transactionManager.isSendToPartitionAllowed(tp)) {
                 return true;
+            }
 
             producerIdAndEpoch = transactionManager.producerIdAndEpoch();
-            if (!producerIdAndEpoch.isValid())
+            if (!producerIdAndEpoch.isValid()) {
                 // we cannot send the batch until we have refreshed the producer id
                 return true;
+            }
 
             if (!first.hasSequence()) {
                 if (transactionManager.hasInflightBatches(tp)) {
@@ -587,68 +599,86 @@ public final class RecordAccumulator {
                     }
                 }
 
-                if (transactionManager.hasUnresolvedSequence(first.topicPartition))
+                if (transactionManager.hasUnresolvedSequence(first.topicPartition)) {
                     // Don't drain any new batches while the state of previous sequence numbers
                     // is unknown. The previous batches would be unknown if they were aborted
                     // on the client after being sent to the broker at least once.
                     return true;
+                }
             }
 
             int firstInFlightSequence = transactionManager.firstInFlightSequence(first.topicPartition);
             if (firstInFlightSequence != RecordBatch.NO_SEQUENCE && first.hasSequence()
-                && first.baseSequence() != firstInFlightSequence)
+                && first.baseSequence() != firstInFlightSequence) {
                 // If the queued batch already has an assigned sequence, then it is being retried.
                 // In this case, we wait until the next immediate batch is ready and drain that.
                 // We only move on when the next in line batch is complete (either successfully or due to
                 // a fatal broker error). This effectively reduces our in flight request count to 1.
                 return true;
+            }
         }
         return false;
     }
 
+    /**
+     * 聚和对于某一个broker要发送的batch集合
+     *
+     * @param cluster
+     * @param node    broker
+     * @param maxSize
+     * @param now
+     * @return
+     */
     private List<ProducerBatch> drainBatchesForOneNode(Cluster cluster, Node node, int maxSize, long now) {
         int size = 0;
+        // 获取broker对应的所有partition
         List<PartitionInfo> parts = cluster.partitionsForNode(node.id());
         List<ProducerBatch> ready = new ArrayList<>();
         /* to make starvation less likely this loop doesn't start at 0 */
         int start = drainIndex = drainIndex % parts.size();
-        do {
+        do {    // 遍历当前broker上的所有partition
             PartitionInfo part = parts.get(drainIndex);
             TopicPartition tp = new TopicPartition(part.topic(), part.partition());
             this.drainIndex = (this.drainIndex + 1) % parts.size();
 
             // Only proceed if the partition has no in-flight batches.
-            if (isMuted(tp))
+            if (isMuted(tp)) {
                 continue;
+            }
 
             Deque<ProducerBatch> deque = getDeque(tp);
-            if (deque == null)
+            if (deque == null) {
                 continue;
+            }
 
-            synchronized (deque) {
+            synchronized (deque) {  // deque加锁
                 // invariant: !isMuted(tp,now) && deque != null
-                ProducerBatch first = deque.peekFirst();
-                if (first == null)
+                ProducerBatch first = deque.peekFirst();    // 获取first batch进行验证
+                if (first == null) {
                     continue;
+                }
 
                 // first != null
+                // 是否进行了重试
                 boolean backoff = first.attempts() > 0 && first.waitedTimeMs(now) < retryBackoffMs;
                 // Only drain the batch if it is not during backoff period.
-                if (backoff)
+                if (backoff) {
                     continue;
+                }
 
-                if (size + first.estimatedSizeInBytes() > maxSize && !ready.isEmpty()) {
+                if (size + first.estimatedSizeInBytes() > maxSize && !ready.isEmpty()) {    // 发送的数据超过了请求的最大大小 break
                     // there is a rare case that a single batch size is larger than the request size due to
                     // compression; in this case we will still eventually send this batch in a single request
                     break;
                 } else {
-                    if (shouldStopDrainBatchesForPartition(first, tp))
+                    if (shouldStopDrainBatchesForPartition(first, tp)) {
                         break;
+                    }
 
                     boolean isTransactional = transactionManager != null && transactionManager.isTransactional();
                     ProducerIdAndEpoch producerIdAndEpoch =
                         transactionManager != null ? transactionManager.producerIdAndEpoch() : null;
-                    ProducerBatch batch = deque.pollFirst();
+                    ProducerBatch batch = deque.pollFirst();    // 实际去除first batch
                     if (producerIdAndEpoch != null && !batch.hasSequence()) {
                         // If the batch already has an assigned sequence, then we should not change the producer id and
                         // sequence number, since this may introduce duplicates. In particular, the previous attempt
@@ -666,8 +696,11 @@ public final class RecordAccumulator {
 
                         transactionManager.addInFlightBatch(batch);
                     }
+                    // 关闭batch的MemoryRecords
                     batch.close();
+                    // 计算发送的数据大小
                     size += batch.records().sizeInBytes();
+                    // 将要发送的batch放到返回集合
                     ready.add(batch);
 
                     batch.drained(now);
@@ -681,6 +714,8 @@ public final class RecordAccumulator {
      * Drain all the data for the given nodes and collate them into a list of batches that will fit within the specified
      * size on a per-node basis. This method attempts to avoid choosing the same topic-node over and over.
      *
+     * 封装broker对应的batch集合
+     *
      * @param cluster The current cluster metadata
      * @param nodes The list of node to drain
      * @param maxSize The maximum number of bytes to drain
@@ -688,11 +723,12 @@ public final class RecordAccumulator {
      * @return A list of {@link ProducerBatch} for each node specified with total size less than the requested maxSize.
      */
     public Map<Integer, List<ProducerBatch>> drain(Cluster cluster, Set<Node> nodes, int maxSize, long now) {
-        if (nodes.isEmpty())
+        if (nodes.isEmpty()) {  // 没有broker节点可以发送请求 直接返回空
             return Collections.emptyMap();
+        }
 
         Map<Integer, List<ProducerBatch>> batches = new HashMap<>();
-        for (Node node : nodes) {
+        for (Node node : nodes) {   // 获取broker对应的所有batch 封装 <brokerId, batch集合>
             List<ProducerBatch> ready = drainBatchesForOneNode(cluster, node, maxSize, now);
             batches.put(node.id(), ready);
         }
@@ -734,8 +770,9 @@ public final class RecordAccumulator {
         incomplete.remove(batch);
         // Only deallocate the batch if it is not a split batch because split batch are allocated outside the
         // buffer pool.
-        if (!batch.isSplitBatch())
+        if (!batch.isSplitBatch()) {    // 归还BufferPool资源
             free.deallocate(batch.buffer(), batch.initialCapacity());
+        }
     }
 
     /**
@@ -778,8 +815,9 @@ public final class RecordAccumulator {
      */
     public void awaitFlushCompletion() throws InterruptedException {
         try {
-            for (ProducerBatch batch : this.incomplete.copyAll())
+            for (ProducerBatch batch : this.incomplete.copyAll()) {
                 batch.produceFuture.await();
+            }
         } finally {
             this.flushesInProgress.decrementAndGet();
         }

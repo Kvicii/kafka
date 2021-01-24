@@ -40,8 +40,9 @@ class IncompleteBatches {
     public void remove(ProducerBatch batch) {
         synchronized (incomplete) {
             boolean removed = this.incomplete.remove(batch);
-            if (!removed)
+            if (!removed) {
                 throw new IllegalStateException("Remove from the incomplete set failed. This should be impossible.");
+            }
         }
     }
 

@@ -176,7 +176,7 @@ public class Sender implements Runnable {
 
 	private void maybeRemoveFromInflightBatches(ProducerBatch batch) {
 		List<ProducerBatch> batches = inFlightBatches.get(batch.topicPartition);
-		if (batches != null) {
+		if (batches != null) {	// 从已发送但未接收到响应的inFlightBatches集合删除batch
 			batches.remove(batch);
 			if (batches.isEmpty()) {
 				inFlightBatches.remove(batch.topicPartition);
@@ -185,7 +185,9 @@ public class Sender implements Runnable {
 	}
 
 	private void maybeRemoveAndDeallocateBatch(ProducerBatch batch) {
+		// 从集合中删除batch
 		maybeRemoveFromInflightBatches(batch);
+		// 释放ByteBuffer资源
 		this.accumulator.deallocate(batch);
 	}
 
@@ -341,9 +343,9 @@ public class Sender implements Runnable {
 		}
 
 		long currentTimeMs = time.milliseconds();
-		// Producer发送一个一个的batch请求
+		// Producer发送一个一个的batch请求 如果连接未建立就不会发送请求
 		long pollTimeout = sendProducerData(currentTimeMs);
-		// 更新Producer元数据
+		// 进行实际的网络IO 首次执行会进行连接的建立 之后就是数据的读写了
 		client.poll(pollTimeout, currentTimeMs);
 	}
 
@@ -374,12 +376,24 @@ public class Sender implements Runnable {
 		// 3. 遍历leader broker 检查是否可以向准备好的leader broker发送数据 如果此时还没和某个leader broker建立好连接 必须在此处建立好长连接(TCP)
 		while (iter.hasNext()) {
 			Node node = iter.next();
-			if (!this.client.ready(node, now)) {
-				iter.remove();
+			/**
+			 * WRITABLE事件可能会出现拆包问题
+			 * Kafka解决WRITABLE事件的拆包问题 用于判断上一次发送未把全部数据发送出去 是否可以继续写
+			 * {@link org.apache.kafka.clients.InFlightRequests#canSendMore(String)}
+			 *
+			 * 如果request出现了拆包 一次请求没有将全部数据发送完毕 下次就不会往该broker发送请求了
+			 * 但此时针对该broker的OP_WRITE事件还会保持 所以就会调用到
+			 * {@link org.apache.kafka.common.network.Selector#poll(long)} 发现这个broker可以继续写
+			 * 于是就继续调用SocketChannel的write方法把ByteBuffer里剩余的数据继续写 发送给broker 直到全部数据发完
+			 * */
+			if (!this.client.ready(node, now)) {	// 用于判断的方法
+				iter.remove();	// ready方法返回false 说明连接只是进行了初始化 有可能没有建立 以迭代器模式移除这些没有成功建立连接的broker节点
 				notReadyTimeout = Math.min(notReadyTimeout, this.client.pollDelayMs(node, now));
 			}
 		}
-
+		/**
+		 * 如果没有broker可以接收发送的请求 下面的逻辑都会快速跳过 直接执行 {@link org.apache.kafka.clients.NetworkClient#poll(long, long)} 方法
+ 		 */
 		// create produce requests
 		// 4. 可以向很多个partition发送数据 有些partition的leader是在同一个broker上 此时按照broker对partition进行分组 找到一个broker对应的多个partition的所有batch
 		Map<Integer, List<ProducerBatch>> batches = this.accumulator.drain(cluster, result.readyNodes, this.maxRequestSize, now);
@@ -408,6 +422,7 @@ public class Sender implements Runnable {
 		for (ProducerBatch expiredBatch : expiredBatches) {
 			String errorMessage = "Expiring " + expiredBatch.recordCount + " record(s) for " + expiredBatch.topicPartition
 					+ ":" + (now - expiredBatch.createdMs) + " ms has passed since batch creation";
+			// 处理超时的batch 执行回调函数 并释放ByteBuffer
 			failBatch(expiredBatch, -1, NO_TIMESTAMP, new TimeoutException(errorMessage), false);
 			if (transactionManager != null && expiredBatch.inRetry()) {
 				// This ensures that no new batches are drained until the current in flight batches are fully resolved.
@@ -433,7 +448,7 @@ public class Sender implements Runnable {
 			pollTimeout = 0;
 		}
 		// 6. 对每个broker都创建一个ClientRequest 其中包括了多个batch(即在broker上的多个leader partition所对应的batch聚和在一起组成一个ClientRequest(请求)发送出去)
-		// 7. 通过NetworkClient进行底层的网络通信 把每个broker的ClientRequest发送出去
+		// 7. 通过NetworkClient进行底层的网络通信 把每个broker的ClientRequest发送出去 在关注OP_READ事件的基础上设置关注OP_WRITE事件
 		sendProduceRequests(batches, now);
 		return pollTimeout;
 	}
@@ -580,7 +595,7 @@ public class Sender implements Runnable {
 	private void handleProduceResponse(ClientResponse response, Map<TopicPartition, ProducerBatch> batches, long now) {
 		RequestHeader requestHeader = response.requestHeader();
 		int correlationId = requestHeader.correlationId();
-		if (response.wasDisconnected()) {
+		if (response.wasDisconnected()) {	// broker已断开连接
 			log.trace("Cancelled request with header {} due to node {} being disconnected",
 					requestHeader, response.destination());
 			for (ProducerBatch batch : batches.values()) {
@@ -596,10 +611,11 @@ public class Sender implements Runnable {
 		} else {
 			log.trace("Received produce response from node {} with correlation id {}", response.destination(), correlationId);
 			// if we have a response, parse it
-			if (response.hasResponse()) {
+			if (response.hasResponse()) {	// 有响应的回调
 				// Sender should exercise PartitionProduceResponse rather than ProduceResponse.PartitionResponse
 				// https://issues.apache.org/jira/browse/KAFKA-10696
 				ProduceResponse produceResponse = (ProduceResponse) response.responseBody();
+				// 一次请求对应的是每个partition会有一个batch放在请求里面 对于响应也是一样的 每个partition也是只有一个batch是有对应请求的
 				produceResponse.data().responses().forEach(r -> r.partitionResponses().forEach(p -> {
 					TopicPartition tp = new TopicPartition(r.name(), p.index());
 					ProduceResponse.PartitionResponse partResp = new ProduceResponse.PartitionResponse(
@@ -618,6 +634,7 @@ public class Sender implements Runnable {
 				this.sensors.recordLatency(response.destination(), response.requestLatencyMs());
 			} else {
 				// this is the acks = 0 case, just complete all requests
+				// acks = 0 无响应
 				for (ProducerBatch batch : batches.values()) {
 					completeBatch(batch, new ProduceResponse.PartitionResponse(Errors.NONE), correlationId, now);
 				}
@@ -638,7 +655,7 @@ public class Sender implements Runnable {
 		Errors error = response.error;
 
 		if (error == Errors.MESSAGE_TOO_LARGE && batch.recordCount > 1 && !batch.isDone() &&
-				(batch.magic() >= RecordBatch.MAGIC_VALUE_V2 || batch.isCompressed())) {
+				(batch.magic() >= RecordBatch.MAGIC_VALUE_V2 || batch.isCompressed())) {	// 请求存在异常 硬性问题 不能通过重试解决
 			// If the batch is too large, we split the batch and send the split batches again. We do not decrement
 			// the retry attempts in this case.
 			log.warn(
@@ -653,14 +670,13 @@ public class Sender implements Runnable {
 			this.accumulator.splitAndReenqueue(batch);
 			maybeRemoveAndDeallocateBatch(batch);
 			this.sensors.recordBatchSplit();
-		} else if (error != Errors.NONE) {
-			if (canRetry(batch, response, now)) {
+		} else if (error != Errors.NONE) {	// 请求存在异常
+			if (canRetry(batch, response, now)) {	// 是否可以重试
 				log.warn(
 						"Got error produce response with correlation id {} on topic-partition {}, retrying ({} attempts left). Error: {}",
-						correlationId,
-						batch.topicPartition,
-						this.retries - batch.attempts() - 1,
-						error);
+						correlationId, batch.topicPartition,
+						this.retries - batch.attempts() - 1, error);
+				// 重新把batch放回accumulator缓冲区的Deque中
 				reenqueueBatch(batch, now);
 			} else if (error == Errors.DUPLICATE_SEQUENCE_NUMBER) {
 				// If we have received a duplicate sequence error, it means that the sequence number has advanced beyond
@@ -669,7 +685,7 @@ public class Sender implements Runnable {
 				//
 				// The only thing we can do is to return success to the user and not return a valid offset and timestamp.
 				completeBatch(batch, response);
-			} else {
+			} else {	// 超过了重试次数仍未成功
 				final RuntimeException exception;
 				if (error == Errors.TOPIC_AUTHORIZATION_FAILED) {
 					exception = new TopicAuthorizationException(Collections.singleton(batch.topicPartition.topic()));
@@ -694,7 +710,7 @@ public class Sender implements Runnable {
 				}
 				metadata.requestUpdate();
 			}
-		} else {
+		} else {	// 请求没有出现异常
 			completeBatch(batch, response);
 		}
 
@@ -714,8 +730,9 @@ public class Sender implements Runnable {
 		if (transactionManager != null) {
 			transactionManager.handleCompletedBatch(batch, response);
 		}
-
+		// 执行回调函数 无论是否进行了重试 以及重试最终是否成功 都会释放内存资源
 		if (batch.done(response.baseOffset, response.logAppendTime, null)) {
+			// 回调函数执行完毕 将batch的内存块释放 放回到BufferPool 让下一个batch可以重复利用
 			maybeRemoveAndDeallocateBatch(batch);
 		}
 	}
@@ -738,7 +755,9 @@ public class Sender implements Runnable {
 
 		this.sensors.recordErrors(batch.topicPartition.topic(), batch.recordCount);
 
+		// 执行回调函数 无论是否进行了重试 以及重试最终是否成功 都会释放内存资源
 		if (batch.done(baseOffset, logAppendTime, exception)) {
+			// 回调函数执行完毕 将batch的内存块释放 放回到BufferPool 让下一个batch可以重复利用
 			maybeRemoveAndDeallocateBatch(batch);
 		}
 	}
@@ -750,10 +769,10 @@ public class Sender implements Runnable {
 	 */
 	private boolean canRetry(ProducerBatch batch, ProduceResponse.PartitionResponse response, long now) {
 		return !batch.hasReachedDeliveryTimeout(accumulator.getDeliveryTimeoutMs(), now) &&
-				batch.attempts() < this.retries &&
+				batch.attempts() < this.retries &&	// 重试次数 < 阈值(不设置默认是0 不进行重试 直接通过回调函数通知异常)
 				!batch.isDone() &&
 				(transactionManager == null ?
-						response.error.exception() instanceof RetriableException :
+						response.error.exception() instanceof RetriableException :	// 异常是可以进行重试的那种异常
 						transactionManager.canRetry(response, batch));
 	}
 
@@ -761,7 +780,7 @@ public class Sender implements Runnable {
 	 * Transfer the record batches into a list of produce requests on a per-node basis
 	 */
 	private void sendProduceRequests(Map<Integer, List<ProducerBatch>> collated, long now) {
-		for (Map.Entry<Integer, List<ProducerBatch>> entry : collated.entrySet()) {
+		for (Map.Entry<Integer, List<ProducerBatch>> entry : collated.entrySet()) {	// 发送每个broker上的所有batch
 			sendProduceRequest(now, entry.getKey(), acks, requestTimeoutMs, entry.getValue());
 		}
 	}
@@ -813,7 +832,7 @@ public class Sender implements Runnable {
 		if (transactionManager != null && transactionManager.isTransactional()) {
 			transactionalId = transactionManager.transactionalId();
 		}
-
+		// 封装request 发送出去
 		ProduceRequest.Builder requestBuilder = ProduceRequest.forMagic(minUsedMagic,
 				new ProduceRequestData()
 						.setAcks(acks)
@@ -825,6 +844,7 @@ public class Sender implements Runnable {
 		String nodeId = Integer.toString(destination);
 		ClientRequest clientRequest = client.newClientRequest(nodeId, requestBuilder, now, acks != 0,
 				requestTimeoutMs, callback);
+		// 进行发送
 		client.send(clientRequest, now);
 		log.trace("Sent produce request to {}: {}", nodeId, requestBuilder);
 	}

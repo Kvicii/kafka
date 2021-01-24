@@ -302,8 +302,9 @@ public class MemoryRecordsBuilder implements AutoCloseable {
     }
 
     public void reopenAndRewriteProducerState(long producerId, short producerEpoch, int baseSequence, boolean isTransactional) {
-        if (aborted)
+        if (aborted) {
             throw new IllegalStateException("Should not reopen a batch which is already aborted.");
+        }
         builtRecords = null;
         this.producerId = producerId;
         this.producerEpoch = producerEpoch;
@@ -313,11 +314,13 @@ public class MemoryRecordsBuilder implements AutoCloseable {
 
 
     public void close() {
-        if (aborted)
+        if (aborted) {
             throw new IllegalStateException("Cannot close MemoryRecordsBuilder as it has already been aborted");
+        }
 
-        if (builtRecords != null)
+        if (builtRecords != null) {
             return;
+        }
 
         validateProducerState();
 
@@ -327,10 +330,11 @@ public class MemoryRecordsBuilder implements AutoCloseable {
             buffer().position(initialPosition);
             builtRecords = MemoryRecords.EMPTY;
         } else {
-            if (magic > RecordBatch.MAGIC_VALUE_V1)
+            if (magic > RecordBatch.MAGIC_VALUE_V1) {
                 this.actualCompressionRatio = (float) writeDefaultBatchHeader() / this.uncompressedRecordsSizeInBytes;
-            else if (compressionType != CompressionType.NONE)
+            } else if (compressionType != CompressionType.NONE) {
                 this.actualCompressionRatio = (float) writeLegacyCompressedWrapperHeader() / this.uncompressedRecordsSizeInBytes;
+            }
 
             ByteBuffer buffer = buffer().duplicate();
             buffer.flip();

@@ -279,6 +279,8 @@ public class BufferPool {
             } else {    // 如果是消息随机大小的内存块 不做处理 等待垃圾回收线程GC
                 this.nonPooledAvailableMemory += size;  // 增加可用内存
             }
+            // 如果之前内存耗尽 有线程使用了condition阻塞在等待队列 等待获取资源
+            // deallocate方法会归还资源 并使用condition的signal方法唤醒等待队列的线程 通知阻塞的线程尝试获取锁 申请ByteBuffer
             Condition moreMem = this.waiters.peekFirst();
             if (moreMem != null) {
                 moreMem.signal();
