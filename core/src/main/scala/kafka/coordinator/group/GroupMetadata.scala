@@ -154,14 +154,13 @@ private object GroupMetadata extends Logging {
     group.protocolName = Option(protocolName)
     group.leaderId = Option(leaderId)
     group.currentStateTimestamp = currentStateTimestamp
-    members.foreach(member => {
+    members.foreach { member =>
       group.add(member, null)
       if (member.isStaticMember) {
-        info(s"Static member $member.groupInstanceId of group $groupId loaded " +
-          s"with member id ${member.memberId} at generation ${group.generationId}.")
         group.addStaticMember(member.groupInstanceId, member.memberId)
       }
-    })
+      info(s"Loaded member $member in group $groupId with generation ${group.generationId}.")
+    }
     group.subscribedTopics = group.computeSubscribedTopics()
     group
   }
@@ -298,7 +297,6 @@ private[group] class GroupMetadata(val groupId: String, initialState: GroupState
     if (members.isEmpty)
       this.protocolType = Some(member.protocolType)
 
-    assert(groupId == member.groupId)
     assert(this.protocolType.orNull == member.protocolType)
     assert(supportsProtocols(member.protocolType, MemberMetadata.plainProtocolSet(member.supportedProtocols)))
 
@@ -316,6 +314,8 @@ private[group] class GroupMetadata(val groupId: String, initialState: GroupState
       member.supportedProtocols.foreach { case (protocol, _) => supportedProtocols(protocol) -= 1 }
       if (member.isAwaitingJoin)
         numMembersAwaitingJoin -= 1
+
+      member.groupInstanceId.foreach(staticMembers.remove)
     }
 
     if (isLeader(memberId))
@@ -400,12 +400,6 @@ private[group] class GroupMetadata(val groupId: String, initialState: GroupState
       throw new IllegalArgumentException(s"unexpected null group.instance.id in addStaticMember")
     }
     staticMembers.put(groupInstanceId.get, newMemberId)
-  }
-
-  def removeStaticMember(groupInstanceId: Option[String]) = {
-    if (groupInstanceId.isDefined) {
-      staticMembers.remove(groupInstanceId.get)
-    }
   }
 
   def currentState = state

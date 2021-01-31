@@ -22,9 +22,7 @@ package org.apache.kafka.common.message;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.NavigableMap;
 import java.util.Objects;
-import java.util.TreeMap;
 import org.apache.kafka.common.errors.UnsupportedVersionException;
 import org.apache.kafka.common.protocol.ApiMessage;
 import org.apache.kafka.common.protocol.MessageSizeAccumulator;
@@ -36,13 +34,11 @@ import org.apache.kafka.common.protocol.types.Field;
 import org.apache.kafka.common.protocol.types.RawTaggedField;
 import org.apache.kafka.common.protocol.types.RawTaggedFieldWriter;
 import org.apache.kafka.common.protocol.types.Schema;
-import org.apache.kafka.common.protocol.types.Struct;
 import org.apache.kafka.common.protocol.types.Type;
 import org.apache.kafka.common.record.BaseRecords;
 import org.apache.kafka.common.record.MemoryRecords;
 import org.apache.kafka.common.utils.ByteUtils;
 
-import static java.util.Map.Entry;
 import static org.apache.kafka.common.protocol.types.Field.TaggedFieldsSection;
 
 
@@ -75,10 +71,6 @@ public class SimpleRecordsMessageData implements ApiMessage {
     
     public SimpleRecordsMessageData(Readable _readable, short _version) {
         read(_readable, _version);
-    }
-    
-    public SimpleRecordsMessageData(Struct _struct, short _version) {
-        fromStruct(_struct, _version);
     }
     
     public SimpleRecordsMessageData() {
@@ -182,41 +174,6 @@ public class SimpleRecordsMessageData implements ApiMessage {
                 throw new UnsupportedVersionException("Tagged fields were set, but version " + _version + " of this message does not support them.");
             }
         }
-    }
-    
-    @SuppressWarnings("unchecked")
-    @Override
-    public void fromStruct(Struct struct, short _version) {
-        NavigableMap<Integer, Object> _taggedFields = null;
-        this._unknownTaggedFields = null;
-        if (_version >= 1) {
-            _taggedFields = (NavigableMap<Integer, Object>) struct.get("_tagged_fields");
-        }
-        this.topic = struct.getString("topic");
-        this.recordSet = struct.getRecords("record_set");
-        if (_version >= 1) {
-            if (!_taggedFields.isEmpty()) {
-                this._unknownTaggedFields = new ArrayList<>(_taggedFields.size());
-                for (Entry<Integer, Object> entry : _taggedFields.entrySet()) {
-                    this._unknownTaggedFields.add((RawTaggedField) entry.getValue());
-                }
-            }
-        }
-    }
-    
-    @Override
-    public Struct toStruct(short _version) {
-        TreeMap<Integer, Object> _taggedFields = null;
-        if (_version >= 1) {
-            _taggedFields = new TreeMap<>();
-        }
-        Struct struct = new Struct(SCHEMAS[_version]);
-        struct.set("topic", this.topic);
-        struct.set("record_set", this.recordSet);
-        if (_version >= 1) {
-            struct.set("_tagged_fields", _taggedFields);
-        }
-        return struct;
     }
     
     @Override

@@ -23,7 +23,6 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-import java.util.TreeMap;
 import org.apache.kafka.common.errors.UnsupportedVersionException;
 import org.apache.kafka.common.protocol.ApiMessage;
 import org.apache.kafka.common.protocol.Message;
@@ -37,7 +36,6 @@ import org.apache.kafka.common.protocol.types.Field;
 import org.apache.kafka.common.protocol.types.RawTaggedField;
 import org.apache.kafka.common.protocol.types.RawTaggedFieldWriter;
 import org.apache.kafka.common.protocol.types.Schema;
-import org.apache.kafka.common.protocol.types.Struct;
 import org.apache.kafka.common.protocol.types.Type;
 import org.apache.kafka.common.utils.ByteUtils;
 import org.apache.kafka.common.utils.Bytes;
@@ -102,10 +100,6 @@ public class GroupMetadataValue implements ApiMessage {
     
     public GroupMetadataValue(Readable _readable, short _version) {
         read(_readable, _version);
-    }
-    
-    public GroupMetadataValue(Struct _struct, short _version) {
-        fromStruct(_struct, _version);
     }
     
     public GroupMetadataValue() {
@@ -224,50 +218,6 @@ public class GroupMetadataValue implements ApiMessage {
         if (_numTaggedFields > 0) {
             throw new UnsupportedVersionException("Tagged fields were set, but version " + _version + " of this message does not support them.");
         }
-    }
-    
-    @SuppressWarnings("unchecked")
-    @Override
-    public void fromStruct(Struct struct, short _version) {
-        this._unknownTaggedFields = null;
-        this.protocolType = struct.getString("protocol_type");
-        this.generation = struct.getInt("generation");
-        this.protocol = struct.getString("protocol");
-        this.leader = struct.getString("leader");
-        if (_version >= 2) {
-            this.currentStateTimestamp = struct.getLong("current_state_timestamp");
-        } else {
-            this.currentStateTimestamp = -1L;
-        }
-        {
-            Object[] _nestedObjects = struct.getArray("members");
-            this.members = new ArrayList<MemberMetadata>(_nestedObjects.length);
-            for (Object nestedObject : _nestedObjects) {
-                this.members.add(new MemberMetadata((Struct) nestedObject, _version));
-            }
-        }
-    }
-    
-    @Override
-    public Struct toStruct(short _version) {
-        TreeMap<Integer, Object> _taggedFields = null;
-        Struct struct = new Struct(SCHEMAS[_version]);
-        struct.set("protocol_type", this.protocolType);
-        struct.set("generation", this.generation);
-        struct.set("protocol", this.protocol);
-        struct.set("leader", this.leader);
-        if (_version >= 2) {
-            struct.set("current_state_timestamp", this.currentStateTimestamp);
-        }
-        {
-            Struct[] _nestedObjects = new Struct[members.size()];
-            int i = 0;
-            for (MemberMetadata element : this.members) {
-                _nestedObjects[i++] = element.toStruct(_version);
-            }
-            struct.set("members", (Object[]) _nestedObjects);
-        }
-        return struct;
     }
     
     @Override
@@ -523,10 +473,6 @@ public class GroupMetadataValue implements ApiMessage {
             read(_readable, _version);
         }
         
-        public MemberMetadata(Struct _struct, short _version) {
-            fromStruct(_struct, _version);
-        }
-        
         public MemberMetadata() {
             this.memberId = "";
             this.groupInstanceId = null;
@@ -668,47 +614,6 @@ public class GroupMetadataValue implements ApiMessage {
             if (_numTaggedFields > 0) {
                 throw new UnsupportedVersionException("Tagged fields were set, but version " + _version + " of this message does not support them.");
             }
-        }
-        
-        @SuppressWarnings("unchecked")
-        @Override
-        public void fromStruct(Struct struct, short _version) {
-            this._unknownTaggedFields = null;
-            this.memberId = struct.getString("member_id");
-            if (_version >= 3) {
-                this.groupInstanceId = struct.getString("group_instance_id");
-            } else {
-                this.groupInstanceId = null;
-            }
-            this.clientId = struct.getString("client_id");
-            this.clientHost = struct.getString("client_host");
-            if (_version >= 1) {
-                this.rebalanceTimeout = struct.getInt("rebalance_timeout");
-            } else {
-                this.rebalanceTimeout = 0;
-            }
-            this.sessionTimeout = struct.getInt("session_timeout");
-            this.subscription = struct.getByteArray("subscription");
-            this.assignment = struct.getByteArray("assignment");
-        }
-        
-        @Override
-        public Struct toStruct(short _version) {
-            TreeMap<Integer, Object> _taggedFields = null;
-            Struct struct = new Struct(SCHEMAS[_version]);
-            struct.set("member_id", this.memberId);
-            if (_version >= 3) {
-                struct.set("group_instance_id", this.groupInstanceId);
-            }
-            struct.set("client_id", this.clientId);
-            struct.set("client_host", this.clientHost);
-            if (_version >= 1) {
-                struct.set("rebalance_timeout", this.rebalanceTimeout);
-            }
-            struct.set("session_timeout", this.sessionTimeout);
-            struct.setByteArray("subscription", this.subscription);
-            struct.setByteArray("assignment", this.assignment);
-            return struct;
         }
         
         @Override

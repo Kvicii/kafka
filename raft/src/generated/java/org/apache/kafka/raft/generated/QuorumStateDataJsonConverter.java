@@ -78,7 +78,7 @@ public class QuorumStateDataJsonConverter {
                 if (!_currentVotersNode.isArray()) {
                     throw new RuntimeException("QuorumStateData expected a JSON array, but got " + _node.getNodeType());
                 }
-                ArrayList<Voter> _collection = new ArrayList<Voter>();
+                ArrayList<Voter> _collection = new ArrayList<Voter>(_currentVotersNode.size());
                 _object.currentVoters = _collection;
                 for (JsonNode _element : _currentVotersNode) {
                     _collection.add(VoterJsonConverter.read(_element, _version));

@@ -61,17 +61,12 @@ object RequestChannel extends Logging {
     val sanitizedUser: String = Sanitizer.sanitize(principal.getName)
   }
 
-  /**
-   * Request相关的各种监控指标的一个管理类 它里面构建了一个Map 封装了所有的请求JMX指标
-   *
-   * @param allowDisabledApis
-   */
-  class Metrics(allowDisabledApis: Boolean = false) {
+  class Metrics(allowControllerOnlyApis: Boolean = false) {
 
     private val metricsMap = mutable.Map[String, RequestMetrics]()
 
-    (ApiKeys.values.toSeq.filter(_.isEnabled || allowDisabledApis).map(_.name) ++
-      Seq(RequestMetrics.consumerFetchMetricName, RequestMetrics.followFetchMetricName)).foreach { name =>
+    (ApiKeys.values.toSeq.filter(!_.isControllerOnlyApi || allowControllerOnlyApis).map(_.name) ++
+        Seq(RequestMetrics.consumerFetchMetricName, RequestMetrics.followFetchMetricName)).foreach { name =>
       metricsMap.put(name, new RequestMetrics(name))
     }
 
@@ -397,11 +392,9 @@ object RequestChannel extends Logging {
 class RequestChannel(val queueSize: Int, /*Request队列的最大长度 当Broker启动时 SocketServer组件会创建RequestChannel对象 并把Broker端参数queued.max.requests赋值给queueSize 因此在默认情况下 每个RequestChannel上的队列长度是500*/
                      val metricNamePrefix: String,
                      time: Time,
-                     allowDisabledApis: Boolean = false) extends KafkaMetricsGroup /*KafkaMetricsGroup封装了许多实用的指标监控方法*/ {
-
+                     allowControllerOnlyApis: Boolean = false) extends KafkaMetricsGroup  /*KafkaMetricsGroup封装了许多实用的指标监控方法*/ {
   import RequestChannel._
-
-  val metrics = new RequestChannel.Metrics(allowDisabledApis)
+  val metrics = new RequestChannel.Metrics(allowControllerOnlyApis)
   // 每个RequestChannel对象实例创建时 会定义一个队列来保存Broker接收到的各类请求 这个队列被称为请求队列(或Request队列)
   private val requestQueue = new ArrayBlockingQueue[BaseRequest](queueSize)
   // RequestChannel下辖的Processor线程池 每个Processor线程负责具体的请求处理逻辑

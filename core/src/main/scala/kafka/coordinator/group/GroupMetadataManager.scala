@@ -1155,7 +1155,6 @@ object GroupMetadataManager {
         val members = value.members.asScala.map { memberMetadata =>
           new MemberMetadata(
             memberId = memberMetadata.memberId,
-            groupId = groupId,
             groupInstanceId = Option(memberMetadata.groupInstanceId),
             clientId = memberMetadata.clientId,
             clientHost = memberMetadata.clientHost,

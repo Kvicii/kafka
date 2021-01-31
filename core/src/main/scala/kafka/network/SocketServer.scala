@@ -92,7 +92,7 @@ class SocketServer(val config: KafkaConfig,
                    val metrics: Metrics,
                    val time: Time,
                    val credentialProvider: CredentialProvider,
-                   val allowDisabledApis: Boolean = false)
+                   val allowControllerOnlyApis: Boolean = false)
   extends Logging with KafkaMetricsGroup with BrokerReconfigurable { // SocketServer实现了BrokerReconfigurable BrokerReconfigurable使用trait表明SocketServer的一些参数配置是允许动态修改的 即在不停机的状态下可以动态修改相关参数
 
   // SocketServer请求队列的最大长度 由Broker端参数queued.max.requests指定 默认500
@@ -118,7 +118,7 @@ class SocketServer(val config: KafkaConfig,
   // 控制类请求的数量应该远远小于数据类请求 因而不需要为它创建线程池和较深的请求队列
   // 处理数据类请求专属的RequestChannel对象
   // 承载请求队列的请求处理通道
-  val dataPlaneRequestChannel = new RequestChannel(maxQueuedRequests, DataPlaneMetricPrefix, time, allowDisabledApis)
+  val dataPlaneRequestChannel = new RequestChannel(maxQueuedRequests, DataPlaneMetricPrefix, time, allowControllerOnlyApis)
   // control-plane
   // 用于处理控制类请求的Processor线程 目前只是定义了专属的Processor线程而非线程池处理控制类请求
   // 只有一个Processor线程和Acceptor线程
@@ -127,7 +127,7 @@ class SocketServer(val config: KafkaConfig,
   // 处理控制类请求专属的RequestChannel对象
   // RequestChannel的长度被硬编码为20
   val controlPlaneRequestChannelOpt: Option[RequestChannel] = config.controlPlaneListenerName.map(_ =>
-    new RequestChannel(20, ControlPlaneMetricPrefix, time, allowDisabledApis))
+    new RequestChannel(20, ControlPlaneMetricPrefix, time, allowControllerOnlyApis))
 
   private var nextProcessorId = 0
   val connectionQuotas = new ConnectionQuotas(config, time, metrics)
@@ -489,7 +489,7 @@ class SocketServer(val config: KafkaConfig,
       memoryPool,
       logContext,
       isPrivilegedListener = isPrivilegedListener,
-      allowDisabledApis = allowDisabledApis
+      allowControllerOnlyApis = allowControllerOnlyApis
     )
   }
 
@@ -929,7 +929,7 @@ private[kafka] class Processor(val id: Int,
                                logContext: LogContext,
                                connectionQueueSize: Int = ConnectionQueueSize,
                                isPrivilegedListener: Boolean = false,
-                               allowDisabledApis: Boolean = false) extends AbstractServerThread(connectionQuotas) with KafkaMetricsGroup {
+                               allowControllerOnlyApis: Boolean = false) extends AbstractServerThread(connectionQuotas) with KafkaMetricsGroup {
 
   private object ConnectionId {
     def fromString(s: String): Option[ConnectionId] = s.split("-") match {
@@ -1155,10 +1155,10 @@ private[kafka] class Processor(val id: Int,
    */
   protected def parseRequestHeader(buffer: ByteBuffer): RequestHeader = {
     val header = RequestHeader.parse(buffer)
-    if (header.apiKey.isEnabled || allowDisabledApis) {
+    if (!header.apiKey.isControllerOnlyApi || allowControllerOnlyApis) {
       header
     } else {
-      throw new InvalidRequestException("Received request for disabled api key " + header.apiKey)
+      throw new InvalidRequestException("Received request for KIP-500 controller-only api key " + header.apiKey)
     }
   }
 

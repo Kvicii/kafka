@@ -24,9 +24,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-import java.util.NavigableMap;
 import java.util.Objects;
-import java.util.TreeMap;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.errors.UnsupportedVersionException;
 import org.apache.kafka.common.protocol.ApiMessage;
@@ -41,12 +39,10 @@ import org.apache.kafka.common.protocol.types.Field;
 import org.apache.kafka.common.protocol.types.RawTaggedField;
 import org.apache.kafka.common.protocol.types.RawTaggedFieldWriter;
 import org.apache.kafka.common.protocol.types.Schema;
-import org.apache.kafka.common.protocol.types.Struct;
 import org.apache.kafka.common.protocol.types.Type;
 import org.apache.kafka.common.utils.ByteUtils;
 import org.apache.kafka.common.utils.Bytes;
 
-import static java.util.Map.Entry;
 import static org.apache.kafka.common.protocol.types.Field.TaggedFieldsSection;
 
 
@@ -128,10 +124,6 @@ public class SimpleExampleMessageData implements ApiMessage {
         read(_readable, _version);
     }
     
-    public SimpleExampleMessageData(Struct _struct, short _version) {
-        fromStruct(_struct, _version);
-    }
-    
     public SimpleExampleMessageData() {
         this.processId = Uuid.ZERO_UUID;
         this.myTaggedIntArray = new ArrayList<Integer>(0);
@@ -140,7 +132,7 @@ public class SimpleExampleMessageData implements ApiMessage {
         this.myFloat64 = Double.parseDouble("12.34");
         this.myString = "";
         this.myBytes = Bytes.EMPTY;
-        this.taggedUuid = Uuid.fromString("212d54944a8b4fdf94b388b470beb367");
+        this.taggedUuid = Uuid.fromString("H3KKO4NTRPaCWtEmm3vW7A");
         this.taggedLong = 0xcafcacafcacafcaL;
         this.zeroCopyByteBuffer = ByteUtils.EMPTY_BUF;
         this.nullableZeroCopyByteBuffer = ByteUtils.EMPTY_BUF;
@@ -187,7 +179,7 @@ public class SimpleExampleMessageData implements ApiMessage {
         {
             this.myBytes = Bytes.EMPTY;
         }
-        this.taggedUuid = Uuid.fromString("212d54944a8b4fdf94b388b470beb367");
+        this.taggedUuid = Uuid.fromString("H3KKO4NTRPaCWtEmm3vW7A");
         this.taggedLong = 0xcafcacafcacafcaL;
         if ((_version >= 1) && (_version <= 1)) {
             int length;
@@ -384,11 +376,11 @@ public class SimpleExampleMessageData implements ApiMessage {
             }
         }
         if (_version >= 1) {
-            if (this.taggedUuid != Uuid.fromString("212d54944a8b4fdf94b388b470beb367")) {
+            if (this.taggedUuid != Uuid.fromString("H3KKO4NTRPaCWtEmm3vW7A")) {
                 _numTaggedFields++;
             }
         } else {
-            if (this.taggedUuid != Uuid.fromString("212d54944a8b4fdf94b388b470beb367")) {
+            if (this.taggedUuid != Uuid.fromString("H3KKO4NTRPaCWtEmm3vW7A")) {
                 throw new UnsupportedVersionException("Attempted to write a non-default taggedUuid at version " + _version);
             }
         }
@@ -503,7 +495,7 @@ public class SimpleExampleMessageData implements ApiMessage {
                 }
             }
             {
-                if (this.taggedUuid != Uuid.fromString("212d54944a8b4fdf94b388b470beb367")) {
+                if (this.taggedUuid != Uuid.fromString("H3KKO4NTRPaCWtEmm3vW7A")) {
                     _writable.writeUnsignedVarint(6);
                     _writable.writeUnsignedVarint(16);
                     _writable.writeUuid(taggedUuid);
@@ -529,277 +521,6 @@ public class SimpleExampleMessageData implements ApiMessage {
                 throw new UnsupportedVersionException("Tagged fields were set, but version " + _version + " of this message does not support them.");
             }
         }
-    }
-    
-    @SuppressWarnings("unchecked")
-    @Override
-    public void fromStruct(Struct struct, short _version) {
-        NavigableMap<Integer, Object> _taggedFields = null;
-        this._unknownTaggedFields = null;
-        if (_version >= 1) {
-            _taggedFields = (NavigableMap<Integer, Object>) struct.get("_tagged_fields");
-        }
-        if (_version >= 1) {
-            this.processId = struct.getUuid("process_id");
-        } else {
-            this.processId = Uuid.ZERO_UUID;
-        }
-        if (_version >= 1) {
-            if (_taggedFields.containsKey(0)) {
-                Object[] _nestedObjects = (Object[]) _taggedFields.remove(0);
-                this.myTaggedIntArray = new ArrayList<Integer>(_nestedObjects.length);
-                for (Object nestedObject : _nestedObjects) {
-                    this.myTaggedIntArray.add((Integer) nestedObject);
-                }
-            } else {
-                this.myTaggedIntArray = new ArrayList<Integer>(0);
-            }
-        } else {
-            this.myTaggedIntArray = new ArrayList<Integer>(0);
-        }
-        if (_version >= 1) {
-            if (_taggedFields.containsKey(1)) {
-                this.myNullableString = (String) _taggedFields.remove(1);
-            } else {
-                this.myNullableString = null;
-            }
-        } else {
-            this.myNullableString = null;
-        }
-        if (_version >= 1) {
-            if (_taggedFields.containsKey(2)) {
-                this.myInt16 = (Short) _taggedFields.remove(2);
-            } else {
-                this.myInt16 = (short) 123;
-            }
-        } else {
-            this.myInt16 = (short) 123;
-        }
-        if (_version >= 1) {
-            if (_taggedFields.containsKey(3)) {
-                this.myFloat64 = (Double) _taggedFields.remove(3);
-            } else {
-                this.myFloat64 = Double.parseDouble("12.34");
-            }
-        } else {
-            this.myFloat64 = Double.parseDouble("12.34");
-        }
-        if (_version >= 1) {
-            if (_taggedFields.containsKey(4)) {
-                this.myString = (String) _taggedFields.remove(4);
-            } else {
-                this.myString = "";
-            }
-        } else {
-            this.myString = "";
-        }
-        if (_version >= 1) {
-            if (_taggedFields.containsKey(5)) {
-                ByteBuffer _byteBuffer = (ByteBuffer) _taggedFields.remove(5);
-                if (_byteBuffer == null) {
-                    this.myBytes = null;
-                } else {
-                    this.myBytes = MessageUtil.byteBufferToArray(_byteBuffer);
-                }
-            } else {
-                this.myBytes = Bytes.EMPTY;
-            }
-        } else {
-            this.myBytes = Bytes.EMPTY;
-        }
-        if (_version >= 1) {
-            if (_taggedFields.containsKey(6)) {
-                this.taggedUuid = (Uuid) _taggedFields.remove(6);
-            } else {
-                this.taggedUuid = Uuid.fromString("212d54944a8b4fdf94b388b470beb367");
-            }
-        } else {
-            this.taggedUuid = Uuid.fromString("212d54944a8b4fdf94b388b470beb367");
-        }
-        if (_version >= 1) {
-            if (_taggedFields.containsKey(7)) {
-                this.taggedLong = (Long) _taggedFields.remove(7);
-            } else {
-                this.taggedLong = 0xcafcacafcacafcaL;
-            }
-        } else {
-            this.taggedLong = 0xcafcacafcacafcaL;
-        }
-        if ((_version >= 1) && (_version <= 1)) {
-            this.zeroCopyByteBuffer = struct.getBytes("zero_copy_byte_buffer");
-        } else {
-            this.zeroCopyByteBuffer = ByteUtils.EMPTY_BUF;
-        }
-        if ((_version >= 1) && (_version <= 1)) {
-            this.nullableZeroCopyByteBuffer = struct.getBytes("nullable_zero_copy_byte_buffer");
-        } else {
-            this.nullableZeroCopyByteBuffer = ByteUtils.EMPTY_BUF;
-        }
-        if (_version >= 2) {
-            this.myStruct = new MyStruct((Struct) struct.get("my_struct"), _version);
-        } else {
-            this.myStruct = new MyStruct();
-        }
-        if (_version >= 2) {
-            if (_taggedFields.containsKey(8)) {
-                this.myTaggedStruct = new TaggedStruct((Struct) _taggedFields.remove(8), _version);
-            } else {
-                this.myTaggedStruct = new TaggedStruct();
-            }
-        } else {
-            this.myTaggedStruct = new TaggedStruct();
-        }
-        this.myCommonStruct = new TestCommonStruct((Struct) struct.get("my_common_struct"), _version);
-        this.myOtherCommonStruct = new TestCommonStruct((Struct) struct.get("my_other_common_struct"), _version);
-        if (_version >= 1) {
-            this.myUint16 = struct.getUnsignedShort("my_uint16");
-        } else {
-            this.myUint16 = 33000;
-        }
-        if (_version >= 1) {
-            if (!_taggedFields.isEmpty()) {
-                this._unknownTaggedFields = new ArrayList<>(_taggedFields.size());
-                for (Entry<Integer, Object> entry : _taggedFields.entrySet()) {
-                    this._unknownTaggedFields.add((RawTaggedField) entry.getValue());
-                }
-            }
-        }
-    }
-    
-    @Override
-    public Struct toStruct(short _version) {
-        TreeMap<Integer, Object> _taggedFields = null;
-        if (_version >= 1) {
-            _taggedFields = new TreeMap<>();
-        }
-        Struct struct = new Struct(SCHEMAS[_version]);
-        if (_version >= 1) {
-            struct.set("process_id", this.processId);
-        } else {
-            if (this.processId != Uuid.ZERO_UUID) {
-                throw new UnsupportedVersionException("Attempted to write a non-default processId at version " + _version);
-            }
-        }
-        if (_version >= 1) {
-            if (!this.myTaggedIntArray.isEmpty()) {
-                Integer[] _nestedObjects = new Integer[myTaggedIntArray.size()];
-                int i = 0;
-                for (Integer element : this.myTaggedIntArray) {
-                    _nestedObjects[i++] = element;
-                }
-                _taggedFields.put(0, _nestedObjects);
-            }
-        } else {
-            if (!this.myTaggedIntArray.isEmpty()) {
-                throw new UnsupportedVersionException("Attempted to write a non-default myTaggedIntArray at version " + _version);
-            }
-        }
-        if (_version >= 1) {
-            if (this.myNullableString != null) {
-                _taggedFields.put(1, myNullableString);
-            }
-        } else {
-            if (this.myNullableString != null) {
-                throw new UnsupportedVersionException("Attempted to write a non-default myNullableString at version " + _version);
-            }
-        }
-        if (_version >= 1) {
-            if (this.myInt16 != (short) 123) {
-                _taggedFields.put(2, myInt16);
-            }
-        } else {
-            if (this.myInt16 != (short) 123) {
-                throw new UnsupportedVersionException("Attempted to write a non-default myInt16 at version " + _version);
-            }
-        }
-        if (_version >= 1) {
-            if (this.myFloat64 != Double.parseDouble("12.34")) {
-                _taggedFields.put(3, myFloat64);
-            }
-        } else {
-            if (this.myFloat64 != Double.parseDouble("12.34")) {
-                throw new UnsupportedVersionException("Attempted to write a non-default myFloat64 at version " + _version);
-            }
-        }
-        if (_version >= 1) {
-            if (!this.myString.equals("")) {
-                _taggedFields.put(4, myString);
-            }
-        } else {
-            if (!this.myString.equals("")) {
-                throw new UnsupportedVersionException("Attempted to write a non-default myString at version " + _version);
-            }
-        }
-        if (_version >= 1) {
-            if (this.myBytes == null || this.myBytes.length != 0) {
-                _taggedFields.put(5, (myBytes == null) ? null : ByteBuffer.wrap(myBytes));
-            }
-        } else {
-            if (this.myBytes == null || this.myBytes.length != 0) {
-                throw new UnsupportedVersionException("Attempted to write a non-default myBytes at version " + _version);
-            }
-        }
-        if (_version >= 1) {
-            if (this.taggedUuid != Uuid.fromString("212d54944a8b4fdf94b388b470beb367")) {
-                _taggedFields.put(6, taggedUuid);
-            }
-        } else {
-            if (this.taggedUuid != Uuid.fromString("212d54944a8b4fdf94b388b470beb367")) {
-                throw new UnsupportedVersionException("Attempted to write a non-default taggedUuid at version " + _version);
-            }
-        }
-        if (_version >= 1) {
-            if (this.taggedLong != 0xcafcacafcacafcaL) {
-                _taggedFields.put(7, taggedLong);
-            }
-        } else {
-            if (this.taggedLong != 0xcafcacafcacafcaL) {
-                throw new UnsupportedVersionException("Attempted to write a non-default taggedLong at version " + _version);
-            }
-        }
-        if ((_version >= 1) && (_version <= 1)) {
-            struct.set("zero_copy_byte_buffer", this.zeroCopyByteBuffer);
-        } else {
-            if (this.zeroCopyByteBuffer.hasRemaining()) {
-                throw new UnsupportedVersionException("Attempted to write a non-default zeroCopyByteBuffer at version " + _version);
-            }
-        }
-        if ((_version >= 1) && (_version <= 1)) {
-            struct.set("nullable_zero_copy_byte_buffer", this.nullableZeroCopyByteBuffer);
-        } else {
-            if (this.nullableZeroCopyByteBuffer == null || this.nullableZeroCopyByteBuffer.remaining() > 0) {
-                throw new UnsupportedVersionException("Attempted to write a non-default nullableZeroCopyByteBuffer at version " + _version);
-            }
-        }
-        if (_version >= 2) {
-            struct.set("my_struct", this.myStruct.toStruct(_version));
-        } else {
-            if (!this.myStruct.equals(new MyStruct())) {
-                throw new UnsupportedVersionException("Attempted to write a non-default myStruct at version " + _version);
-            }
-        }
-        if (_version >= 2) {
-            if (!this.myTaggedStruct.equals(new TaggedStruct())) {
-                _taggedFields.put(8, myTaggedStruct.toStruct(_version));
-            }
-        } else {
-            if (!this.myTaggedStruct.equals(new TaggedStruct())) {
-                throw new UnsupportedVersionException("Attempted to write a non-default myTaggedStruct at version " + _version);
-            }
-        }
-        struct.set("my_common_struct", this.myCommonStruct.toStruct(_version));
-        struct.set("my_other_common_struct", this.myOtherCommonStruct.toStruct(_version));
-        if (_version >= 1) {
-            struct.set("my_uint16", this.myUint16);
-        } else {
-            if (this.myUint16 != 33000) {
-                throw new UnsupportedVersionException("Attempted to write a non-default myUint16 at version " + _version);
-            }
-        }
-        if (_version >= 1) {
-            struct.set("_tagged_fields", _taggedFields);
-        }
-        return struct;
     }
     
     @Override
@@ -886,7 +607,7 @@ public class SimpleExampleMessageData implements ApiMessage {
             }
         }
         if (_version >= 1) {
-            if (this.taggedUuid != Uuid.fromString("212d54944a8b4fdf94b388b470beb367")) {
+            if (this.taggedUuid != Uuid.fromString("H3KKO4NTRPaCWtEmm3vW7A")) {
                 _numTaggedFields++;
                 _size.addBytes(1);
                 _size.addBytes(1);
@@ -1278,10 +999,6 @@ public class SimpleExampleMessageData implements ApiMessage {
             read(_readable, _version);
         }
         
-        public MyStruct(Struct _struct, short _version) {
-            fromStruct(_struct, _version);
-        }
-        
         public MyStruct() {
             this.structId = 0;
             this.arrayInStruct = new ArrayList<StructArray>(0);
@@ -1345,52 +1062,6 @@ public class SimpleExampleMessageData implements ApiMessage {
             _numTaggedFields += _rawWriter.numFields();
             _writable.writeUnsignedVarint(_numTaggedFields);
             _rawWriter.writeRawTags(_writable, Integer.MAX_VALUE);
-        }
-        
-        @SuppressWarnings("unchecked")
-        @Override
-        public void fromStruct(Struct struct, short _version) {
-            if (_version > 2) {
-                throw new UnsupportedVersionException("Can't read version " + _version + " of MyStruct");
-            }
-            NavigableMap<Integer, Object> _taggedFields = null;
-            this._unknownTaggedFields = null;
-            _taggedFields = (NavigableMap<Integer, Object>) struct.get("_tagged_fields");
-            this.structId = struct.getInt("struct_id");
-            {
-                Object[] _nestedObjects = struct.getArray("array_in_struct");
-                this.arrayInStruct = new ArrayList<StructArray>(_nestedObjects.length);
-                for (Object nestedObject : _nestedObjects) {
-                    this.arrayInStruct.add(new StructArray((Struct) nestedObject, _version));
-                }
-            }
-            if (!_taggedFields.isEmpty()) {
-                this._unknownTaggedFields = new ArrayList<>(_taggedFields.size());
-                for (Entry<Integer, Object> entry : _taggedFields.entrySet()) {
-                    this._unknownTaggedFields.add((RawTaggedField) entry.getValue());
-                }
-            }
-        }
-        
-        @Override
-        public Struct toStruct(short _version) {
-            if (_version > 2) {
-                throw new UnsupportedVersionException("Can't write version " + _version + " of MyStruct");
-            }
-            TreeMap<Integer, Object> _taggedFields = null;
-            _taggedFields = new TreeMap<>();
-            Struct struct = new Struct(SCHEMAS[_version]);
-            struct.set("struct_id", this.structId);
-            {
-                Struct[] _nestedObjects = new Struct[arrayInStruct.size()];
-                int i = 0;
-                for (StructArray element : this.arrayInStruct) {
-                    _nestedObjects[i++] = element.toStruct(_version);
-                }
-                struct.set("array_in_struct", (Object[]) _nestedObjects);
-            }
-            struct.set("_tagged_fields", _taggedFields);
-            return struct;
         }
         
         @Override
@@ -1509,10 +1180,6 @@ public class SimpleExampleMessageData implements ApiMessage {
             read(_readable, _version);
         }
         
-        public StructArray(Struct _struct, short _version) {
-            fromStruct(_struct, _version);
-        }
-        
         public StructArray() {
             this.arrayFieldId = 0;
         }
@@ -1555,37 +1222,6 @@ public class SimpleExampleMessageData implements ApiMessage {
             _numTaggedFields += _rawWriter.numFields();
             _writable.writeUnsignedVarint(_numTaggedFields);
             _rawWriter.writeRawTags(_writable, Integer.MAX_VALUE);
-        }
-        
-        @SuppressWarnings("unchecked")
-        @Override
-        public void fromStruct(Struct struct, short _version) {
-            if (_version > 2) {
-                throw new UnsupportedVersionException("Can't read version " + _version + " of StructArray");
-            }
-            NavigableMap<Integer, Object> _taggedFields = null;
-            this._unknownTaggedFields = null;
-            _taggedFields = (NavigableMap<Integer, Object>) struct.get("_tagged_fields");
-            this.arrayFieldId = struct.getInt("array_field_id");
-            if (!_taggedFields.isEmpty()) {
-                this._unknownTaggedFields = new ArrayList<>(_taggedFields.size());
-                for (Entry<Integer, Object> entry : _taggedFields.entrySet()) {
-                    this._unknownTaggedFields.add((RawTaggedField) entry.getValue());
-                }
-            }
-        }
-        
-        @Override
-        public Struct toStruct(short _version) {
-            if (_version > 2) {
-                throw new UnsupportedVersionException("Can't write version " + _version + " of StructArray");
-            }
-            TreeMap<Integer, Object> _taggedFields = null;
-            _taggedFields = new TreeMap<>();
-            Struct struct = new Struct(SCHEMAS[_version]);
-            struct.set("array_field_id", this.arrayFieldId);
-            struct.set("_tagged_fields", _taggedFields);
-            return struct;
         }
         
         @Override
@@ -1677,10 +1313,6 @@ public class SimpleExampleMessageData implements ApiMessage {
             read(_readable, _version);
         }
         
-        public TaggedStruct(Struct _struct, short _version) {
-            fromStruct(_struct, _version);
-        }
-        
         public TaggedStruct() {
             this.structId = "";
         }
@@ -1740,37 +1372,6 @@ public class SimpleExampleMessageData implements ApiMessage {
             _numTaggedFields += _rawWriter.numFields();
             _writable.writeUnsignedVarint(_numTaggedFields);
             _rawWriter.writeRawTags(_writable, Integer.MAX_VALUE);
-        }
-        
-        @SuppressWarnings("unchecked")
-        @Override
-        public void fromStruct(Struct struct, short _version) {
-            if (_version > 2) {
-                throw new UnsupportedVersionException("Can't read version " + _version + " of TaggedStruct");
-            }
-            NavigableMap<Integer, Object> _taggedFields = null;
-            this._unknownTaggedFields = null;
-            _taggedFields = (NavigableMap<Integer, Object>) struct.get("_tagged_fields");
-            this.structId = struct.getString("struct_id");
-            if (!_taggedFields.isEmpty()) {
-                this._unknownTaggedFields = new ArrayList<>(_taggedFields.size());
-                for (Entry<Integer, Object> entry : _taggedFields.entrySet()) {
-                    this._unknownTaggedFields.add((RawTaggedField) entry.getValue());
-                }
-            }
-        }
-        
-        @Override
-        public Struct toStruct(short _version) {
-            if (_version > 2) {
-                throw new UnsupportedVersionException("Can't write version " + _version + " of TaggedStruct");
-            }
-            TreeMap<Integer, Object> _taggedFields = null;
-            _taggedFields = new TreeMap<>();
-            Struct struct = new Struct(SCHEMAS[_version]);
-            struct.set("struct_id", this.structId);
-            struct.set("_tagged_fields", _taggedFields);
-            return struct;
         }
         
         @Override
@@ -1883,10 +1484,6 @@ public class SimpleExampleMessageData implements ApiMessage {
             read(_readable, _version);
         }
         
-        public TestCommonStruct(Struct _struct, short _version) {
-            fromStruct(_struct, _version);
-        }
-        
         public TestCommonStruct() {
             this.foo = 123;
             this.bar = 123;
@@ -1937,41 +1534,6 @@ public class SimpleExampleMessageData implements ApiMessage {
                     throw new UnsupportedVersionException("Tagged fields were set, but version " + _version + " of this message does not support them.");
                 }
             }
-        }
-        
-        @SuppressWarnings("unchecked")
-        @Override
-        public void fromStruct(Struct struct, short _version) {
-            NavigableMap<Integer, Object> _taggedFields = null;
-            this._unknownTaggedFields = null;
-            if (_version >= 1) {
-                _taggedFields = (NavigableMap<Integer, Object>) struct.get("_tagged_fields");
-            }
-            this.foo = struct.getInt("foo");
-            this.bar = struct.getInt("bar");
-            if (_version >= 1) {
-                if (!_taggedFields.isEmpty()) {
-                    this._unknownTaggedFields = new ArrayList<>(_taggedFields.size());
-                    for (Entry<Integer, Object> entry : _taggedFields.entrySet()) {
-                        this._unknownTaggedFields.add((RawTaggedField) entry.getValue());
-                    }
-                }
-            }
-        }
-        
-        @Override
-        public Struct toStruct(short _version) {
-            TreeMap<Integer, Object> _taggedFields = null;
-            if (_version >= 1) {
-                _taggedFields = new TreeMap<>();
-            }
-            Struct struct = new Struct(SCHEMAS[_version]);
-            struct.set("foo", this.foo);
-            struct.set("bar", this.bar);
-            if (_version >= 1) {
-                struct.set("_tagged_fields", _taggedFields);
-            }
-            return struct;
         }
         
         @Override

@@ -22,7 +22,6 @@ package kafka.internals.generated;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.TreeMap;
 import org.apache.kafka.common.errors.UnsupportedVersionException;
 import org.apache.kafka.common.protocol.ApiMessage;
 import org.apache.kafka.common.protocol.MessageSizeAccumulator;
@@ -34,7 +33,6 @@ import org.apache.kafka.common.protocol.types.Field;
 import org.apache.kafka.common.protocol.types.RawTaggedField;
 import org.apache.kafka.common.protocol.types.RawTaggedFieldWriter;
 import org.apache.kafka.common.protocol.types.Schema;
-import org.apache.kafka.common.protocol.types.Struct;
 import org.apache.kafka.common.protocol.types.Type;
 import org.apache.kafka.common.utils.ByteUtils;
 
@@ -64,10 +62,6 @@ public class OffsetCommitKey implements ApiMessage {
     
     public OffsetCommitKey(Readable _readable, short _version) {
         read(_readable, _version);
-    }
-    
-    public OffsetCommitKey(Struct _struct, short _version) {
-        fromStruct(_struct, _version);
     }
     
     public OffsetCommitKey() {
@@ -138,25 +132,6 @@ public class OffsetCommitKey implements ApiMessage {
         if (_numTaggedFields > 0) {
             throw new UnsupportedVersionException("Tagged fields were set, but version " + _version + " of this message does not support them.");
         }
-    }
-    
-    @SuppressWarnings("unchecked")
-    @Override
-    public void fromStruct(Struct struct, short _version) {
-        this._unknownTaggedFields = null;
-        this.group = struct.getString("group");
-        this.topic = struct.getString("topic");
-        this.partition = struct.getInt("partition");
-    }
-    
-    @Override
-    public Struct toStruct(short _version) {
-        TreeMap<Integer, Object> _taggedFields = null;
-        Struct struct = new Struct(SCHEMAS[_version]);
-        struct.set("group", this.group);
-        struct.set("topic", this.topic);
-        struct.set("partition", this.partition);
-        return struct;
     }
     
     @Override

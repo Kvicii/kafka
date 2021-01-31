@@ -64,7 +64,7 @@ public class SimpleExampleMessageDataJsonConverter {
             if (!_myTaggedIntArrayNode.isArray()) {
                 throw new RuntimeException("SimpleExampleMessageData expected a JSON array, but got " + _node.getNodeType());
             }
-            ArrayList<Integer> _collection = new ArrayList<Integer>();
+            ArrayList<Integer> _collection = new ArrayList<Integer>(_myTaggedIntArrayNode.size());
             _object.myTaggedIntArray = _collection;
             for (JsonNode _element : _myTaggedIntArrayNode) {
                 _collection.add(MessageUtil.jsonNodeToInt(_element, "SimpleExampleMessageData element"));
@@ -116,7 +116,7 @@ public class SimpleExampleMessageDataJsonConverter {
         }
         JsonNode _taggedUuidNode = _node.get("taggedUuid");
         if (_taggedUuidNode == null) {
-            _object.taggedUuid = Uuid.fromString("212d54944a8b4fdf94b388b470beb367");
+            _object.taggedUuid = Uuid.fromString("H3KKO4NTRPaCWtEmm3vW7A");
         } else {
             if (!_taggedUuidNode.isTextual()) {
                 throw new RuntimeException("SimpleExampleMessageData expected a JSON string type, but got " + _node.getNodeType());
@@ -265,11 +265,11 @@ public class SimpleExampleMessageDataJsonConverter {
             }
         }
         if (_version >= 1) {
-            if (_object.taggedUuid != Uuid.fromString("212d54944a8b4fdf94b388b470beb367")) {
+            if (_object.taggedUuid != Uuid.fromString("H3KKO4NTRPaCWtEmm3vW7A")) {
                 _node.set("taggedUuid", new TextNode(_object.taggedUuid.toString()));
             }
         } else {
-            if (_object.taggedUuid != Uuid.fromString("212d54944a8b4fdf94b388b470beb367")) {
+            if (_object.taggedUuid != Uuid.fromString("H3KKO4NTRPaCWtEmm3vW7A")) {
                 throw new UnsupportedVersionException("Attempted to write a non-default taggedUuid at version " + _version);
             }
         }
@@ -350,7 +350,7 @@ public class SimpleExampleMessageDataJsonConverter {
                 if (!_arrayInStructNode.isArray()) {
                     throw new RuntimeException("MyStruct expected a JSON array, but got " + _node.getNodeType());
                 }
-                ArrayList<StructArray> _collection = new ArrayList<StructArray>();
+                ArrayList<StructArray> _collection = new ArrayList<StructArray>(_arrayInStructNode.size());
                 _object.arrayInStruct = _collection;
                 for (JsonNode _element : _arrayInStructNode) {
                     _collection.add(StructArrayJsonConverter.read(_element, _version));

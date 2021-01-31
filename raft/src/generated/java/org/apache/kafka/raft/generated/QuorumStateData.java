@@ -22,8 +22,6 @@ package org.apache.kafka.raft.generated;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.NavigableMap;
-import java.util.TreeMap;
 import org.apache.kafka.common.protocol.ApiMessage;
 import org.apache.kafka.common.protocol.Message;
 import org.apache.kafka.common.protocol.MessageSizeAccumulator;
@@ -36,11 +34,9 @@ import org.apache.kafka.common.protocol.types.Field;
 import org.apache.kafka.common.protocol.types.RawTaggedField;
 import org.apache.kafka.common.protocol.types.RawTaggedFieldWriter;
 import org.apache.kafka.common.protocol.types.Schema;
-import org.apache.kafka.common.protocol.types.Struct;
 import org.apache.kafka.common.protocol.types.Type;
 import org.apache.kafka.common.utils.ByteUtils;
 
-import static java.util.Map.Entry;
 import static org.apache.kafka.common.protocol.types.Field.TaggedFieldsSection;
 
 
@@ -74,10 +70,6 @@ public class QuorumStateData implements ApiMessage {
     
     public QuorumStateData(Readable _readable, short _version) {
         read(_readable, _version);
-    }
-    
-    public QuorumStateData(Struct _struct, short _version) {
-        fromStruct(_struct, _version);
     }
     
     public QuorumStateData() {
@@ -171,62 +163,6 @@ public class QuorumStateData implements ApiMessage {
         _numTaggedFields += _rawWriter.numFields();
         _writable.writeUnsignedVarint(_numTaggedFields);
         _rawWriter.writeRawTags(_writable, Integer.MAX_VALUE);
-    }
-    
-    @SuppressWarnings("unchecked")
-    @Override
-    public void fromStruct(Struct struct, short _version) {
-        NavigableMap<Integer, Object> _taggedFields = null;
-        this._unknownTaggedFields = null;
-        _taggedFields = (NavigableMap<Integer, Object>) struct.get("_tagged_fields");
-        this.clusterId = struct.getString("cluster_id");
-        this.leaderId = struct.getInt("leader_id");
-        this.leaderEpoch = struct.getInt("leader_epoch");
-        this.votedId = struct.getInt("voted_id");
-        this.appliedOffset = struct.getLong("applied_offset");
-        {
-            Object[] _nestedObjects = struct.getArray("current_voters");
-            if (_nestedObjects == null) {
-                this.currentVoters = null;
-            } else {
-                this.currentVoters = new ArrayList<Voter>(_nestedObjects.length);
-                for (Object nestedObject : _nestedObjects) {
-                    this.currentVoters.add(new Voter((Struct) nestedObject, _version));
-                }
-            }
-        }
-        if (!_taggedFields.isEmpty()) {
-            this._unknownTaggedFields = new ArrayList<>(_taggedFields.size());
-            for (Entry<Integer, Object> entry : _taggedFields.entrySet()) {
-                this._unknownTaggedFields.add((RawTaggedField) entry.getValue());
-            }
-        }
-    }
-    
-    @Override
-    public Struct toStruct(short _version) {
-        TreeMap<Integer, Object> _taggedFields = null;
-        _taggedFields = new TreeMap<>();
-        Struct struct = new Struct(SCHEMAS[_version]);
-        struct.set("cluster_id", this.clusterId);
-        struct.set("leader_id", this.leaderId);
-        struct.set("leader_epoch", this.leaderEpoch);
-        struct.set("voted_id", this.votedId);
-        struct.set("applied_offset", this.appliedOffset);
-        {
-            if (currentVoters == null) {
-                struct.set("current_voters", null);
-            } else {
-                Struct[] _nestedObjects = new Struct[currentVoters.size()];
-                int i = 0;
-                for (Voter element : this.currentVoters) {
-                    _nestedObjects[i++] = element.toStruct(_version);
-                }
-                struct.set("current_voters", (Object[]) _nestedObjects);
-            }
-        }
-        struct.set("_tagged_fields", _taggedFields);
-        return struct;
     }
     
     @Override
@@ -412,10 +348,6 @@ public class QuorumStateData implements ApiMessage {
             read(_readable, _version);
         }
         
-        public Voter(Struct _struct, short _version) {
-            fromStruct(_struct, _version);
-        }
-        
         public Voter() {
             this.voterId = 0;
         }
@@ -455,31 +387,6 @@ public class QuorumStateData implements ApiMessage {
             _numTaggedFields += _rawWriter.numFields();
             _writable.writeUnsignedVarint(_numTaggedFields);
             _rawWriter.writeRawTags(_writable, Integer.MAX_VALUE);
-        }
-        
-        @SuppressWarnings("unchecked")
-        @Override
-        public void fromStruct(Struct struct, short _version) {
-            NavigableMap<Integer, Object> _taggedFields = null;
-            this._unknownTaggedFields = null;
-            _taggedFields = (NavigableMap<Integer, Object>) struct.get("_tagged_fields");
-            this.voterId = struct.getInt("voter_id");
-            if (!_taggedFields.isEmpty()) {
-                this._unknownTaggedFields = new ArrayList<>(_taggedFields.size());
-                for (Entry<Integer, Object> entry : _taggedFields.entrySet()) {
-                    this._unknownTaggedFields.add((RawTaggedField) entry.getValue());
-                }
-            }
-        }
-        
-        @Override
-        public Struct toStruct(short _version) {
-            TreeMap<Integer, Object> _taggedFields = null;
-            _taggedFields = new TreeMap<>();
-            Struct struct = new Struct(SCHEMAS[_version]);
-            struct.set("voter_id", this.voterId);
-            struct.set("_tagged_fields", _taggedFields);
-            return struct;
         }
         
         @Override

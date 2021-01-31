@@ -22,7 +22,6 @@ package kafka.internals.generated;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.TreeMap;
 import org.apache.kafka.common.errors.UnsupportedVersionException;
 import org.apache.kafka.common.protocol.ApiMessage;
 import org.apache.kafka.common.protocol.MessageSizeAccumulator;
@@ -34,7 +33,6 @@ import org.apache.kafka.common.protocol.types.Field;
 import org.apache.kafka.common.protocol.types.RawTaggedField;
 import org.apache.kafka.common.protocol.types.RawTaggedFieldWriter;
 import org.apache.kafka.common.protocol.types.Schema;
-import org.apache.kafka.common.protocol.types.Struct;
 import org.apache.kafka.common.protocol.types.Type;
 import org.apache.kafka.common.utils.ByteUtils;
 
@@ -89,10 +87,6 @@ public class OffsetCommitValue implements ApiMessage {
     
     public OffsetCommitValue(Readable _readable, short _version) {
         read(_readable, _version);
-    }
-    
-    public OffsetCommitValue(Struct _struct, short _version) {
-        fromStruct(_struct, _version);
     }
     
     public OffsetCommitValue() {
@@ -167,41 +161,6 @@ public class OffsetCommitValue implements ApiMessage {
         if (_numTaggedFields > 0) {
             throw new UnsupportedVersionException("Tagged fields were set, but version " + _version + " of this message does not support them.");
         }
-    }
-    
-    @SuppressWarnings("unchecked")
-    @Override
-    public void fromStruct(Struct struct, short _version) {
-        this._unknownTaggedFields = null;
-        this.offset = struct.getLong("offset");
-        if (_version >= 3) {
-            this.leaderEpoch = struct.getInt("leader_epoch");
-        } else {
-            this.leaderEpoch = -1;
-        }
-        this.metadata = struct.getString("metadata");
-        this.commitTimestamp = struct.getLong("commit_timestamp");
-        if ((_version >= 1) && (_version <= 1)) {
-            this.expireTimestamp = struct.getLong("expire_timestamp");
-        } else {
-            this.expireTimestamp = -1L;
-        }
-    }
-    
-    @Override
-    public Struct toStruct(short _version) {
-        TreeMap<Integer, Object> _taggedFields = null;
-        Struct struct = new Struct(SCHEMAS[_version]);
-        struct.set("offset", this.offset);
-        if (_version >= 3) {
-            struct.set("leader_epoch", this.leaderEpoch);
-        }
-        struct.set("metadata", this.metadata);
-        struct.set("commit_timestamp", this.commitTimestamp);
-        if ((_version >= 1) && (_version <= 1)) {
-            struct.set("expire_timestamp", this.expireTimestamp);
-        }
-        return struct;
     }
     
     @Override

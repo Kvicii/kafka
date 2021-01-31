@@ -22,7 +22,6 @@ package kafka.internals.generated;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.TreeMap;
 import org.apache.kafka.common.errors.UnsupportedVersionException;
 import org.apache.kafka.common.protocol.ApiMessage;
 import org.apache.kafka.common.protocol.Message;
@@ -36,7 +35,6 @@ import org.apache.kafka.common.protocol.types.Field;
 import org.apache.kafka.common.protocol.types.RawTaggedField;
 import org.apache.kafka.common.protocol.types.RawTaggedFieldWriter;
 import org.apache.kafka.common.protocol.types.Schema;
-import org.apache.kafka.common.protocol.types.Struct;
 import org.apache.kafka.common.protocol.types.Type;
 import org.apache.kafka.common.utils.ByteUtils;
 
@@ -71,10 +69,6 @@ public class TransactionLogValue implements ApiMessage {
     
     public TransactionLogValue(Readable _readable, short _version) {
         read(_readable, _version);
-    }
-    
-    public TransactionLogValue(Struct _struct, short _version) {
-        fromStruct(_struct, _version);
     }
     
     public TransactionLogValue() {
@@ -148,54 +142,6 @@ public class TransactionLogValue implements ApiMessage {
         if (_numTaggedFields > 0) {
             throw new UnsupportedVersionException("Tagged fields were set, but version " + _version + " of this message does not support them.");
         }
-    }
-    
-    @SuppressWarnings("unchecked")
-    @Override
-    public void fromStruct(Struct struct, short _version) {
-        this._unknownTaggedFields = null;
-        this.producerId = struct.getLong("producer_id");
-        this.producerEpoch = struct.getShort("producer_epoch");
-        this.transactionTimeoutMs = struct.getInt("transaction_timeout_ms");
-        this.transactionStatus = struct.getByte("transaction_status");
-        {
-            Object[] _nestedObjects = struct.getArray("transaction_partitions");
-            if (_nestedObjects == null) {
-                this.transactionPartitions = null;
-            } else {
-                this.transactionPartitions = new ArrayList<PartitionsSchema>(_nestedObjects.length);
-                for (Object nestedObject : _nestedObjects) {
-                    this.transactionPartitions.add(new PartitionsSchema((Struct) nestedObject, _version));
-                }
-            }
-        }
-        this.transactionLastUpdateTimestampMs = struct.getLong("transaction_last_update_timestamp_ms");
-        this.transactionStartTimestampMs = struct.getLong("transaction_start_timestamp_ms");
-    }
-    
-    @Override
-    public Struct toStruct(short _version) {
-        TreeMap<Integer, Object> _taggedFields = null;
-        Struct struct = new Struct(SCHEMAS[_version]);
-        struct.set("producer_id", this.producerId);
-        struct.set("producer_epoch", this.producerEpoch);
-        struct.set("transaction_timeout_ms", this.transactionTimeoutMs);
-        struct.set("transaction_status", this.transactionStatus);
-        {
-            if (transactionPartitions == null) {
-                struct.set("transaction_partitions", null);
-            } else {
-                Struct[] _nestedObjects = new Struct[transactionPartitions.size()];
-                int i = 0;
-                for (PartitionsSchema element : this.transactionPartitions) {
-                    _nestedObjects[i++] = element.toStruct(_version);
-                }
-                struct.set("transaction_partitions", (Object[]) _nestedObjects);
-            }
-        }
-        struct.set("transaction_last_update_timestamp_ms", this.transactionLastUpdateTimestampMs);
-        struct.set("transaction_start_timestamp_ms", this.transactionStartTimestampMs);
-        return struct;
     }
     
     @Override
@@ -386,10 +332,6 @@ public class TransactionLogValue implements ApiMessage {
             read(_readable, _version);
         }
         
-        public PartitionsSchema(Struct _struct, short _version) {
-            fromStruct(_struct, _version);
-        }
-        
         public PartitionsSchema() {
             this.topic = "";
             this.partitionIds = new ArrayList<Integer>(0);
@@ -452,36 +394,6 @@ public class TransactionLogValue implements ApiMessage {
             if (_numTaggedFields > 0) {
                 throw new UnsupportedVersionException("Tagged fields were set, but version " + _version + " of this message does not support them.");
             }
-        }
-        
-        @SuppressWarnings("unchecked")
-        @Override
-        public void fromStruct(Struct struct, short _version) {
-            this._unknownTaggedFields = null;
-            this.topic = struct.getString("topic");
-            {
-                Object[] _nestedObjects = struct.getArray("partition_ids");
-                this.partitionIds = new ArrayList<Integer>(_nestedObjects.length);
-                for (Object nestedObject : _nestedObjects) {
-                    this.partitionIds.add((Integer) nestedObject);
-                }
-            }
-        }
-        
-        @Override
-        public Struct toStruct(short _version) {
-            TreeMap<Integer, Object> _taggedFields = null;
-            Struct struct = new Struct(SCHEMAS[_version]);
-            struct.set("topic", this.topic);
-            {
-                Integer[] _nestedObjects = new Integer[partitionIds.size()];
-                int i = 0;
-                for (Integer element : this.partitionIds) {
-                    _nestedObjects[i++] = element;
-                }
-                struct.set("partition_ids", (Object[]) _nestedObjects);
-            }
-            return struct;
         }
         
         @Override

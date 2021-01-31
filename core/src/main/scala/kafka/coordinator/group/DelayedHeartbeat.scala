@@ -32,7 +32,7 @@ private[group] class DelayedHeartbeat(coordinator: GroupCoordinator,
 
   override def tryComplete(): Boolean = coordinator.tryCompleteHeartbeat(group, memberId, isPending, forceComplete _)
 
-  override def onExpiration() = coordinator.onExpireHeartbeat(group, memberId, isPending)
+  override def onExpiration(): Unit = coordinator.onExpireHeartbeat(group, memberId, isPending)
 
-  override def onComplete() = coordinator.onCompleteHeartbeat()
+  override def onComplete(): Unit = {}
 }

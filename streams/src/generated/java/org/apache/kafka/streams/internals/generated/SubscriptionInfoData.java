@@ -22,7 +22,6 @@ package org.apache.kafka.streams.internals.generated;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-import java.util.TreeMap;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.errors.UnsupportedVersionException;
 import org.apache.kafka.common.protocol.ApiMessage;
@@ -37,7 +36,6 @@ import org.apache.kafka.common.protocol.types.Field;
 import org.apache.kafka.common.protocol.types.RawTaggedField;
 import org.apache.kafka.common.protocol.types.RawTaggedFieldWriter;
 import org.apache.kafka.common.protocol.types.Schema;
-import org.apache.kafka.common.protocol.types.Struct;
 import org.apache.kafka.common.protocol.types.Type;
 import org.apache.kafka.common.utils.ByteUtils;
 import org.apache.kafka.common.utils.Bytes;
@@ -136,10 +134,6 @@ public class SubscriptionInfoData implements ApiMessage {
     
     public SubscriptionInfoData(Readable _readable, short _version) {
         read(_readable, _version);
-    }
-    
-    public SubscriptionInfoData(Struct _struct, short _version) {
-        fromStruct(_struct, _version);
     }
     
     public SubscriptionInfoData() {
@@ -318,134 +312,6 @@ public class SubscriptionInfoData implements ApiMessage {
         if (_numTaggedFields > 0) {
             throw new UnsupportedVersionException("Tagged fields were set, but version " + _version + " of this message does not support them.");
         }
-    }
-    
-    @SuppressWarnings("unchecked")
-    @Override
-    public void fromStruct(Struct struct, short _version) {
-        this._unknownTaggedFields = null;
-        this.version = struct.getInt("version");
-        if (_version >= 3) {
-            this.latestSupportedVersion = struct.getInt("latest_supported_version");
-        } else {
-            this.latestSupportedVersion = -1;
-        }
-        this.processId = struct.getUuid("process_id");
-        if (_version <= 6) {
-            Object[] _nestedObjects = struct.getArray("prev_tasks");
-            this.prevTasks = new ArrayList<TaskId>(_nestedObjects.length);
-            for (Object nestedObject : _nestedObjects) {
-                this.prevTasks.add(new TaskId((Struct) nestedObject, _version));
-            }
-        } else {
-            this.prevTasks = new ArrayList<TaskId>(0);
-        }
-        if (_version <= 6) {
-            Object[] _nestedObjects = struct.getArray("standby_tasks");
-            this.standbyTasks = new ArrayList<TaskId>(_nestedObjects.length);
-            for (Object nestedObject : _nestedObjects) {
-                this.standbyTasks.add(new TaskId((Struct) nestedObject, _version));
-            }
-        } else {
-            this.standbyTasks = new ArrayList<TaskId>(0);
-        }
-        if (_version >= 2) {
-            this.userEndPoint = struct.getByteArray("user_end_point");
-        } else {
-            this.userEndPoint = Bytes.EMPTY;
-        }
-        if (_version >= 7) {
-            Object[] _nestedObjects = struct.getArray("task_offset_sums");
-            this.taskOffsetSums = new ArrayList<TaskOffsetSum>(_nestedObjects.length);
-            for (Object nestedObject : _nestedObjects) {
-                this.taskOffsetSums.add(new TaskOffsetSum((Struct) nestedObject, _version));
-            }
-        } else {
-            this.taskOffsetSums = new ArrayList<TaskOffsetSum>(0);
-        }
-        if (_version >= 8) {
-            this.uniqueField = struct.getByte("unique_field");
-        } else {
-            this.uniqueField = (byte) 0;
-        }
-        if (_version >= 9) {
-            this.errorCode = struct.getInt("error_code");
-        } else {
-            this.errorCode = 0;
-        }
-    }
-    
-    @Override
-    public Struct toStruct(short _version) {
-        TreeMap<Integer, Object> _taggedFields = null;
-        Struct struct = new Struct(SCHEMAS[_version]);
-        struct.set("version", this.version);
-        if (_version >= 3) {
-            struct.set("latest_supported_version", this.latestSupportedVersion);
-        } else {
-            if (this.latestSupportedVersion != -1) {
-                throw new UnsupportedVersionException("Attempted to write a non-default latestSupportedVersion at version " + _version);
-            }
-        }
-        struct.set("process_id", this.processId);
-        if (_version <= 6) {
-            Struct[] _nestedObjects = new Struct[prevTasks.size()];
-            int i = 0;
-            for (TaskId element : this.prevTasks) {
-                _nestedObjects[i++] = element.toStruct(_version);
-            }
-            struct.set("prev_tasks", (Object[]) _nestedObjects);
-        } else {
-            if (!this.prevTasks.isEmpty()) {
-                throw new UnsupportedVersionException("Attempted to write a non-default prevTasks at version " + _version);
-            }
-        }
-        if (_version <= 6) {
-            Struct[] _nestedObjects = new Struct[standbyTasks.size()];
-            int i = 0;
-            for (TaskId element : this.standbyTasks) {
-                _nestedObjects[i++] = element.toStruct(_version);
-            }
-            struct.set("standby_tasks", (Object[]) _nestedObjects);
-        } else {
-            if (!this.standbyTasks.isEmpty()) {
-                throw new UnsupportedVersionException("Attempted to write a non-default standbyTasks at version " + _version);
-            }
-        }
-        if (_version >= 2) {
-            struct.setByteArray("user_end_point", this.userEndPoint);
-        } else {
-            if (this.userEndPoint.length != 0) {
-                throw new UnsupportedVersionException("Attempted to write a non-default userEndPoint at version " + _version);
-            }
-        }
-        if (_version >= 7) {
-            Struct[] _nestedObjects = new Struct[taskOffsetSums.size()];
-            int i = 0;
-            for (TaskOffsetSum element : this.taskOffsetSums) {
-                _nestedObjects[i++] = element.toStruct(_version);
-            }
-            struct.set("task_offset_sums", (Object[]) _nestedObjects);
-        } else {
-            if (!this.taskOffsetSums.isEmpty()) {
-                throw new UnsupportedVersionException("Attempted to write a non-default taskOffsetSums at version " + _version);
-            }
-        }
-        if (_version >= 8) {
-            struct.set("unique_field", this.uniqueField);
-        } else {
-            if (this.uniqueField != (byte) 0) {
-                throw new UnsupportedVersionException("Attempted to write a non-default uniqueField at version " + _version);
-            }
-        }
-        if (_version >= 9) {
-            struct.set("error_code", this.errorCode);
-        } else {
-            if (this.errorCode != 0) {
-                throw new UnsupportedVersionException("Attempted to write a non-default errorCode at version " + _version);
-            }
-        }
-        return struct;
     }
     
     @Override
@@ -714,10 +580,6 @@ public class SubscriptionInfoData implements ApiMessage {
             read(_readable, _version);
         }
         
-        public PartitionToOffsetSum(Struct _struct, short _version) {
-            fromStruct(_struct, _version);
-        }
-        
         public PartitionToOffsetSum() {
             this.partition = 0;
             this.offsetSum = 0L;
@@ -751,23 +613,6 @@ public class SubscriptionInfoData implements ApiMessage {
             if (_numTaggedFields > 0) {
                 throw new UnsupportedVersionException("Tagged fields were set, but version " + _version + " of this message does not support them.");
             }
-        }
-        
-        @SuppressWarnings("unchecked")
-        @Override
-        public void fromStruct(Struct struct, short _version) {
-            this._unknownTaggedFields = null;
-            this.partition = struct.getInt("partition");
-            this.offsetSum = struct.getLong("offset_sum");
-        }
-        
-        @Override
-        public Struct toStruct(short _version) {
-            TreeMap<Integer, Object> _taggedFields = null;
-            Struct struct = new Struct(SCHEMAS[_version]);
-            struct.set("partition", this.partition);
-            struct.set("offset_sum", this.offsetSum);
-            return struct;
         }
         
         @Override
@@ -895,10 +740,6 @@ public class SubscriptionInfoData implements ApiMessage {
             read(_readable, _version);
         }
         
-        public TaskId(Struct _struct, short _version) {
-            fromStruct(_struct, _version);
-        }
-        
         public TaskId() {
             this.topicGroupId = 0;
             this.partition = 0;
@@ -932,23 +773,6 @@ public class SubscriptionInfoData implements ApiMessage {
             if (_numTaggedFields > 0) {
                 throw new UnsupportedVersionException("Tagged fields were set, but version " + _version + " of this message does not support them.");
             }
-        }
-        
-        @SuppressWarnings("unchecked")
-        @Override
-        public void fromStruct(Struct struct, short _version) {
-            this._unknownTaggedFields = null;
-            this.topicGroupId = struct.getInt("topic_group_id");
-            this.partition = struct.getInt("partition");
-        }
-        
-        @Override
-        public Struct toStruct(short _version) {
-            TreeMap<Integer, Object> _taggedFields = null;
-            Struct struct = new Struct(SCHEMAS[_version]);
-            struct.set("topic_group_id", this.topicGroupId);
-            struct.set("partition", this.partition);
-            return struct;
         }
         
         @Override
@@ -1064,10 +888,6 @@ public class SubscriptionInfoData implements ApiMessage {
             read(_readable, _version);
         }
         
-        public TaskOffsetSum(Struct _struct, short _version) {
-            fromStruct(_struct, _version);
-        }
-        
         public TaskOffsetSum() {
             this.topicGroupId = 0;
             this.partitionToOffsetSum = new ArrayList<PartitionToOffsetSum>(0);
@@ -1116,36 +936,6 @@ public class SubscriptionInfoData implements ApiMessage {
             if (_numTaggedFields > 0) {
                 throw new UnsupportedVersionException("Tagged fields were set, but version " + _version + " of this message does not support them.");
             }
-        }
-        
-        @SuppressWarnings("unchecked")
-        @Override
-        public void fromStruct(Struct struct, short _version) {
-            this._unknownTaggedFields = null;
-            this.topicGroupId = struct.getInt("topic_group_id");
-            {
-                Object[] _nestedObjects = struct.getArray("partition_to_offset_sum");
-                this.partitionToOffsetSum = new ArrayList<PartitionToOffsetSum>(_nestedObjects.length);
-                for (Object nestedObject : _nestedObjects) {
-                    this.partitionToOffsetSum.add(new PartitionToOffsetSum((Struct) nestedObject, _version));
-                }
-            }
-        }
-        
-        @Override
-        public Struct toStruct(short _version) {
-            TreeMap<Integer, Object> _taggedFields = null;
-            Struct struct = new Struct(SCHEMAS[_version]);
-            struct.set("topic_group_id", this.topicGroupId);
-            {
-                Struct[] _nestedObjects = new Struct[partitionToOffsetSum.size()];
-                int i = 0;
-                for (PartitionToOffsetSum element : this.partitionToOffsetSum) {
-                    _nestedObjects[i++] = element.toStruct(_version);
-                }
-                struct.set("partition_to_offset_sum", (Object[]) _nestedObjects);
-            }
-            return struct;
         }
         
         @Override

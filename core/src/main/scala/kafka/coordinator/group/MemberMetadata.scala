@@ -91,7 +91,6 @@ private object MemberMetadata {
  */
 @nonthreadsafe
 private[group] class MemberMetadata(var memberId: String,
-                                    val groupId: String,
                                     val groupInstanceId: Option[String],
                                     val clientId: String,
                                     val clientHost: String,
@@ -111,7 +110,8 @@ private[group] class MemberMetadata(var memberId: String,
   var isLeaving: Boolean = false
   // 表示是否是消费者组下的新成员
   var isNew: Boolean = false
-  val isStaticMember: Boolean = groupInstanceId.isDefined
+
+  def isStaticMember: Boolean = groupInstanceId.isDefined
 
   // This variable is used to track heartbeat completion through the delayed
   // heartbeat purgatory. When scheduling a new heartbeat expiration, we set
