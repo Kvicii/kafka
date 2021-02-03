@@ -190,6 +190,7 @@ class RequestHandlerHelper(requestChannel: RequestChannel,
         new RequestChannel.NoOpResponse(request)
     }
 
+    // 将处理完的结果放入响应队列
     requestChannel.sendResponse(response)
   }
 }

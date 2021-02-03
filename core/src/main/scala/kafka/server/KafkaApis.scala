@@ -594,10 +594,15 @@ class KafkaApis(val requestChannel: RequestChannel,
         }
     })
 
-    // the callback for sending a produce response
-    // The construction of ProduceResponse is able to accept auto-generated protocol data so
-    // KafkaApis#handleProduceRequest should apply auto-generated protocol to avoid extra conversion.
-    // https://issues.apache.org/jira/browse/KAFKA-10730
+    /**
+     * the callback for sending a produce response
+     * 回调函数
+     * The construction of ProduceResponse is able to accept auto-generated protocol data so
+     * KafkaApis#handleProduceRequest should apply auto-generated protocol to avoid extra conversion.
+     * https://issues.apache.org/jira/browse/KAFKA-10730
+     *
+     * @param responseStatus 每个分区对应的结果
+     */
     @nowarn("cat=deprecation")
     def sendResponseCallback(responseStatus: Map[TopicPartition, PartitionResponse]): Unit = {
       val mergedResponseStatus = responseStatus ++ unauthorizedTopicResponses ++ nonExistingTopicResponses ++ invalidRequestResponses
@@ -653,6 +658,7 @@ class KafkaApis(val requestChannel: RequestChannel,
           requestHelper.sendNoOpResponseExemptThrottle(request)
         }
       } else {
+        // 处理完的结果放入RequestChannel
         requestHelper.sendResponse(request, Some(new ProduceResponse(mergedResponseStatus.asJava, maxThrottleTimeMs)), None)
       }
     }
@@ -669,6 +675,7 @@ class KafkaApis(val requestChannel: RequestChannel,
       val internalTopicsAllowed = request.header.clientId == AdminUtils.AdminClientId
 
       // call the replica manager to append messages to the replicas
+      // 调用副本状态机将消息写入副本中 在Kafka中 Leader和Follower都是Replica 只不过有的Replica是Leader 有的Replica是Follower
       replicaManager.appendRecords(
         timeout = produceRequest.timeout.toLong,
         requiredAcks = produceRequest.acks,

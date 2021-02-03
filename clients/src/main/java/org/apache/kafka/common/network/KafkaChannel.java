@@ -280,7 +280,9 @@ public class KafkaChannel implements AutoCloseable {
      */
     boolean maybeUnmute() {
         if (muteState == ChannelMuteState.MUTED) {
-            if (!disconnected) transportLayer.addInterestOps(SelectionKey.OP_READ);
+            if (!disconnected) {
+                transportLayer.addInterestOps(SelectionKey.OP_READ);
+            }
             muteState = ChannelMuteState.NOT_MUTED;
         }
         return muteState == ChannelMuteState.NOT_MUTED;

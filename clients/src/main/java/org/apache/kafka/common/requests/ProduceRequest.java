@@ -228,22 +228,25 @@ public class ProduceRequest extends AbstractRequest {
             if (baseRecords instanceof Records) {
                 Records records = (Records) baseRecords;
                 Iterator<? extends RecordBatch> iterator = records.batches().iterator();
-                if (!iterator.hasNext())
+                if (!iterator.hasNext()) {
                     throw new InvalidRecordException("Produce requests with version " + version + " must have at least " +
                             "one record batch");
+                }
 
                 RecordBatch entry = iterator.next();
-                if (entry.magic() != RecordBatch.MAGIC_VALUE_V2)
+                if (entry.magic() != RecordBatch.MAGIC_VALUE_V2) {
                     throw new InvalidRecordException("Produce requests with version " + version + " are only allowed to " +
                             "contain record batches with magic version 2");
+                }
                 if (version < 7 && entry.compressionType() == CompressionType.ZSTD) {
                     throw new UnsupportedCompressionTypeException("Produce requests with version " + version + " are not allowed to " +
                             "use ZStandard compression");
                 }
 
-                if (iterator.hasNext())
+                if (iterator.hasNext()) {
                     throw new InvalidRecordException("Produce requests with version " + version + " are only allowed to " +
                             "contain exactly one record batch");
+                }
             }
         }
 

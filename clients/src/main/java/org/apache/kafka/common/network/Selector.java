@@ -361,6 +361,7 @@ public class Selector implements Selectable, AutoCloseable {
      */
     public void register(String id, SocketChannel socketChannel) throws IOException {
         ensureNotRegistered(id);
+        // 将SocketChannel注册到Selector上去 同时监听OP_READ事件
         registerChannel(id, socketChannel, SelectionKey.OP_READ);
         this.sensors.connectionCreated.record();
         // Default to empty client information as the ApiVersionsRequest is not
@@ -1058,7 +1059,7 @@ public class Selector implements Selectable, AutoCloseable {
 
         this.sensors.connectionClosed.record();
         this.explicitlyMutedChannels.remove(channel);
-        if (notifyDisconnect) {
+        if (notifyDisconnect) { // 非正常关闭 放入连接断开集合disconnected
             this.disconnected.put(channel.id(), channel.state());
         }
     }

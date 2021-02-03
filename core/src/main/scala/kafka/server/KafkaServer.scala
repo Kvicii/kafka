@@ -252,7 +252,10 @@ class KafkaServer(
 
         logDirFailureChannel = new LogDirFailureChannel(config.logDirs.size)
 
-        /* start log manager */
+        /**
+         * start log manager
+         * LogManager负责底层磁盘读写
+         */
         logManager = LogManager(config, initialOfflineDirs, zkClient, brokerState, kafkaScheduler, time, brokerTopicStats, logDirFailureChannel)
         logManager.startup() // 启动LogManager
 
@@ -289,7 +292,7 @@ class KafkaServer(
           AlterIsrManager(kafkaScheduler, time, zkClient)
         }
         alterIsrManager.start()
-
+        // 副本状态机的创建 构造副本状态机使用到了LogManager
         replicaManager = createReplicaManager(isShuttingDown)
         replicaManager.startup() // 启动副本状态机
 
@@ -348,11 +351,14 @@ class KafkaServer(
           new FetchSessionCache(config.maxIncrementalFetchSessionCacheSlots,
             KafkaServer.MIN_INCREMENTAL_FETCH_SESSION_EVICTION_MS))
 
-        /* start processing requests */
+        /**
+         *start processing requests
+         * broker处理请求的相关组件
+         */
         dataPlaneRequestProcessor = new KafkaApis(socketServer.dataPlaneRequestChannel, replicaManager, adminManager, groupCoordinator, transactionCoordinator,
           kafkaController, forwardingManager, zkClient, config.brokerId, config, metadataCache, metrics, authorizer, quotaManagers,
           fetchManager, brokerTopicStats, clusterId, time, tokenManager, brokerFeatures, featureCache)
-
+        // 创建处理数据类请求的工作线程池
         dataPlaneRequestHandlerPool = new KafkaRequestHandlerPool(config.brokerId, socketServer.dataPlaneRequestChannel, dataPlaneRequestProcessor, time,
           config.numIoThreads, s"${SocketServer.DataPlaneMetricPrefix}RequestHandlerAvgIdlePercent", SocketServer.DataPlaneThreadPrefix)
 

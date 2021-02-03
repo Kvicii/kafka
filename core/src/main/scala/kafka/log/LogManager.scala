@@ -46,6 +46,13 @@ import kafka.utils.Implicits._
  * size or I/O rate.
  *
  * A background thread handles log retention by periodically truncating excess log segments.
+ *
+ * Log的概念:
+ * 每个Partition的Leader或者Follower对应的就是一个Replica
+ * 每个Replica就对应了一个Log
+ * 如果需要向Partition Leader中写入一批数据 就是往Log中写入数据
+ * 每个Log在底层是对应磁盘目录的 在目录里拆分成了多个Log Segment(日志段) 每个日志段对应着一个磁盘文件 每个磁盘文件对应着一个.log文件和.index文件
+ * .log文件存放数据 .index文件存放稀疏索引
  */
 @threadsafe
 class LogManager(logDirs: Seq[File],
@@ -116,7 +123,7 @@ class LogManager(logDirs: Seq[File],
     _liveLogDirs.forEach(dir => logDirsSet -= dir)
     logDirsSet
   }
-
+  // 扫描配置的logDir下的目录和文件 根据目录和文件的格式 加载本机的Replica对应的Log 之后将Log的信息实例化为对象 存放到内存
   loadLogs()
 
   private[kafka] val cleaner: LogCleaner =
@@ -257,11 +264,12 @@ class LogManager(logDirs: Seq[File],
                       hadCleanShutdown: Boolean,
                       recoveryPoints: Map[TopicPartition, Long],
                       logStartOffsets: Map[TopicPartition, Long]): Log = {
+    // 获取Log存储的文件夹 Topic名称-分区号
     val topicPartition = Log.parseTopicPartitionName(logDir)
     val config = topicConfigs.getOrElse(topicPartition.topic, currentDefaultConfig)
     val logRecoveryPoint = recoveryPoints.getOrElse(topicPartition, 0L)
     val logStartOffset = logStartOffsets.getOrElse(topicPartition, 0L)
-
+    // 封装Log对象
     val log = Log(
       dir = logDir,
       config = config,
@@ -347,10 +355,12 @@ class LogManager(logDirs: Seq[File],
               s"$logDirAbsolutePath, resetting to the base offset of the first segment", e)
         }
 
+        // 获取日志文件路径下的所有子目录或者子文件 过滤出所有子目录
         val logsToLoad = Option(dir.listFiles).getOrElse(Array.empty).filter(_.isDirectory)
         val numLogsLoaded = new AtomicInteger(0)
         numTotalLogs += logsToLoad.length
 
+        // 遍历日志路径下的所有Log(Topic-Replica)文件夹
         val jobsForDir = logsToLoad.map { logDir =>
           val runnable: Runnable = () => {
             try {
