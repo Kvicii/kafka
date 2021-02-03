@@ -29,6 +29,7 @@ import java.util.regex.Pattern
 
 import kafka.api.{ApiVersion, KAFKA_0_10_0_IV0}
 import kafka.common.{LogSegmentOffsetOverflowException, LongRef, OffsetsOutOfOrderException, UnexpectedAppendOffsetException}
+import kafka.log.AppendOrigin.RaftLeader
 import kafka.message.{BrokerCompressionCodec, CompressionCodec, NoCompressionCodec}
 import kafka.metrics.KafkaMetricsGroup
 import kafka.server.checkpoints.LeaderEpochCheckpointFile
@@ -1197,7 +1198,8 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径(�
                      leaderEpoch: Int,
                      origin: AppendOrigin = AppendOrigin.Client,
                      interBrokerProtocolVersion: ApiVersion = ApiVersion.latestVersion): LogAppendInfo = {
-    append(records, origin, interBrokerProtocolVersion, assignOffsets = true, leaderEpoch, ignoreRecordSize = false)
+    val validateAndAssignOffsets = origin != AppendOrigin.RaftLeader
+    append(records, origin, interBrokerProtocolVersion, validateAndAssignOffsets, leaderEpoch, ignoreRecordSize = false)
   }
 
   /**
@@ -1213,7 +1215,7 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径(�
     append(records,
       origin = AppendOrigin.Replication,
       interBrokerProtocolVersion = ApiVersion.latestVersion,
-      assignOffsets = false,
+      validateAndAssignOffsets = false,
       leaderEpoch = -1,
       // disable to check the validation of record size since the record is already accepted by leader.
       ignoreRecordSize = true)
@@ -1230,7 +1232,7 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径(�
    * @param records                    The log records to append
    * @param origin                     Declares the origin of the append which affects required validations
    * @param interBrokerProtocolVersion Inter-broker message protocol version
-   * @param assignOffsets              Should the log assign offsets to this message set or blindly apply what it is given
+   * @param validateAndAssignOffsets   Should the log assign offsets to this message set or blindly apply what it is given
    * @param leaderEpoch                The partition's leader epoch which will be applied to messages when offsets are assigned on the leader
    * @param ignoreRecordSize           true to skip validation of record size.
    * @throws KafkaStorageException           If the append fails due to an I/O error.
@@ -1241,11 +1243,11 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径(�
   private def append(records: MemoryRecords,
                      origin: AppendOrigin,
                      interBrokerProtocolVersion: ApiVersion,
-                     assignOffsets: Boolean,
+                     validateAndAssignOffsets: Boolean,
                      leaderEpoch: Int,
                      ignoreRecordSize: Boolean): LogAppendInfo = {
 
-    val appendInfo = analyzeAndValidateRecords(records, origin, ignoreRecordSize) // 1.分析和验证待写入消息集合并返回校验结果
+    val appendInfo = analyzeAndValidateRecords(records, origin, ignoreRecordSize, leaderEpoch)  // 1.分析和验证待写入消息集合并返回校验结果
 
     // return if we have no valid messages or if this is a duplicate of the last appended entry
     // 如果就不需要写入任何消息直接返回即可
@@ -1261,8 +1263,7 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径(�
       lock synchronized {
         maybeHandleIOException(s"Error while appending records to $topicPartition in dir ${dir.getParent}") {
           checkIfMemoryMappedBufferClosed() // 确保Log对象未关闭
-
-          if (assignOffsets) { // 需要分配位移
+          if (validateAndAssignOffsets) { // 需要分配位移
             // assign offsets to the message set
             // 3.使用当前LEO值作为待写入消息集合中第一条消息的位移值
             val offset = new LongRef(nextOffsetMetadata.messageOffset)
@@ -1570,8 +1571,9 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径(�
    */
   private def analyzeAndValidateRecords(records: MemoryRecords,
                                         origin: AppendOrigin,
-                                        ignoreRecordSize: Boolean): LogAppendInfo = {
-    // 0.11.0.0版本后 lastOffset 和lastOffsetOfFirstBatch都是指向消息集合的最后一条消息 他们的区别主要体现在0.11.0.0版本以前
+                                        // 0.11.0.0版本后 lastOffset 和lastOffsetOfFirstBatch都是指向消息集合的最后一条消息 他们的区别主要体现在0.11.0.0版本以前
+                                        ignoreRecordSize: Boolean,
+                                        leaderEpoch: Int): LogAppendInfo = {
     var shallowMessageCount = 0
     var validBytesCount = 0
     var firstOffset: Option[LogOffsetMetadata] = None
@@ -1584,7 +1586,10 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径(�
     var readFirstMessage = false
     var lastOffsetOfFirstBatch = -1L
 
-    records.batches.forEach { batch => // 1.遍历所有的消息批次
+    records.batches.forEach { batch =>  // 1.遍历所有的消息批次
+      if (origin == RaftLeader && batch.partitionLeaderEpoch != leaderEpoch) {
+        throw new InvalidRecordException("Append from Raft leader did not set the batch epoch correctly")
+      }
       // we only validate V2 and higher to avoid potential compatibility issues with older clients
       // 消息格式Version 2 的消息批次 起始位移值必须从0开始
       if (batch.magic >= RecordBatch.MAGIC_VALUE_V2 && origin == AppendOrigin.Client && batch.baseOffset != 0)
