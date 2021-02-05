@@ -24,7 +24,6 @@ import kafka.log.LogConfig
 import kafka.message.ProducerCompressionCodec
 import kafka.server._
 import kafka.utils.Logging
-import kafka.zk.KafkaZkClient
 import org.apache.kafka.common.TopicPartition
 import org.apache.kafka.common.internals.Topic
 import org.apache.kafka.common.message.JoinGroupResponseData.JoinGroupResponseMember
@@ -105,9 +104,9 @@ class GroupCoordinator(val brokerId: Int,
   /**
    * Startup logic executed at the same time when the server starts up.
    */
-  def startup(enableMetadataExpiration: Boolean = true): Unit = {
+  def startup(retrieveGroupMetadataTopicPartitionCount: () => Int, enableMetadataExpiration: Boolean = true): Unit = {
     info("Starting up.")
-    groupManager.startup(enableMetadataExpiration)
+    groupManager.startup(retrieveGroupMetadataTopicPartitionCount, enableMetadataExpiration)
     isActive.set(true)
     info("Startup complete.")
   }
@@ -1322,13 +1321,12 @@ object GroupCoordinator {
   val NewMemberJoinTimeoutMs: Int = 5 * 60 * 1000
 
   def apply(config: KafkaConfig,
-            zkClient: KafkaZkClient,
             replicaManager: ReplicaManager,
             time: Time,
             metrics: Metrics): GroupCoordinator = {
     val heartbeatPurgatory = DelayedOperationPurgatory[DelayedHeartbeat]("Heartbeat", config.brokerId)
     val joinPurgatory = DelayedOperationPurgatory[DelayedJoin]("Rebalance", config.brokerId)
-    apply(config, zkClient, replicaManager, heartbeatPurgatory, joinPurgatory, time, metrics)
+    GroupCoordinator(config, replicaManager, heartbeatPurgatory, joinPurgatory, time, metrics)
   }
 
   private[group] def offsetConfig(config: KafkaConfig) = OffsetConfig(
@@ -1345,7 +1343,6 @@ object GroupCoordinator {
   )
 
   def apply(config: KafkaConfig,
-            zkClient: KafkaZkClient,
             replicaManager: ReplicaManager,
             heartbeatPurgatory: DelayedOperationPurgatory[DelayedHeartbeat],
             joinPurgatory: DelayedOperationPurgatory[DelayedJoin],
@@ -1358,7 +1355,7 @@ object GroupCoordinator {
       groupInitialRebalanceDelayMs = config.groupInitialRebalanceDelay)
 
     val groupMetadataManager = new GroupMetadataManager(config.brokerId, config.interBrokerProtocolVersion,
-      offsetConfig, replicaManager, zkClient, time, metrics)
+      offsetConfig, replicaManager, time, metrics)
     new GroupCoordinator(config.brokerId, groupConfig, offsetConfig, groupMetadataManager, heartbeatPurgatory, joinPurgatory, time, metrics)
   }
 
