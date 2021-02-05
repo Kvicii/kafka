@@ -27,17 +27,17 @@ import kafka.cluster.Broker
 import kafka.common.{GenerateBrokerIdException, InconsistentBrokerIdException, InconsistentClusterIdException}
 import kafka.controller.KafkaController
 import kafka.coordinator.group.GroupCoordinator
-import kafka.coordinator.transaction.TransactionCoordinator
+import kafka.coordinator.transaction.{ProducerIdManager, TransactionCoordinator}
 import kafka.log.LogManager
-import kafka.metrics.{KafkaMetricsGroup, KafkaMetricsReporter, KafkaYammerMetrics, LinuxIoMetricsCollector}
+import kafka.metrics.{KafkaMetricsReporter, KafkaYammerMetrics}
 import kafka.network.SocketServer
 import kafka.security.CredentialProvider
+import kafka.server.metadata.ZkConfigRepository
 import kafka.utils._
-import kafka.zk.{BrokerInfo, KafkaZkClient}
+import kafka.zk.{AdminZkClient, BrokerInfo, KafkaZkClient}
 import org.apache.kafka.clients.{ApiVersions, ClientDnsLookup, ManualMetadataUpdater, NetworkClient, NetworkClientUtils}
-import org.apache.kafka.common.internals.ClusterResourceListeners
 import org.apache.kafka.common.message.ControlledShutdownRequestData
-import org.apache.kafka.common.metrics.{Metrics, MetricsReporter}
+import org.apache.kafka.common.metrics.Metrics
 import org.apache.kafka.common.network._
 import org.apache.kafka.common.protocol.Errors
 import org.apache.kafka.common.requests.{ControlledShutdownRequest, ControlledShutdownResponse}
@@ -45,7 +45,8 @@ import org.apache.kafka.common.security.scram.internals.ScramMechanism
 import org.apache.kafka.common.security.token.delegation.internals.DelegationTokenCache
 import org.apache.kafka.common.security.{JaasContext, JaasUtils}
 import org.apache.kafka.common.utils.{AppInfoParser, LogContext, Time}
-import org.apache.kafka.common.{ClusterResource, Endpoint, Node}
+import org.apache.kafka.common.{Endpoint, Node}
+import org.apache.kafka.metadata.BrokerState
 import org.apache.kafka.server.authorizer.Authorizer
 import org.apache.zookeeper.client.ZKClientConfig
 
@@ -88,7 +89,7 @@ class KafkaServer(
   time: Time = Time.SYSTEM,
   threadNamePrefix: Option[String] = None,
   enableForwarding: Boolean = false
-) extends Server with Logging with KafkaMetricsGroup {
+) extends KafkaBroker with Server {
 
   private val startupComplete = new AtomicBoolean(false)
   private val isShuttingDown = new AtomicBoolean(false)
@@ -101,8 +102,6 @@ class KafkaServer(
     KafkaMetricsReporter.startReporters(VerifiableProperties(config.originals))
   var kafkaYammerMetrics: KafkaYammerMetrics = null
   var metrics: Metrics = null
-
-  val brokerState: BrokerState = new BrokerState
 
   var dataPlaneRequestProcessor: KafkaApis = null
   var controlPlaneRequestProcessor: KafkaApis = null
@@ -141,6 +140,7 @@ class KafkaServer(
 
   val zkClientConfig: ZKClientConfig = KafkaServer.zkClientConfigFromKafkaConfig(config).getOrElse(new ZKClientConfig())
   private var _zkClient: KafkaZkClient = null
+  private var configRepository: ZkConfigRepository = null
 
   val correlationId: AtomicInteger = new AtomicInteger(0)
   val brokerMetaPropsFile = "meta.properties"
@@ -166,17 +166,6 @@ class KafkaServer(
 
   private[kafka] def featureChangeListener = _featureChangeListener
 
-  newGauge("BrokerState", () => brokerState.currentState)
-  newGauge("ClusterId", () => clusterId)
-  newGauge("yammer-metrics-count", () =>  KafkaYammerMetrics.defaultRegistry.allMetrics.size)
-
-  val linuxIoMetricsCollector = new LinuxIoMetricsCollector("/proc", time, logger.underlying)
-
-  if (linuxIoMetricsCollector.usable()) {
-    newGauge("linux-disk-read-bytes", () => linuxIoMetricsCollector.readBytes())
-    newGauge("linux-disk-write-bytes", () => linuxIoMetricsCollector.writeBytes())
-  }
-
   /**
    * Start up API for bringing up a single instance of the Kafka server.
    * Instantiates the LogManager, the SocketServer and the request handlers - KafkaRequestHandlers
@@ -195,10 +184,11 @@ class KafkaServer(
 
       val canStartup = isStartingUp.compareAndSet(false, true) // 判断是否可以启动
       if (canStartup) { // 可以启动
-        brokerState.newState(Starting) // 设置状态为启动中
+        brokerState.set(BrokerState.STARTING) // 设置状态为启动中
 
         /* setup zookeeper */
         initZkClient(time) // 初始化zk
+        configRepository = new ZkConfigRepository(new AdminZkClient(zkClient))
 
         /* initialize features */
         _featureChangeListener = new FinalizedFeatureChangeListener(featureCache, _zkClient)
@@ -208,7 +198,7 @@ class KafkaServer(
 
         /* Get or create cluster_id */
         _clusterId = getOrGenerateClusterId(zkClient)
-        info(s"Cluster ID = $clusterId")
+        info(s"Cluster ID = ${clusterId}")
 
         /* load metadata */
         val (preloadedBrokerMetadataCheckpoint, initialOfflineDirs) =
@@ -248,7 +238,7 @@ class KafkaServer(
         _brokerTopicStats = new BrokerTopicStats // broker的指标收集器
 
         quotaManagers = QuotaFactory.instantiate(config, metrics, time, threadNamePrefix.getOrElse(""))
-        notifyClusterListeners(kafkaMetricsReporters ++ metrics.reporters.asScala)
+        KafkaBroker.notifyClusterListeners(clusterId, kafkaMetricsReporters ++ metrics.reporters.asScala)
 
         logDirFailureChannel = new LogDirFailureChannel(config.logDirs.size)
 
@@ -330,7 +320,8 @@ class KafkaServer(
 
         /* start transaction coordinator, with a separate background thread scheduler for transaction expiration and log loading */
         // Hardcode Time.SYSTEM for now as some Streams tests fail otherwise, it would be good to fix the underlying issue
-        transactionCoordinator = TransactionCoordinator(config, replicaManager, new KafkaScheduler(threads = 1, threadNamePrefix = "transaction-log-manager-"), zkClient, metrics, metadataCache, Time.SYSTEM)
+        transactionCoordinator = TransactionCoordinator(config, replicaManager, new KafkaScheduler(threads = 1, threadNamePrefix = "transaction-log-manager-"),
+          () => new ProducerIdManager(config.brokerId, zkClient), zkClient, metrics, metadataCache, Time.SYSTEM)
         transactionCoordinator.startup()
 
         /* Get the authorizer and initialize it if one is specified.*/
@@ -356,7 +347,7 @@ class KafkaServer(
          * broker处理请求的相关组件
          */
         dataPlaneRequestProcessor = new KafkaApis(socketServer.dataPlaneRequestChannel, replicaManager, adminManager, groupCoordinator, transactionCoordinator,
-          kafkaController, forwardingManager, zkClient, config.brokerId, config, metadataCache, metrics, authorizer, quotaManagers,
+          kafkaController, forwardingManager, zkClient, config.brokerId, config, configRepository, metadataCache, metrics, authorizer, quotaManagers,
           fetchManager, brokerTopicStats, clusterId, time, tokenManager, brokerFeatures, featureCache)
         // 创建处理数据类请求的工作线程池
         dataPlaneRequestHandlerPool = new KafkaRequestHandlerPool(config.brokerId, socketServer.dataPlaneRequestChannel, dataPlaneRequestProcessor, time,
@@ -364,7 +355,7 @@ class KafkaServer(
 
         socketServer.controlPlaneRequestChannelOpt.foreach { controlPlaneRequestChannel =>
           controlPlaneRequestProcessor = new KafkaApis(controlPlaneRequestChannel, replicaManager, adminManager, groupCoordinator, transactionCoordinator,
-            kafkaController, forwardingManager, zkClient, config.brokerId, config, metadataCache, metrics, authorizer, quotaManagers,
+            kafkaController, forwardingManager, zkClient, config.brokerId, config, configRepository, metadataCache, metrics, authorizer, quotaManagers,
             fetchManager, brokerTopicStats, clusterId, time, tokenManager, brokerFeatures, featureCache)
 
           controlPlaneRequestHandlerPool = new KafkaRequestHandlerPool(config.brokerId, socketServer.controlPlaneRequestChannelOpt.get, controlPlaneRequestProcessor, time,
@@ -389,7 +380,7 @@ class KafkaServer(
 
         socketServer.startProcessingRequests(authorizerFutures)
 
-        brokerState.newState(RunningAsBroker)
+        brokerState.set(BrokerState.RUNNING)
         shutdownLatch = new CountDownLatch(1)
         startupComplete.set(true)
         isStartingUp.set(false)
@@ -406,23 +397,9 @@ class KafkaServer(
     }
   }
 
-  private[server] def notifyClusterListeners(clusterListeners: Seq[AnyRef]): Unit = {
-    val clusterResourceListeners = new ClusterResourceListeners
-    clusterResourceListeners.maybeAddAll(clusterListeners.asJava)
-    clusterResourceListeners.onUpdate(new ClusterResource(clusterId))
-  }
-
-  private[server] def notifyMetricsReporters(metricsReporters: Seq[AnyRef]): Unit = {
-    val metricsContext = Server.createKafkaMetricsContext(config, clusterId)
-    metricsReporters.foreach {
-      case x: MetricsReporter => x.contextChange(metricsContext)
-      case _ => //do nothing
-    }
-  }
-
   protected def createReplicaManager(isShuttingDown: AtomicBoolean): ReplicaManager = {
-    new ReplicaManager(config, metrics, time, zkClient, kafkaScheduler, logManager, isShuttingDown, quotaManagers,
-      brokerTopicStats, metadataCache, logDirFailureChannel, alterIsrManager)
+    new ReplicaManager(config, metrics, time, Some(zkClient), kafkaScheduler, logManager, isShuttingDown, quotaManagers,
+      brokerTopicStats, metadataCache, logDirFailureChannel, alterIsrManager, configRepository)
   }
 
   private def initZkClient(time: Time): Unit = {
@@ -642,7 +619,7 @@ class KafkaServer(
       // the shutdown.
       info("Starting controlled shutdown")
 
-      brokerState.newState(PendingControlledShutdown)
+      brokerState.set(BrokerState.PENDING_CONTROLLED_SHUTDOWN)
 
       val shutdownSucceeded = doControlledShutdown(config.controlledShutdownMaxRetries.intValue)
 
@@ -667,7 +644,7 @@ class KafkaServer(
       // `true` at the end of this method.
       if (shutdownLatch.getCount > 0 && isShuttingDown.compareAndSet(false, true)) {
         CoreUtils.swallow(controlledShutdown(), this)
-        brokerState.newState(BrokerShuttingDown)
+        brokerState.set(BrokerState.SHUTTING_DOWN)
 
         if (dynamicConfigManager != null)
           CoreUtils.swallow(dynamicConfigManager.shutdown(), this)
@@ -736,7 +713,7 @@ class KafkaServer(
         // Clear all reconfigurable instances stored in DynamicBrokerConfig
         config.dynamicConfig.clear()
 
-        brokerState.newState(NotRunning)
+        brokerState.set(BrokerState.NOT_RUNNING)
 
         startupComplete.set(false)
         isShuttingDown.set(false)

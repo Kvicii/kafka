@@ -195,7 +195,7 @@ class ReplicaFetcherThread(name: String,
                                     partitionData: FetchData): Option[LogAppendInfo] = {
     val logTrace = isTraceEnabled
     // 从副本管理器获取指定Topic分区对象
-    val partition = replicaMgr.nonOfflinePartition(topicPartition).get
+    val partition = replicaMgr.getPartitionOrException(topicPartition)
     // 获取日志对象
     val log = partition.localLogOrException
     // 将获取到的数据转换成符合格式要求的消息集合
@@ -363,7 +363,7 @@ class ReplicaFetcherThread(name: String,
    */
   override def truncate(tp: TopicPartition, offsetTruncationState: OffsetTruncationState): Unit = {
     // 获取分区对象
-    val partition = replicaMgr.nonOfflinePartition(tp).get
+    val partition = replicaMgr.getPartitionOrException(tp)
     // 拿到分区本地日志
     val log = partition.localLogOrException
 
@@ -381,7 +381,7 @@ class ReplicaFetcherThread(name: String,
   }
 
   override protected def truncateFullyAndStartAt(topicPartition: TopicPartition, offset: Long): Unit = {
-    val partition = replicaMgr.nonOfflinePartition(topicPartition).get
+    val partition = replicaMgr.getPartitionOrException(topicPartition)
     partition.truncateFullyAndStartAt(offset, isFuture = false)
   }
 
