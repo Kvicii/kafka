@@ -2032,8 +2032,10 @@ object KafkaZkClient {
             metricType: String = "SessionExpireListener",
             name: Option[String] = None,
             zkClientConfig: Option[ZKClientConfig] = None) = {
+    // 封装ZK连接地址
     val zooKeeperClient = new ZooKeeperClient(connectString, sessionTimeoutMs, connectionTimeoutMs, maxInFlightRequests,
       time, metricGroup, metricType, name, zkClientConfig)
+    // 创建KafkaZkClient对象
     new KafkaZkClient(zooKeeperClient, isSecure, time)
   }
 

@@ -262,7 +262,7 @@ class KafkaServer(
         //
         // Note that we allow the use of KIP-500 controller APIs when forwarding is enabled
         // so that the Envelope request is exposed. This is only used in testing currently.
-        // 创建SocketServer
+        // 创建SocketServer(网络通信组件)
         socketServer = new SocketServer(config, metrics, time, credentialProvider,
           allowControllerOnlyApis = enableForwarding)
         // 启动SocketServer的Acceptor线程 获取绑定的端口号
@@ -284,6 +284,8 @@ class KafkaServer(
         }
         alterIsrManager.start()
         // 副本状态机的创建 构造副本状态机使用到了LogManager
+        // 将副本数据写入本地磁盘
+        // 从Broker Leader拉取数据进行同步
         replicaManager = createReplicaManager(isShuttingDown)
         replicaManager.startup() // 启动副本状态机
 
@@ -298,6 +300,8 @@ class KafkaServer(
         tokenManager.startup()
 
         /* start kafka controller */
+        // 每个Broker都会创建KafkaController 同一时间只会有一个Broker扮演KafkaController的角色
+        // 其他Broker会监视KafkaController的Broker 一旦宕机 其他Broker会尝试成为KafkaController
         kafkaController = new KafkaController(config, zkClient, time, metrics, brokerInfo, brokerEpoch, tokenManager, brokerFeatures, featureCache, threadNamePrefix)
         kafkaController.startup() // 启动Controller
 
@@ -316,6 +320,7 @@ class KafkaServer(
 
         /* start group coordinator */
         // Hardcode Time.SYSTEM for now as some Streams tests fail otherwise, it would be good to fix the underlying issue
+        // 负责管理消费者的组件
         groupCoordinator = GroupCoordinator(config, replicaManager, Time.SYSTEM, metrics)
         groupCoordinator.startup(() => zkClient.getTopicPartitionCount(Topic.GROUP_METADATA_TOPIC_NAME).getOrElse(config.offsetsTopicPartitions))
 
@@ -345,7 +350,7 @@ class KafkaServer(
             KafkaServer.MIN_INCREMENTAL_FETCH_SESSION_EVICTION_MS))
 
         /**
-         *start processing requests
+         * start processing requests
          * broker处理请求的相关组件
          */
         dataPlaneRequestProcessor = new KafkaApis(socketServer.dataPlaneRequestChannel, replicaManager, adminManager, groupCoordinator, transactionCoordinator,
@@ -406,7 +411,7 @@ class KafkaServer(
 
   private def initZkClient(time: Time): Unit = {
     info(s"Connecting to zookeeper on ${config.zkConnect}")
-
+    // 创建ZK对象
     def createZkClient(zkConnect: String, isSecure: Boolean) = {
       KafkaZkClient(zkConnect, isSecure, config.zkSessionTimeoutMs, config.zkConnectionTimeoutMs,
         config.zkMaxInFlightRequests, time, name = Some("Kafka server"), zkClientConfig = Some(zkClientConfig))
