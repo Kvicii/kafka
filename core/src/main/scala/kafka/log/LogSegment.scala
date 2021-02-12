@@ -73,6 +73,7 @@ class LogSegment private[log](val log: FileRecords, // 实际保存Kafka消息�
 
   def shouldRoll(rollParams: RollParams): Boolean = {
     val reachedRollMs = timeWaitedForRoll(rollParams.now, rollParams.maxTimestampInMessages) > rollParams.maxSegmentMs - rollJitterMs
+    // 当前的Segment文件大小 + 本次要写入的消息大小 > maxSegmentBytes 重新创建一个Segment文件
     size > rollParams.maxSegmentBytes - rollParams.messagesSize ||
       (size > 0 && reachedRollMs) ||
       offsetIndex.isFull || timeIndex.isFull || !canConvertToRelativeOffset(rollParams.maxOffsetInMessages)
@@ -184,7 +185,7 @@ class LogSegment private[log](val log: FileRecords, // 实际保存Kafka消息�
       ensureOffsetInRange(largestOffset)
 
       // append the messages
-      // 3.消息真正的写入 将内存中消息对象写入到操作系统的页缓存
+      // 3.消息顺序写入(.log文件) 将内存中消息对象写入到操作系统的页缓存
       val appendedBytes = log.append(records)
       trace(s"Appended $appendedBytes to ${log.file} at end offset $largestOffset")
       // Update the in memory max timestamp and corresponding offset.
@@ -195,14 +196,18 @@ class LogSegment private[log](val log: FileRecords, // 实际保存Kafka消息�
         offsetOfMaxTimestampSoFar = shallowOffsetOfMaxTimestamp
       }
       // append an entry to the index (if needed)
+      // .log文件 offset -> 38272 物理位置 -> 301
+      // .index文件 offset 37982 物理位置 -> 181
+      // .index文件 offset 38412 物理位置 -> 231
       // 5.更新索引项和写入的字节数
-      // 日志段每写入4kb数据就要写入一个索引项
+      // 日志段(.log文件)每写入4kb数据就要写入一个索引项到索引文件(.index文件)
       // 当已写入的字节数超过4kb之后 append方法会调用索引对象的append方法新增索引项 同时清空已写入的字节数 以备下次重新累计计算
       if (bytesSinceLastIndexEntry > indexIntervalBytes) {
         offsetIndex.append(largestOffset, physicalPosition)
         timeIndex.maybeAppend(maxTimestampSoFar, offsetOfMaxTimestampSoFar)
         bytesSinceLastIndexEntry = 0
       }
+      // 控制稀疏索引的写入
       bytesSinceLastIndexEntry += records.sizeInBytes
     }
   }
@@ -306,6 +311,12 @@ class LogSegment private[log](val log: FileRecords, // 实际保存Kafka消息�
    */
   @threadsafe
   private[log] def translateOffset(offset: Long, startingFilePosition: Int = 0): LogOffsetPosition = {
+    // 二分查找
+    // (稀疏索引)逻辑编号offset = 23867 (.log)物理位置position = 11334
+    // (稀疏索引)逻辑编号offset = 24867 (.log)物理位置position = 11534
+    // ...
+    // (稀疏索引)逻辑编号offset = 25891 (.log)物理位置position = 12072
+    // 查找的offset = 25488
     val mapping = offsetIndex.lookup(offset)
     log.searchForOffsetWithSize(offset, max(mapping.position, startingFilePosition))
   }
@@ -333,6 +344,7 @@ class LogSegment private[log](val log: FileRecords, // 实际保存Kafka消息�
       throw new IllegalArgumentException(s"Invalid max size $maxSize for log read from segment $log")
 
     // 1.定位要读取的起始文件位置 要根据startOffset位移值找到索引信息 之后找到对应的物理文件位置才能开始读取
+    // 是根据稀疏索引定位的 从某个Segment文件的某个物理位置(position)开始读取 就对应到这个逻辑的offset
     val startOffsetAndSize = translateOffset(startOffset)
 
     // if the start position is already off the end of the log, return null
@@ -722,6 +734,10 @@ object LogSegment {
            initFileSize: Int = 0, preallocate: Boolean = false, fileSuffix: String = ""): LogSegment = {
     val maxIndexSize = config.maxIndexSize
     new LogSegment(
+      /**
+       * {@link kafka.log.Log# roll ( scala.Option )} 方法构造LogSegment文件时调用
+       * 在Broker写入时 创建LogSegment文件时 构造的FileChannel 提供后续写入使用
+       */
       FileRecords.open(Log.logFile(dir, baseOffset, fileSuffix), fileAlreadyExists, initFileSize, preallocate),
       LazyIndex.forOffset(Log.offsetIndexFile(dir, baseOffset, fileSuffix), baseOffset = baseOffset, maxIndexSize = maxIndexSize),
       LazyIndex.forTime(Log.timeIndexFile(dir, baseOffset, fileSuffix), baseOffset = baseOffset, maxIndexSize = maxIndexSize),

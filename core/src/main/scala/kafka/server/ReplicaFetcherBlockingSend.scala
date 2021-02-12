@@ -107,6 +107,7 @@ class ReplicaFetcherBlockingSend(sourceBroker: BrokerEndPoint,
       else {
         val clientRequest = networkClient.newClientRequest(sourceBroker.id.toString, requestBuilder,
           time.milliseconds(), true)
+        // 采用同步阻塞的方式发送Fetch请求 必须等到获取到响应才可以
         NetworkClientUtils.sendAndReceive(networkClient, clientRequest, time)
       }
     }

@@ -229,20 +229,22 @@ public class MemoryRecordsBuilder implements AutoCloseable {
         if (timestampType == TimestampType.LOG_APPEND_TIME) {
             long shallowOffsetOfMaxTimestamp;
             // Use the last offset when dealing with record batches
-            if (compressionType != CompressionType.NONE || magic >= RecordBatch.MAGIC_VALUE_V2)
+            if (compressionType != CompressionType.NONE || magic >= RecordBatch.MAGIC_VALUE_V2) {
                 shallowOffsetOfMaxTimestamp = lastOffset;
-            else
+            } else {
                 shallowOffsetOfMaxTimestamp = baseOffset;
+            }
             return new RecordsInfo(logAppendTime, shallowOffsetOfMaxTimestamp);
         } else if (maxTimestamp == RecordBatch.NO_TIMESTAMP) {
             return new RecordsInfo(RecordBatch.NO_TIMESTAMP, lastOffset);
         } else {
             long shallowOffsetOfMaxTimestamp;
             // Use the last offset when dealing with record batches
-            if (compressionType != CompressionType.NONE || magic >= RecordBatch.MAGIC_VALUE_V2)
+            if (compressionType != CompressionType.NONE || magic >= RecordBatch.MAGIC_VALUE_V2) {
                 shallowOffsetOfMaxTimestamp = lastOffset;
-            else
+            } else {
                 shallowOffsetOfMaxTimestamp = offsetOfMaxTimestamp;
+            }
             return new RecordsInfo(maxTimestamp, shallowOffsetOfMaxTimestamp);
         }
     }
@@ -273,8 +275,9 @@ public class MemoryRecordsBuilder implements AutoCloseable {
     }
 
     public void overrideLastOffset(long lastOffset) {
-        if (builtRecords != null)
+        if (builtRecords != null) {
             throw new IllegalStateException("Cannot override the last offset after the records have been built");
+        }
         this.lastOffset = lastOffset;
     }
 
@@ -343,18 +346,22 @@ public class MemoryRecordsBuilder implements AutoCloseable {
     }
 
     private void validateProducerState() {
-        if (isTransactional && producerId == RecordBatch.NO_PRODUCER_ID)
+        if (isTransactional && producerId == RecordBatch.NO_PRODUCER_ID) {
             throw new IllegalArgumentException("Cannot write transactional messages without a valid producer ID");
+        }
 
         if (producerId != RecordBatch.NO_PRODUCER_ID) {
-            if (producerEpoch == RecordBatch.NO_PRODUCER_EPOCH)
+            if (producerEpoch == RecordBatch.NO_PRODUCER_EPOCH) {
                 throw new IllegalArgumentException("Invalid negative producer epoch");
+            }
 
-            if (baseSequence < 0 && !isControlBatch)
+            if (baseSequence < 0 && !isControlBatch) {
                 throw new IllegalArgumentException("Invalid negative sequence number used");
+            }
 
-            if (magic < RecordBatch.MAGIC_VALUE_V2)
+            if (magic < RecordBatch.MAGIC_VALUE_V2) {
                 throw new IllegalArgumentException("Idempotent messages are not supported for magic " + magic);
+            }
         }
     }
 
@@ -372,10 +379,11 @@ public class MemoryRecordsBuilder implements AutoCloseable {
         int offsetDelta = (int) (lastOffset - baseOffset);
 
         final long maxTimestamp;
-        if (timestampType == TimestampType.LOG_APPEND_TIME)
+        if (timestampType == TimestampType.LOG_APPEND_TIME) {
             maxTimestamp = logAppendTime;
-        else
+        } else {
             maxTimestamp = this.maxTimestamp;
+        }
 
         DefaultRecordBatch.writeHeader(buffer, baseOffset, offsetDelta, size, magic, compressionType, timestampType,
                 firstTimestamp, maxTimestamp, producerId, producerEpoch, baseSequence, isTransactional, isControlBatch,
@@ -515,8 +523,9 @@ public class MemoryRecordsBuilder implements AutoCloseable {
     public Long appendControlRecordWithOffset(long offset, SimpleRecord record) {
         short typeId = ControlRecordType.parseTypeId(record.key());
         ControlRecordType type = ControlRecordType.fromTypeId(typeId);
-        if (type == ControlRecordType.UNKNOWN)
+        if (type == ControlRecordType.UNKNOWN) {
             throw new IllegalArgumentException("Cannot append record with unknown control record type " + typeId);
+        }
 
         return appendWithOffset(offset, true, record.timestamp(),
             record.key(), record.value(), record.headers());
@@ -596,10 +605,12 @@ public class MemoryRecordsBuilder implements AutoCloseable {
      * Return CRC of the record or null if record-level CRC is not supported for the message format
      */
     public Long appendEndTxnMarker(long timestamp, EndTransactionMarker marker) {
-        if (producerId == RecordBatch.NO_PRODUCER_ID)
+        if (producerId == RecordBatch.NO_PRODUCER_ID) {
             throw new IllegalArgumentException("End transaction marker requires a valid producerId");
-        if (!isTransactional)
+        }
+        if (!isTransactional) {
             throw new IllegalArgumentException("End transaction marker depends on batch transactional flag being enabled");
+        }
         ByteBuffer value = marker.serializeValue();
         return appendControlRecord(timestamp, marker.controlType(), value);
     }
@@ -645,8 +656,9 @@ public class MemoryRecordsBuilder implements AutoCloseable {
         if (magic >= RecordBatch.MAGIC_VALUE_V2) {
             int offsetDelta = (int) (offset - baseOffset);
             long timestamp = record.timestamp();
-            if (firstTimestamp == null)
+            if (firstTimestamp == null) {
                 firstTimestamp = timestamp;
+            }
 
             int sizeInBytes = DefaultRecord.writeTo(appendStream,
                 offsetDelta,

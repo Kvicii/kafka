@@ -188,7 +188,10 @@ class OffsetIndex(_file: File, baseOffset: Long, maxIndexSize: Int = -1, writabl
       // ----b.待写入的索引项位移值 > 当前以写入的索引项位移值(Kafka规定索引项中的位移值必须是单调增加的)
       if (_entries == 0 || offset > _lastOffset) {
         trace(s"Adding index entry $offset => $position to ${file.getAbsolutePath}")
+        // 基于OS Cache实现的内存文件映射技术 可以把.index文件映射到OS Cache 针对.index文件的读和写 都是基于OS Cache执行的
+        // 计算稀疏索引的相对于起始索引的相对offset
         mmap.putInt(relativeOffset(offset)) // 3A.向mmap写入相对位移值
+        // 在.log文件中的物理位置
         mmap.putInt(position) // 3B.向mmap写入物理位移值
         // 4. 更新元数据信息 即索引项计数和当前索引项最新位移
         _entries += 1

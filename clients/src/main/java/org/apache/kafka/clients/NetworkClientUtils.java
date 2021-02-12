@@ -108,10 +108,11 @@ public final class NetworkClientUtils {
             }
             throw new IOException("Client was shutdown before response was read");
         } catch (DisconnectException e) {
-            if (client.active())
+            if (client.active()) {
                 throw e;
-            else
+            } else {
                 throw new IOException("Client was shutdown before response was read");
+            }
 
         }
     }

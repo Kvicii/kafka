@@ -120,11 +120,13 @@ abstract class AbstractFetcherThread(name: String,
 
   override def doWork(): Unit = {
     maybeTruncate()
+    // 处理Fetch请求
     maybeFetch()
   }
 
   private def maybeFetch(): Unit = {
     val fetchRequestOpt = inLock(partitionMapLock) {
+      // 针对Leader都在某个Broker上的一批Follower分区构建一个FetchRequest 即这些Follower的Leader都在一个Broker上
       val ResultWithPartitions(fetchRequestOpt, partitionsWithError) = buildFetch(partitionStates.partitionStateMap.asScala)
 
       handlePartitionsWithErrors(partitionsWithError, "maybeFetch")
@@ -138,6 +140,7 @@ abstract class AbstractFetcherThread(name: String,
     }
 
     fetchRequestOpt.foreach { case ReplicaFetch(sessionPartitions, fetchRequest) =>
+      // 进行Fetch
       processFetchRequest(sessionPartitions, fetchRequest)
     }
   }
@@ -314,6 +317,7 @@ abstract class AbstractFetcherThread(name: String,
 
     try {
       trace(s"Sending fetch request $fetchRequest")
+      // 将Fetch请求发送到Leader所在的Broker 并获取到Fetch的结果
       responseData = fetchFromLeader(fetchRequest)
     } catch {
       case t: Throwable =>
@@ -330,9 +334,10 @@ abstract class AbstractFetcherThread(name: String,
     }
     fetcherStats.requestRate.mark()
 
-    if (responseData.nonEmpty) {
+    if (responseData.nonEmpty) {  // 对Fetch的结果进行处理 如果拉取到 必然会更新Follower本地的磁盘文件 更新LEO
       // process fetched data
       inLock(partitionMapLock) {
+        // 对响应结果进行遍历
         responseData.forKeyValue { (topicPartition, partitionData) =>
           Option(partitionStates.stateValue(topicPartition)).foreach { currentFetchState =>
             // It's possible that a partition is removed and re-added or truncated when there is a pending fetch request.
@@ -344,11 +349,13 @@ abstract class AbstractFetcherThread(name: String,
                 case Errors.NONE =>
                   try {
                     // Once we hand off the partition data to the subclass, we can't mess with it any more in this thread
+                    // 处理拉取的消息
                     val logAppendInfoOpt = processPartitionData(topicPartition, currentFetchState.fetchOffset,
                       partitionData)
 
                     logAppendInfoOpt.foreach { logAppendInfo =>
                       val validBytes = logAppendInfo.validBytes
+                      // 获取到最新的数据的offset
                       val nextOffset = if (validBytes > 0) logAppendInfo.lastOffset + 1 else currentFetchState.fetchOffset
                       val lag = Math.max(0L, partitionData.highWatermark - nextOffset)
                       fetcherLagStats.getAndMaybePut(topicPartition).lag = lag

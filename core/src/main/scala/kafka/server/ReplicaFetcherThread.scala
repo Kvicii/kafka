@@ -222,6 +222,7 @@ class ReplicaFetcherThread(name: String,
 
     // For the follower replica, we do not need to keep its segment base offset and physical position.
     // These values will be computed upon becoming leader or handling a preferred read replica fetch.
+    // 每次Fetch数据后 Leader会返回HW给Follower 对于Follower而言 会取 min(Follower的LEO, Leader的HW的最小值) 作为Follower的HW
     val followerHighWatermark = log.updateHighWatermark(partitionData.highWatermark) // 更新Follower副本的高水位值
     // 更新Log Start Offset值的原因: Leader 的 Log Start Offset 可能发生变化(如用户手动执行了删除消息的操作等)
     // Follower 副本的日志需要和 Leader 保持严格的一致 如果 Leader 的该值发生变化 Follower 自然也要发生变化 以保持一致
@@ -251,9 +252,15 @@ class ReplicaFetcherThread(name: String,
         "equal or larger than your settings for max.message.bytes, both at a broker and topic level.")
   }
 
-
+  /**
+   * 将Fetch请求发送至Leader所在的Broker
+   *
+   * @param fetchRequest
+   * @return
+   */
   override protected def fetchFromLeader(fetchRequest: FetchRequest.Builder): Map[TopicPartition, FetchData] = {
     try {
+      // 向Leader Broker发送请求 接收Leader Broker的响应
       val clientResponse = leaderEndpoint.sendRequest(fetchRequest)
       val fetchResponse = clientResponse.responseBody.asInstanceOf[FetchResponse[Records]]
       if (!fetchSessionHandler.handleResponse(fetchResponse)) {
@@ -318,6 +325,7 @@ class ReplicaFetcherThread(name: String,
       // We will not include a replica in the fetch request if it should be throttled.
       if (fetchState.isReadyForFetch && !shouldFollowerThrottle(quota, fetchState, topicPartition)) {
         try {
+          // 记录每个分区从哪个offset开始拉取数据
           val logStartOffset = this.logStartOffset(topicPartition)
           val lastFetchedEpoch = if (isTruncationOnFetchSupported)
             fetchState.lastFetchedEpoch.map(_.asInstanceOf[Integer]).asJava
@@ -326,7 +334,7 @@ class ReplicaFetcherThread(name: String,
           builder.add(topicPartition, new FetchRequest.PartitionData(
             fetchState.fetchOffset,
             logStartOffset,
-            fetchSize,
+            fetchSize,  // 一次拉取最多能拉取的数据量是多少 默认1M
             Optional.of(fetchState.currentLeaderEpoch),
             lastFetchedEpoch))
         } catch {
@@ -343,6 +351,8 @@ class ReplicaFetcherThread(name: String,
       None
     } else { // 构造FETCH请求的Builder对象
       val requestBuilder = FetchRequest.Builder
+        // 一次Fetch请求过去 至少得拉取到minBytes(默认1Byte)数据
+        // 如果连1Byte数据都没有 就需要等待一段时间 最多等待maxWait(500ms) 如果500ms之后仍未有数据到达Leader 此时就返回
         .forReplica(fetchRequestVersion, replicaId, maxWait, minBytes, fetchData.toSend)
         .setMaxBytes(maxBytes)
         .toForget(fetchData.toForget)

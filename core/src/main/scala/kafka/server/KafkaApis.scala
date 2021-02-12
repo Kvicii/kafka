@@ -947,7 +947,12 @@ class KafkaApis(val requestChannel: RequestChannel,
     val fetchMinBytes = Math.min(fetchRequest.minBytes, fetchMaxBytes)
     if (interesting.isEmpty)
       processResponseCallback(Seq.empty)
-    else {
+    else {  // Leader本地进行消息拉取
+      // 1. 首先会尝试从本地磁盘文件中读取指定offset之后的数据
+      // 2. 如果能读取到直接返回就可以了
+      // 3. 是否更新一下HW | ISR
+      // 4. 如果读取不到任何新的数据 此时需要采用时间轮机制 延迟执行Fetch
+      // 5. 如果这个Leader分区有新的数据写入 此时可以唤醒时间轮中等待的FetchRequest来执行数据拉取
       // call the replica manager to fetch messages from the local replica
       replicaManager.fetchMessages(
         fetchRequest.maxWait.toLong,

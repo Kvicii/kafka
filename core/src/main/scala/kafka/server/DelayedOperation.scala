@@ -308,28 +308,6 @@ final class DelayedOperationPurgatory[T <: DelayedOperation](purgatoryName: Stri
     // expire reaper will clean it up periodically.
     // At this point the only thread that can attempt this operation is this current thread
     // Hence it is safe to tryComplete() without a lock
-    // var isCompletedByMe = operation.tryComplete()
-    // 调用tryComplete完成延迟请求 如果返回true 说明调用tryComplete的线程正常完成了延迟请求 不需要加入WatcherList
-    // if (isCompletedByMe)
-    //   return true
-    //
-    // var watchCreated = false
-    // for (key <- watchKeys) { // 遍历所有要监控的Key
-    //   // If the operation is already completed, stop adding it to the rest of the watcher list.
-    //   if (operation.isCompleted) { // 再次查看请求的完成状态 如果已经完成 就说明是被其他线程完成的 返回false
-    //     return false
-    //   }
-    //   watchForOperation(key, operation) // 依然无法完成 将该operation加入到Key所在的WatcherList 等待后续完成
-    //
-    //   if (!watchCreated) { // 设置watchCreated标记 表明该任务已经被加入到WatcherList
-    //     watchCreated = true
-    //     estimatedTotalOperations.incrementAndGet() // 更新Purgatory中总请求数
-    //   }
-    // }
-    //
-    // isCompletedByMe = operation.maybeTryComplete() // 再次尝试完成该延迟请求
-    // if (isCompletedByMe)
-    //   return true
     // The cost of tryComplete() is typically proportional to the number of keys. Calling tryComplete() for each key is
     // going to be expensive if there are many keys. Instead, we do the check in the following way through safeTryCompleteOrElse().
     // If the operation is not completed, we just add the operation to all keys. Then we call tryComplete() again. At
@@ -358,6 +336,7 @@ final class DelayedOperationPurgatory[T <: DelayedOperation](purgatoryName: Stri
     // To avoid the above scenario, we recommend DelayedOperationPurgatory.checkAndComplete() be called without holding
     // any exclusive lock. Since DelayedOperationPurgatory.checkAndComplete() completes delayed operations asynchronously,
     // holding a exclusive lock to make the call is often unnecessary.
+    // 基于时间轮取出之前存入的Fetch请求
     if (operation.safeTryCompleteOrElse {
       watchKeys.foreach(key => watchForOperation(key, operation))
       if (watchKeys.nonEmpty) estimatedTotalOperations.incrementAndGet()

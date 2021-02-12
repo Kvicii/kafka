@@ -186,10 +186,14 @@ public class FileRecords extends AbstractRecords implements Closeable {
      * @return the number of bytes written to the underlying file
      */
     public int append(MemoryRecords records) throws IOException {
-        if (records.sizeInBytes() > Integer.MAX_VALUE - size.get())
+        if (records.sizeInBytes() > Integer.MAX_VALUE - size.get()) {
             throw new IllegalArgumentException("Append of size " + records.sizeInBytes() +
                     " bytes is too large for segment with current file position at " + size.get());
-
+        }
+        /**
+         * {@link kafka.log.Log#roll(scala.Option)} 创建了.log日志文件对应的FileChannel 是通过RandomAccessFile获取的
+         * MemoryRecords包含了一批要写入的所有数据 基于和磁盘文件对接的FileChannel写入OS Cache
+         */
         int written = records.writeFullyTo(channel);
         size.getAndAdd(written);
         return written;
@@ -320,8 +324,9 @@ public class FileRecords extends AbstractRecords implements Closeable {
     public LogOffsetPosition searchForOffsetWithSize(long targetOffset, int startingPosition) {
         for (FileChannelRecordBatch batch : batchesFrom(startingPosition)) {
             long offset = batch.lastOffset();
-            if (offset >= targetOffset)
+            if (offset >= targetOffset) {
                 return new LogOffsetPosition(offset, batch.position(), batch.sizeInBytes());
+            }
         }
         return null;
     }
@@ -430,6 +435,10 @@ public class FileRecords extends AbstractRecords implements Closeable {
                                    boolean fileAlreadyExists,
                                    int initFileSize,
                                    boolean preallocate) throws IOException {
+        /**
+         * {@link kafka.log.Log#roll(scala.Option)} 方法构造LogSegment文件时调用
+         * 在Broker写入时 创建LogSegment文件时 构造的FileChannel 提供后续写入使用
+         */
         FileChannel channel = openChannel(file, mutable, fileAlreadyExists, initFileSize, preallocate);
         int end = (!fileAlreadyExists && preallocate) ? 0 : Integer.MAX_VALUE;
         return new FileRecords(file, channel, 0, end, false);
@@ -465,6 +474,7 @@ public class FileRecords extends AbstractRecords implements Closeable {
                                            boolean fileAlreadyExists,
                                            int initFileSize,
                                            boolean preallocate) throws IOException {
+        // 创建.log文件对应的FileChannel
         if (mutable) {
             if (fileAlreadyExists || !preallocate) {
                 return FileChannel.open(file.toPath(), StandardOpenOption.CREATE, StandardOpenOption.READ,

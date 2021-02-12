@@ -905,6 +905,7 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径(�
    * @param offset
    */
   private def updateLogEndOffset(offset: Long): Unit = {
+    // 更新LEO值
     nextOffsetMetadata = LogOffsetMetadata(offset, activeSegment.baseOffset, activeSegment.size)
 
     // Update the high watermark in case it has gotten ahead of the log end offset following a truncation
@@ -1266,6 +1267,7 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径(�
           if (validateAndAssignOffsets) { // 需要分配位移
             // assign offsets to the message set
             // 3.使用当前LEO值作为待写入消息集合中第一条消息的位移值
+            // 对于每个分区目录 写入数据的时候 这个消息的offset都是顺序增长的 这个分区下 第一个消息的offset就是0 后面一次递增
             val offset = new LongRef(nextOffsetMetadata.messageOffset)
             appendInfo.firstOffset = Some(LogOffsetMetadata(offset.value))
             val now = time.milliseconds
@@ -1363,6 +1365,7 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径(�
           }
 
           // maybe roll the log if this segment is full
+          // 如果一个分区目录下的Segment文件(1G)写满了之后 此时就需要创建新的Segment文件
           val segment = maybeRoll(validRecords.sizeInBytes, appendInfo)
 
           val logOffsetMetadata = LogOffsetMetadata(
@@ -1388,7 +1391,9 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径(�
               appendInfo.firstOffset = appendInfo.firstOffset.map { offsetMetadata =>
                 offsetMetadata.copy(segmentBaseOffset = segment.baseOffset, relativePositionInSegment = segment.size)
               }
-
+              // 基于Segment文件进行写入
+              // 对于要写入的一批数据 是可以根据上一批数据的LEO值计算出来这一批数据从哪个offset开始的
+              // 如上一批数据的最大的offset = 25532 LEO = 25533 那么这一批数据一定是从25533开始的
               segment.append(largestOffset = appendInfo.lastOffset,
                 largestTimestamp = appendInfo.maxTimestamp,
                 shallowOffsetOfMaxTimestamp = appendInfo.offsetOfMaxTimestamp,
@@ -2143,7 +2148,7 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径(�
         .firstOffset
         .map(_.messageOffset)
         .getOrElse(maxOffsetInMessages - Integer.MAX_VALUE)
-
+      // 当前的Segment文件大小 + 本次要写入的消息大小 > maxSegmentBytes 重新创建一个Segment文件
       roll(Some(rollOffset))
     } else {
       segment
@@ -2162,6 +2167,7 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径(�
       lock synchronized {
         checkIfMemoryMappedBufferClosed()
         val newOffset = math.max(expectedNextOffset.getOrElse(0L), logEndOffset)
+        // 在分区目录下构建一个新的Segment文件 直接使用LEO构建即可
         val logFile = Log.logFile(dir, newOffset)
 
         if (segments.containsKey(newOffset)) {
@@ -2187,7 +2193,7 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径(�
           val offsetIdxFile = offsetIndexFile(dir, newOffset)
           val timeIdxFile = timeIndexFile(dir, newOffset)
           val txnIdxFile = transactionIndexFile(dir, newOffset)
-
+          // 文件已存在则删除
           for (file <- List(logFile, offsetIdxFile, timeIdxFile, txnIdxFile) if file.exists) {
             warn(s"Newly rolled segment file ${file.getAbsolutePath} already exists; deleting it first")
             Files.delete(file.toPath)
@@ -2203,24 +2209,26 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径(�
         // we manually override the state offset here prior to taking the snapshot.
         producerStateManager.updateMapEndOffset(newOffset)
         producerStateManager.takeSnapshot()
-
+        // 创建LogSegment对象
         val segment = LogSegment.open(dir,
           baseOffset = newOffset,
           config,
           time = time,
           initFileSize = initFileSize,
           preallocate = config.preallocate)
+        // 放入Segment集合
         addSegment(segment)
 
         // We need to update the segment base offset and append position data of the metadata when log rolls.
         // The next offset should not change.
+        // 更新LEO值
         updateLogEndOffset(nextOffsetMetadata.messageOffset)
 
         // schedule an asynchronous flush of the old segment
         scheduler.schedule("flush-log", () => flush(newOffset), delay = 0L)
 
         info(s"Rolled new log segment at offset $newOffset in ${time.hiResClockMs() - start} ms.")
-
+        // 返回LogSegment
         segment
       }
     }
@@ -2228,6 +2236,11 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径(�
 
   /**
    * The number of messages appended to the log since the last flush
+   *
+   * 假设已经flush到磁盘上的数据的offset = 23900
+   * 存在于OS Cache中的数据offset = 24000 LEO = 24001
+   * recoveryPoint 的offset就是23901 即代表的已经flush到磁盘上的数据的offset
+   * unflushedMessages表示的是当前OS Cache的数据
    */
   private def unflushedMessages: Long = this.logEndOffset - this.recoveryPoint
 
@@ -2243,14 +2256,17 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径(�
    */
   def flush(offset: Long): Unit = {
     maybeHandleIOException(s"Error while flushing log for $topicPartition in dir ${dir.getParent} with offset $offset") {
+      // OS Cache中的LEO > 磁盘中的offset
       if (offset > this.recoveryPoint) {
         debug(s"Flushing log up to offset $offset, last flushed: $lastFlushTime,  current time: ${time.milliseconds()}, " +
           s"unflushed: $unflushedMessages")
+        // 找到所有的LogSegment文件 调用flush进行写入
         logSegments(this.recoveryPoint, offset).foreach(_.flush())
 
         lock synchronized {
           checkIfMemoryMappedBufferClosed()
           if (offset > this.recoveryPoint) {
+            // 数据刷盘后 将落到磁盘的offset更新为最新的LEO
             this.recoveryPoint = offset
             lastFlushedTime.set(time.milliseconds)
           }
