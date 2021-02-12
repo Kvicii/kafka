@@ -132,6 +132,8 @@ class KafkaServer(
 
   var forwardingManager: Option[ForwardingManager] = None
 
+  var autoTopicCreationManager: AutoTopicCreationManager = null
+
   var alterIsrManager: AlterIsrManager = null
 
   var kafkaScheduler: KafkaScheduler = null
@@ -183,9 +185,9 @@ class KafkaServer(
         return
       }
 
-      val canStartup = isStartingUp.compareAndSet(false, true) // 判断是否可以启动
+      val canStartup = isStartingUp.compareAndSet(false, true)  // 判断是否可以启动
       if (canStartup) { // 可以启动
-        brokerState.set(BrokerState.STARTING) // 设置状态为启动中
+        brokerState = BrokerState.STARTING  // 设置状态为启动中
 
         /* setup zookeeper */
         initZkClient(time) // 初始化zk
@@ -247,10 +249,13 @@ class KafkaServer(
          * start log manager
          * LogManager负责底层磁盘读写
          */
-        logManager = LogManager(config, initialOfflineDirs, zkClient, brokerState, kafkaScheduler, time, brokerTopicStats, logDirFailureChannel)
-        logManager.startup() // 启动LogManager
+        logManager = LogManager(config, initialOfflineDirs,
+          new ZkConfigRepository(new AdminZkClient(zkClient)),
+          kafkaScheduler, time, brokerTopicStats, logDirFailureChannel, config.usesTopicId)
+        brokerState = BrokerState.RECOVERY
+        logManager.startup(zkClient.getAllTopicsInCluster())  // 启动LogManager
 
-        metadataCache = new MetadataCache(config.brokerId)
+        metadataCache = MetadataCache.zkMetadataCache(config.brokerId)
         // Enable delegation token cache for all SCRAM mechanisms to simplify dynamic update.
         // This keeps the cache up-to-date if new SCRAM mechanisms are enabled dynamically.
         tokenCache = new DelegationTokenCache(ScramMechanism.mechanismNames)
@@ -305,6 +310,7 @@ class KafkaServer(
         kafkaController = new KafkaController(config, zkClient, time, metrics, brokerInfo, brokerEpoch, tokenManager, brokerFeatures, featureCache, threadNamePrefix)
         kafkaController.startup() // 启动Controller
 
+        /* start forwarding manager */
         if (enableForwarding) {
           this.forwardingManager = Some(ForwardingManager(
             config,
@@ -331,6 +337,21 @@ class KafkaServer(
         transactionCoordinator.startup(
           () => zkClient.getTopicPartitionCount(Topic.TRANSACTION_STATE_TOPIC_NAME).getOrElse(config.transactionTopicPartitions))
 
+        /* start auto topic creation manager */
+        this.autoTopicCreationManager = AutoTopicCreationManager(
+          config,
+          metadataCache,
+          time,
+          metrics,
+          threadNamePrefix,
+          adminManager,
+          kafkaController,
+          groupCoordinator,
+          transactionCoordinator,
+          enableForwarding
+        )
+        autoTopicCreationManager.start()
+
         /* Get the authorizer and initialize it if one is specified.*/
         authorizer = config.authorizer
         authorizer.foreach(_.configure(config.originals))
@@ -353,16 +374,17 @@ class KafkaServer(
          * start processing requests
          * broker处理请求的相关组件
          */
-        dataPlaneRequestProcessor = new KafkaApis(socketServer.dataPlaneRequestChannel, replicaManager, adminManager, groupCoordinator, transactionCoordinator,
-          kafkaController, forwardingManager, zkClient, config.brokerId, config, configRepository, metadataCache, metrics, authorizer, quotaManagers,
+        val zkSupport = ZkSupport(adminManager, kafkaController, zkClient, forwardingManager)
+        dataPlaneRequestProcessor = new KafkaApis(socketServer.dataPlaneRequestChannel, zkSupport, replicaManager, groupCoordinator, transactionCoordinator,
+          autoTopicCreationManager, config.brokerId, config, configRepository, metadataCache, metrics, authorizer, quotaManagers,
           fetchManager, brokerTopicStats, clusterId, time, tokenManager, brokerFeatures, featureCache)
         // 创建处理数据类请求的工作线程池
         dataPlaneRequestHandlerPool = new KafkaRequestHandlerPool(config.brokerId, socketServer.dataPlaneRequestChannel, dataPlaneRequestProcessor, time,
           config.numIoThreads, s"${SocketServer.DataPlaneMetricPrefix}RequestHandlerAvgIdlePercent", SocketServer.DataPlaneThreadPrefix)
 
         socketServer.controlPlaneRequestChannelOpt.foreach { controlPlaneRequestChannel =>
-          controlPlaneRequestProcessor = new KafkaApis(controlPlaneRequestChannel, replicaManager, adminManager, groupCoordinator, transactionCoordinator,
-            kafkaController, forwardingManager, zkClient, config.brokerId, config, configRepository, metadataCache, metrics, authorizer, quotaManagers,
+          controlPlaneRequestProcessor = new KafkaApis(controlPlaneRequestChannel, zkSupport, replicaManager, groupCoordinator, transactionCoordinator,
+            autoTopicCreationManager, config.brokerId, config, configRepository, metadataCache, metrics, authorizer, quotaManagers,
             fetchManager, brokerTopicStats, clusterId, time, tokenManager, brokerFeatures, featureCache)
 
           controlPlaneRequestHandlerPool = new KafkaRequestHandlerPool(config.brokerId, socketServer.controlPlaneRequestChannelOpt.get, controlPlaneRequestProcessor, time,
@@ -387,7 +409,7 @@ class KafkaServer(
 
         socketServer.startProcessingRequests(authorizerFutures)
 
-        brokerState.set(BrokerState.RUNNING)
+        brokerState = BrokerState.RUNNING
         shutdownLatch = new CountDownLatch(1)
         startupComplete.set(true)
         isStartingUp.set(false)
@@ -626,7 +648,7 @@ class KafkaServer(
       // the shutdown.
       info("Starting controlled shutdown")
 
-      brokerState.set(BrokerState.PENDING_CONTROLLED_SHUTDOWN)
+      brokerState = BrokerState.PENDING_CONTROLLED_SHUTDOWN
 
       val shutdownSucceeded = doControlledShutdown(config.controlledShutdownMaxRetries.intValue)
 
@@ -651,7 +673,7 @@ class KafkaServer(
       // `true` at the end of this method.
       if (shutdownLatch.getCount > 0 && isShuttingDown.compareAndSet(false, true)) {
         CoreUtils.swallow(controlledShutdown(), this)
-        brokerState.set(BrokerState.SHUTTING_DOWN)
+        brokerState = BrokerState.SHUTTING_DOWN
 
         if (dynamicConfigManager != null)
           CoreUtils.swallow(dynamicConfigManager.shutdown(), this)
@@ -689,8 +711,10 @@ class KafkaServer(
         if (alterIsrManager != null)
           CoreUtils.swallow(alterIsrManager.shutdown(), this)
 
-        if (forwardingManager != null)
-          CoreUtils.swallow(forwardingManager.foreach(_.shutdown()), this)
+        CoreUtils.swallow(forwardingManager.foreach(_.shutdown()), this)
+
+        if (autoTopicCreationManager != null)
+          CoreUtils.swallow(autoTopicCreationManager.shutdown(), this)
 
         if (logManager != null)
           CoreUtils.swallow(logManager.shutdown(), this)
@@ -720,7 +744,7 @@ class KafkaServer(
         // Clear all reconfigurable instances stored in DynamicBrokerConfig
         config.dynamicConfig.clear()
 
-        brokerState.set(BrokerState.NOT_RUNNING)
+        brokerState = BrokerState.NOT_RUNNING
 
         startupComplete.set(false)
         isShuttingDown.set(false)

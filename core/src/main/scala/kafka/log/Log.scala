@@ -270,8 +270,14 @@ case object SnapshotGenerated extends LogStartOffsetIncrementReason {
  * @param time                                The time instance used for checking the clock
  * @param maxProducerIdExpirationMs           The maximum amount of time to wait before a producer id is considered expired
  * @param producerIdExpirationCheckIntervalMs How often to check for producer ids which need to be expired
- * @param hadCleanShutdown                    boolean flag to indicate if the Log had a clean/graceful shutdown last time. true means
- *                                            clean shutdown whereas false means a crash.
+ * @param hadCleanShutdown boolean flag to indicate if the Log had a clean/graceful shutdown last time. true means
+ *                         clean shutdown whereas false means a crash.
+ * @param keepPartitionMetadataFile boolean flag to indicate whether the partition.metadata file should be kept in the
+ *                                  log directory. A partition.metadata file is only created when the controller's
+ *                                  inter-broker protocol version is at least 2.8. This file will persist the topic ID on
+ *                                  the broker. If inter-broker protocol is downgraded below 2.8, a topic ID may be lost
+ *                                  and a new ID generated upon re-upgrade. If the inter-broker protocol version is below
+ *                                  2.8, partition.metadata will be deleted to avoid ID conflicts upon re-upgrade.
  */
 @threadsafe
 class Log(@volatile private var _dir: File, // 日志所在的文件夹路径(即Topic分区的路径)
@@ -287,7 +293,8 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径(�
           val topicPartition: TopicPartition,
           val producerStateManager: ProducerStateManager,
           logDirFailureChannel: LogDirFailureChannel,
-          private val hadCleanShutdown: Boolean = true) extends Logging with KafkaMetricsGroup {
+          private val hadCleanShutdown: Boolean = true,
+          val keepPartitionMetadataFile: Boolean = true) extends Logging with KafkaMetricsGroup {
 
   import kafka.log.Log._
 
@@ -347,7 +354,7 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径(�
   /**
    * Log类的初始化逻辑
    */
-  @volatile var partitionMetadataFile: Option[PartitionMetadataFile] = None
+  @volatile var partitionMetadataFile : PartitionMetadataFile = null
 
   @volatile var topicId: Uuid = Uuid.ZERO_UUID
 
@@ -384,10 +391,13 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径(�
     producerStateManager.removeStraySnapshots(segments.values().asScala.map(_.baseOffset).toSeq)
     loadProducerState(logEndOffset, reloadFromCleanShutdown = hadCleanShutdown)
 
-    // Recover topic ID if present
-    partitionMetadataFile.foreach { file =>
-      if (!file.isEmpty())
-        topicId = file.read().topicId
+    // Delete partition metadata file if the version does not support topic IDs.
+    // Recover topic ID if present and topic IDs are supported
+    if (partitionMetadataFile.exists()) {
+        if (!keepPartitionMetadataFile)
+          partitionMetadataFile.delete()
+        else
+          topicId = partitionMetadataFile.read().topicId
     }
   }
 
@@ -622,7 +632,7 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径(�
 
   private def initializePartitionMetadata(): Unit = lock synchronized {
     val partitionMetadata = PartitionMetadataFile.newFile(dir)
-    partitionMetadataFile = Some(new PartitionMetadataFile(partitionMetadata, logDirFailureChannel))
+    partitionMetadataFile = new PartitionMetadataFile(partitionMetadata, logDirFailureChannel)
   }
 
   private def initializeLeaderEpochCache(): Unit = lock synchronized {
@@ -2780,11 +2790,12 @@ object Log {
             maxProducerIdExpirationMs: Int,
             producerIdExpirationCheckIntervalMs: Int,
             logDirFailureChannel: LogDirFailureChannel,
-            lastShutdownClean: Boolean = true): Log = {
+            lastShutdownClean: Boolean = true,
+            keepPartitionMetadataFile: Boolean = true): Log = {
     val topicPartition = Log.parseTopicPartitionName(dir)
     val producerStateManager = new ProducerStateManager(topicPartition, dir, maxProducerIdExpirationMs)
     new Log(dir, config, logStartOffset, recoveryPoint, scheduler, brokerTopicStats, time, maxProducerIdExpirationMs,
-      producerIdExpirationCheckIntervalMs, topicPartition, producerStateManager, logDirFailureChannel, lastShutdownClean)
+      producerIdExpirationCheckIntervalMs, topicPartition, producerStateManager, logDirFailureChannel, lastShutdownClean, keepPartitionMetadataFile)
   }
 
   /**
