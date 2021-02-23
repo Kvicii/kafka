@@ -180,7 +180,7 @@ class ZkReplicaStateMachine(config: KafkaConfig,
    *
    * ReplicaDeletionSuccessful -> NonExistentReplica
    * -- remove the replica from the in memory partition replica assignment cache
-   * 执行状态变更和转换操作的主力方法
+   * 执行状态变更和转换操作的主要方法
    *
    * @param replicaId   The replica for which the state transition is invoked
    * @param replicas    The partitions on this replica for which the state transition is invoked

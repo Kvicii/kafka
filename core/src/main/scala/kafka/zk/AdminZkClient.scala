@@ -57,7 +57,9 @@ class AdminZkClient(zkClient: KafkaZkClient) extends Logging {
                   rackAwareMode: RackAwareMode = RackAwareMode.Enforced,
                   usesTopicId: Boolean = false): Unit = {
     val brokerMetadatas = getBrokerMetadatas(rackAwareMode) // 获取broker的元数据信息
+    // 基于均匀分配的算法将副本分配给各个Broker
     val replicaAssignment = AdminUtils.assignReplicasToBrokers(brokerMetadatas, partitions, replicationFactor) // 将副本分配给broker
+    // 将分配好的副本写入ZK
     createTopicWithAssignment(topic, topicConfig, replicaAssignment, usesTopicId = usesTopicId) // 将Topic分区分配情况写的zk Topic创建结束
   }
 
@@ -93,6 +95,7 @@ class AdminZkClient(zkClient: KafkaZkClient) extends Logging {
    * @param topic                      The name of the topic
    * @param config                     The config of the topic
    * @param partitionReplicaAssignment The assignments of the topic
+   *                                   [Topic中的每个分区, 每个分区的副本是分配在哪个Broker中的--brokerId]
    * @param validate                   Boolean indicating if parameters must be validated or not (true by default)
    * @param usesTopicId                Boolean indicating whether the topic ID will be created
    */

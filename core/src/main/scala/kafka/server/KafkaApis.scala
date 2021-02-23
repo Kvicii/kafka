@@ -186,12 +186,16 @@ class KafkaApis(val requestChannel: RequestChannel,
         // 2.添加新的case分支
         // 3.添加对应的 handleXxx方法
         request.header.apiKey match {
+          // Client 与 Server通信请求的的处理
         case ApiKeys.PRODUCE => handleProduceRequest(request)
+          // Follower副本拉取Leader副本请求的处理
         case ApiKeys.FETCH => handleFetchRequest(request)
         case ApiKeys.LIST_OFFSETS => handleListOffsetRequest(request)
+          // Topic发生变动时请求的处理
         case ApiKeys.METADATA => handleTopicMetadataRequest(request)
         case ApiKeys.LEADER_AND_ISR => handleLeaderAndIsrRequest(request)
         case ApiKeys.STOP_REPLICA => handleStopReplicaRequest(request)
+          // Kafka Controller推送元数据更新请求的处理
         case ApiKeys.UPDATE_METADATA => handleUpdateMetadataRequest(request)
         case ApiKeys.CONTROLLED_SHUTDOWN => handleControlledShutdownRequest(request)
         case ApiKeys.OFFSET_COMMIT => handleOffsetCommitRequest(request)
@@ -363,6 +367,7 @@ class KafkaApis(val requestChannel: RequestChannel,
       requestHelper.sendResponseExemptThrottle(request,
         new UpdateMetadataResponse(new UpdateMetadataResponseData().setErrorCode(Errors.STALE_BROKER_EPOCH.code)))
     } else {
+      // 更新集群元数据
       val deletedPartitions = replicaManager.maybeUpdateMetadataCache(correlationId, updateMetadataRequest)
       if (deletedPartitions.nonEmpty)
         groupCoordinator.handleDeletedPartitions(deletedPartitions)
@@ -1178,10 +1183,15 @@ class KafkaApis(val requestChannel: RequestChannel,
     }
   }
 
+  /**
+   * 获取到所有Topic元数据的方法
+   *
+   * @param request
+   */
   def handleTopicMetadataRequest(request: RequestChannel.Request): Unit = {
     val metadataRequest = request.body[MetadataRequest]
     val requestVersion = request.header.apiVersion
-
+    // 获取到所有的Topic
     val topics = if (metadataRequest.isAllTopics)
       metadataCache.getAllTopics()
     else

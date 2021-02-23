@@ -292,8 +292,11 @@ class KafkaController(val config: KafkaConfig,
    * 1. Initializes the controller's context object that holds cache objects for current topics, live brokers and
    * leaders for all existing partitions.
    * 2. Starts the controller's channel manager
+   * Controller与其他Broker通信的组件
    * 3. Starts the replica state machine
+   * 监听各个副本的状态 副本是在Broker上的 监听副本的本质就是在监听Broker
    * 4. Starts the partition state machine
+   * 监听各个分区状态
    * If it encounters any unexpected exception/error while becoming controller, it resigns as the current controller.
    * This ensures another controller election will be triggered and there will always be an actively serving controller
    *
@@ -335,6 +338,7 @@ class KafkaController(val config: KafkaConfig,
 
     info(s"Ready to serve as the new controller with epoch $epoch")
 
+    // 副本的重新分配
     initializePartitionReassignments()
     topicDeletionManager.tryTopicDeletion()
     val pendingPreferredReplicaElections = fetchPendingPreferredReplicaElections()
@@ -602,6 +606,9 @@ class KafkaController(val config: KafkaConfig,
    * 2. Even if we do refresh the cache, there is no guarantee that by the time the leader and ISR request reaches
    * every broker that it is still valid.  Brokers check the leader epoch to determine validity of the request.
    *
+   * 一旦有Broker发生变动 就会发请求给所有已经感知到的Broker
+   * 一旦有新的Broker上线 可能会影响到分区状态
+   * 检查是否有重新分配的副本分配给新启动的Broker 如果有 将执行副本重分配的策略
    * Controller端处理集群新增Broker 启动的方法
    */
   private def onBrokerStartup(newBrokers: Seq[Int]): Unit = {
@@ -751,6 +758,7 @@ class KafkaController(val config: KafkaConfig,
    * 2. Move the newly created partitions from NewPartition->OnlinePartition state
    */
   private def onNewPartitionCreation(newPartitions: Set[TopicPartition]): Unit = {
+    // 将Topic变更的数据同步到其他Broker
     info(s"New partition creation callback for ${newPartitions.mkString(",")}")
     partitionStateMachine.handleStateChanges(newPartitions.toSeq, NewPartition)
     replicaStateMachine.handleStateChanges(controllerContext.replicasForPartition(newPartitions).toSeq, NewReplica)
@@ -817,18 +825,28 @@ class KafkaController(val config: KafkaConfig,
    * 1. Every replica present in the replica set of a LeaderAndIsrRequest gets the request sent to it
    * 2. Replicas that are removed from a partition's assignment get StopReplica sent to them
    *
+   * 源副本 1(Leader) 2 3 迁移之后 4(Leader) 5 6
    * For example, if ORS = {1,2,3} and TRS = {4,5,6}, the values in the topic and leader/isr paths in ZK
    * may go through the following transitions.
    * RS                AR          RR          leader     isr
    * {1,2,3}           {}          {}          1          {1,2,3}           (initial state)
-   * {4,5,6,1,2,3}     {4,5,6}     {1,2,3}     1          {1,2,3}           (step A2)
-   * {4,5,6,1,2,3}     {4,5,6}     {1,2,3}     1          {1,2,3,4,5,6}     (phase B)
-   * {4,5,6,1,2,3}     {4,5,6}     {1,2,3}     4          {1,2,3,4,5,6}     (step B3)
-   * {4,5,6,1,2,3}     {4,5,6}     {1,2,3}     4          {4,5,6}           (step B4)
-   * {4,5,6}           {}          {}          4          {4,5,6}           (step B6)
+   * {4,5,6,1,2,3}     {4,5,6}     {1,2,3}     1          {1,2,3}           (step A2)       在ZK中先加入4 5 6副本 一旦在ZK中更新了4 5 6副本 Controller一定会感知到 一定会推送元数据到4 5 6所在的Broker 4 5 6感知到自己是Follower之后 一定会启动Fetcher线程从Leader拉取数据
+   * {4,5,6,1,2,3}     {4,5,6}     {1,2,3}     1          {1,2,3,4,5,6}     (phase B)       现在新的机器上分配副本 在同一时间 可能会出现一个分区有6个副本 但是新分配的副本都是Follower 这些Follower都在进行同步 一直等待到这些Follower全部与Leader同步为止(即Follower的LEO >= Leader的HW就将该Follower加入ISR)
+   * {4,5,6,1,2,3}     {4,5,6}     {1,2,3}     4          {1,2,3,4,5,6}     (step B3)       在6个副本中 重新选举Leader 新的Leader从4 5 6中诞生
+   * {4,5,6,1,2,3}     {4,5,6}     {1,2,3}     4          {4,5,6}           (step B4)       从ISR列表中删除1 2 3副本
+   * {4,5,6}           {}          {}          4          {4,5,6}           (step B6)       从ZK中删除1 2 3副本
+   * 最后ISR和ZK中都是4 5 6副本
    *
    * Note that we have to update RS in ZK with TRS last since it's the only place where we store ORS persistently.
    * This way, if the controller crashes before that step, we can still recover.
+   *
+   *
+   * 1. 每个Topic在创建的时候都有一个副本方案写入ZK中 基于重分配的方案 更新ZK中的分区副本分配方案
+   * 2. 对于重分配的副本 每个副本所在的Broker都发送一个LeaderAndIsr请求
+   * 3. 开启新分配的副本 通过迁移副本来实现
+   * 4. 等待 一直到重分配的副本与Leader保持同步 就认为这次重分配成功了
+   * 5. 把迁移后的新分配的副本全部改为 Online状态
+   * 6. 更新内存中的这个分区的实际副本的状态
    */
   private def onPartitionReassignment(topicPartition: TopicPartition, reassignment: ReplicaAssignment): Unit = {
     // While a reassignment is in progress, deletion is not allowed
@@ -1534,6 +1552,7 @@ class KafkaController(val config: KafkaConfig,
   private def processStartup(): Unit = {
     // 注册ControllerChangeHandler监听器
     zkClient.registerZNodeChangeHandlerAndCheckExistence(controllerChangeHandler)
+    // controller选举
     elect()
   }
 
@@ -1719,6 +1738,7 @@ class KafkaController(val config: KafkaConfig,
       }
       // 为新增Broker更新集群元数据并启动Broker
       controllerContext.addLiveBrokers(newCompatibleBrokerAndEpochs)
+      // 处理新加入的Broker
       onBrokerStartup(newBrokerIdsSorted)
     }
     if (bouncedBrokerIds.nonEmpty) {
@@ -1798,6 +1818,8 @@ class KafkaController(val config: KafkaConfig,
       val partitionAssignments = addedPartitionReplicaAssignment
         .map { case TopicIdReplicaAssignment(_, _, partitionsReplicas) => partitionsReplicas.keySet }
         .reduce((s1, s2) => s1.union(s2))
+      // 处理新增的Topic 新增的每个Topic下 每个分区变动的监听器
+      // 将变更数据同步到其他Broker
       onNewPartitionCreation(partitionAssignments)
     }
   }
@@ -2579,7 +2601,8 @@ class KafkaController(val config: KafkaConfig,
           // ControllerChange事件 执行Broker卸任逻辑
           processControllerChange()
         case Reelect =>
-          // Reelect事件  执行Broker卸任逻辑 同时要求Broker参与到重选举中
+          // 扮演Controller角色的Broker宕机 需要重新选举
+          // Reelect事件 执行Broker卸任逻辑 同时要求Broker参与到重选举中
           processReelect()
         case RegisterBrokerAndReelect =>
           processRegisterBrokerAndReelect()
@@ -2713,6 +2736,11 @@ class TopicDeletionHandler(eventManager: ControllerEventManager) extends ZNodeCh
   override def handleChildChange(): Unit = eventManager.put(TopicDeletion)
 }
 
+/**
+ * 负责副本重分配的处理器 监听/admin/reassign_partitions的数据变化 一旦通过脚本指定了新的分配方案 就会执行
+ *
+ * @param eventManager
+ */
 class PartitionReassignmentHandler(eventManager: ControllerEventManager) extends ZNodeChangeHandler {
   override val path: String = ReassignPartitionsZNode.path
 

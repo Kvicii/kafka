@@ -1119,6 +1119,7 @@ object ReassignPartitionsCommand extends Logging {
       // and providing the --additional flag.
       throw new TerseReassignmentFailureException(cannotExecuteBecauseOfExistingMessage)
     }
+    // 对于一个分区 先获取当前分区的副本方案
     val currentParts = zkClient.getReplicaAssignmentForTopics(
       proposedParts.map(_._1.topic()).toSet)
     println(currentPartitionReplicaAssignmentToString(proposedParts, currentParts))
@@ -1133,6 +1134,8 @@ object ReassignPartitionsCommand extends Logging {
       modifyBrokerThrottles(zkClient, reassigningBrokers, interBrokerThrottle)
       println(s"The inter-broker throttle limit was set to ${interBrokerThrottle} B/s")
     }
+    // 执行副本分配方案 即 把副本重分配的方案写入ZK的/admin/reassign_partitions(当前正在执行副本重分配的方案)路径
+    // Controller负责监听副本重分配的这个路径 一旦发生变化 立即执行副本重分配的操作
     zkClient.createPartitionReassignment(proposedParts)
     println("Successfully started partition reassignment%s for %s".format(
       if (proposedParts.size == 1) "" else "s",

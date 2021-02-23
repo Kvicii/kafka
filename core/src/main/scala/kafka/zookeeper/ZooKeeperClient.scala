@@ -170,6 +170,7 @@ class ZooKeeperClient(connectString: String,
         inFlightRequests.acquire()
         try {
           inReadLock(initializationLock) {
+            // 交由ZK去创建节点等相关判断
             send(request) { response =>
               responseQueue.add(response)
               inFlightRequests.release()

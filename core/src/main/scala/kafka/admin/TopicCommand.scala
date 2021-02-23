@@ -217,6 +217,7 @@ object TopicCommand extends Logging {
         println("WARNING: Due to limitations in metric names, topics with a period ('.') or underscore ('_') could " +
           "collide. To avoid issues it is best to use either, but not both.")
       }
+      // 自动分配副本到Broker
       createTopic(topic)
     }
 

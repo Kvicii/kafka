@@ -141,8 +141,10 @@ class KafkaZkClient private[zk](zooKeeperClient: ZooKeeperClient, isSecure: Bool
     }
 
     def tryCreateControllerZNodeAndIncrementEpoch(): (Int, Int) = {
+      // 每个Broker向ZK发起抢注Controller逻辑
       val response = retryRequestUntilConnected(
         MultiRequest(Seq(
+          //  创建名为 '/controller' 的ZK节点 及其他相关数据
           CreateOp(ControllerZNode.path, ControllerZNode.encode(controllerId, timestamp), defaultAcls(ControllerZNode.path), CreateMode.EPHEMERAL),
           SetDataOp(ControllerEpochZNode.path, ControllerEpochZNode.encode(newControllerEpoch), expectedControllerEpochZkVersion)))
       )
@@ -1864,6 +1866,7 @@ class KafkaZkClient private[zk](zooKeeperClient: ZooKeeperClient, isSecure: Bool
     val remainingRequests = new mutable.ArrayBuffer(requests.size) ++= requests
     val responses = new mutable.ArrayBuffer[Req#Response]
     while (remainingRequests.nonEmpty) {
+      // 处理逻辑
       val batchResponses = zooKeeperClient.handleRequests(remainingRequests)
 
       batchResponses.foreach(response => latencyMetric.update(response.metadata.responseTimeMs))
