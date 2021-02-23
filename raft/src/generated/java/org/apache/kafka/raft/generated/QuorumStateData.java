@@ -119,7 +119,7 @@ public class QuorumStateData implements ApiMessage {
             if (arrayLength < 0) {
                 this.currentVoters = null;
             } else {
-                ArrayList<Voter> newCollection = new ArrayList<Voter>(arrayLength);
+                ArrayList<Voter> newCollection = new ArrayList<>(arrayLength);
                 for (int i = 0; i < arrayLength; i++) {
                     newCollection.add(new Voter(_readable, _version));
                 }

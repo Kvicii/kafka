@@ -33,7 +33,7 @@ import kafka.network.Processor._
 import kafka.network.RequestChannel.{CloseConnectionResponse, EndThrottlingResponse, NoOpResponse, SendResponse, StartThrottlingResponse}
 import kafka.network.SocketServer._
 import kafka.security.CredentialProvider
-import kafka.server.{BrokerReconfigurable, KafkaConfig}
+import kafka.server.{ApiVersionManager, BrokerReconfigurable, KafkaConfig}
 import kafka.utils.Implicits._
 import kafka.utils._
 import org.apache.kafka.common.config.ConfigException
@@ -47,7 +47,7 @@ import org.apache.kafka.common.network.{ChannelBuilder, ChannelBuilders, ClientI
 import org.apache.kafka.common.protocol.ApiKeys
 import org.apache.kafka.common.requests.{ApiVersionsRequest, RequestContext, RequestHeader}
 import org.apache.kafka.common.security.auth.SecurityProtocol
-import org.apache.kafka.common.utils.{KafkaThread, LogContext, Time}
+import org.apache.kafka.common.utils.{KafkaThread, LogContext, Time, Utils}
 import org.apache.kafka.common.{Endpoint, KafkaException, MetricName, Reconfigurable}
 import org.slf4j.event.Level
 
@@ -93,13 +93,16 @@ class SocketServer(val config: KafkaConfig,
                    val metrics: Metrics,
                    val time: Time,
                    val credentialProvider: CredentialProvider,
-                   val allowControllerOnlyApis: Boolean = false)
-  extends Logging with KafkaMetricsGroup with BrokerReconfigurable { // SocketServer实现了BrokerReconfigurable BrokerReconfigurable使用trait表明SocketServer的一些参数配置是允许动态修改的 即在不停机的状态下可以动态修改相关参数
+                   val apiVersionManager: ApiVersionManager)
+  extends Logging with KafkaMetricsGroup with BrokerReconfigurable {  // SocketServer实现了BrokerReconfigurable BrokerReconfigurable使用trait表明SocketServer的一些参数配置是允许动态修改的 即在不停机的状态下可以动态修改相关参数
 
   // SocketServer请求队列的最大长度 由Broker端参数queued.max.requests指定 默认500
   private val maxQueuedRequests = config.queuedMaxRequests
 
-  private val logContext = new LogContext(s"[SocketServer brokerId=${config.brokerId}] ")
+  private val nodeId = config.brokerId
+
+  private val logContext = new LogContext(s"[SocketServer listenerType=${apiVersionManager.listenerType}, nodeId=$nodeId] ")
+
   this.logIdent = logContext.logPrefix
 
   private val memoryPoolSensor = metrics.sensor("MemoryPoolUtilization")
@@ -119,7 +122,7 @@ class SocketServer(val config: KafkaConfig,
   // 控制类请求的数量应该远远小于数据类请求 因而不需要为它创建线程池和较深的请求队列
   // 处理数据类请求专属的RequestChannel对象
   // 承载请求队列的请求处理通道
-  val dataPlaneRequestChannel = new RequestChannel(maxQueuedRequests, DataPlaneMetricPrefix, time, allowControllerOnlyApis)
+  val dataPlaneRequestChannel = new RequestChannel(maxQueuedRequests, DataPlaneMetricPrefix, time, apiVersionManager.newRequestMetrics)
   // control-plane
   // 用于处理控制类请求的Processor线程 目前只是定义了专属的Processor线程而非线程池处理控制类请求
   // 只有一个Processor线程和Acceptor线程
@@ -128,7 +131,7 @@ class SocketServer(val config: KafkaConfig,
   // 处理控制类请求专属的RequestChannel对象
   // RequestChannel的长度被硬编码为20
   val controlPlaneRequestChannelOpt: Option[RequestChannel] = config.controlPlaneListenerName.map(_ =>
-    new RequestChannel(20, ControlPlaneMetricPrefix, time, allowControllerOnlyApis))
+    new RequestChannel(20, ControlPlaneMetricPrefix, time, apiVersionManager.newRequestMetrics))
 
   private var nextProcessorId = 0
   val connectionQuotas = new ConnectionQuotas(config, time, metrics)
@@ -146,13 +149,17 @@ class SocketServer(val config: KafkaConfig,
    * when processors start up and invoke [[org.apache.kafka.common.network.Selector#poll]].
    *
    * @param startProcessingRequests Flag indicating whether `Processor`s must be started.
+   * @param controlPlaneListener    The control plane listener, or None if there is none.
+   * @param dataPlaneListeners      The data plane listeners.
    */
-  def startup(startProcessingRequests: Boolean = true): Unit = {
+  def startup(startProcessingRequests: Boolean = true,
+              controlPlaneListener: Option[EndPoint] = config.controlPlaneListener,
+              dataPlaneListeners: Seq[EndPoint] = config.dataPlaneListeners): Unit = {
     this.synchronized {
       // 创建控制类请求的Acceptor线程和Processor线程
-      createControlPlaneAcceptorAndProcessor(config.controlPlaneListener)
+      createControlPlaneAcceptorAndProcessor(controlPlaneListener)
       // 创建数据类请求的Acceptor线程和Processor线程
-      createDataPlaneAcceptorsAndProcessors(config.numNetworkThreads, config.dataPlaneListeners)
+      createDataPlaneAcceptorsAndProcessors(config.numNetworkThreads, dataPlaneListeners)
       if (startProcessingRequests) {
         this.startProcessingRequests()
       }
@@ -264,9 +271,11 @@ class SocketServer(val config: KafkaConfig,
     // 获取Broker间通讯所用的监听器 默认是PLAINTEXT
     val interBrokerListener = dataPlaneAcceptors.asScala.keySet
       .find(_.listenerName == config.interBrokerListenerName)
-      .getOrElse(throw new IllegalStateException(s"Inter-broker listener ${config.interBrokerListenerName} not found, endpoints=${dataPlaneAcceptors.keySet}"))
-    val orderedAcceptors = List(dataPlaneAcceptors.get(interBrokerListener)) ++
-      dataPlaneAcceptors.asScala.filter { case (k, _) => k != interBrokerListener }.values
+    val orderedAcceptors = interBrokerListener match {
+      case Some(interBrokerListener) => List(dataPlaneAcceptors.get(interBrokerListener)) ++
+        dataPlaneAcceptors.asScala.filter { case (k, _) => k != interBrokerListener }.values
+      case None => dataPlaneAcceptors.asScala.values
+    }
     orderedAcceptors.foreach { acceptor =>
       val endpoint = acceptor.endPoint
       startAcceptorAndProcessors(DataPlaneThreadPrefix, endpoint, acceptor, authorizerFutures) // 真正的启动Acceptor线程和Processor线程
@@ -342,7 +351,7 @@ class SocketServer(val config: KafkaConfig,
     val recvBufferSize = config.socketReceiveBufferBytes
     val brokerId = config.brokerId
     // 只是创建了Acceptor 初始化好了Selector和ServerSocketChannel(默认监听9092端口号) 后续对启动逻辑做了统一的封装
-    new Acceptor(endPoint, sendBufferSize, recvBufferSize, brokerId, connectionQuotas, metricPrefix, time)
+    new Acceptor(endPoint, sendBufferSize, recvBufferSize, nodeId, connectionQuotas, metricPrefix, time)
   }
 
   private def addDataPlaneProcessors(acceptor: Acceptor, endpoint: EndPoint, newProcessorsPerListener: Int): Unit = {
@@ -496,8 +505,9 @@ class SocketServer(val config: KafkaConfig,
       credentialProvider,
       memoryPool,
       logContext,
-      isPrivilegedListener = isPrivilegedListener,
-      allowControllerOnlyApis = allowControllerOnlyApis
+      Processor.ConnectionQueueSize,
+      isPrivilegedListener,
+      apiVersionManager
     )
   }
 
@@ -618,11 +628,13 @@ private[kafka] abstract class AbstractServerThread(connectionQuotas: ConnectionQ
 private[kafka] class Acceptor(val endPoint: EndPoint, // 定义的Kafka Broker连接信息Acceptor需要用到连接信息中的主机名和端口创建ServerSocket
                               val sendBufferSize: Int, // 设置的是SocketOptions的SO_SNDBUF 用于设置出站(Outbound)网络IO的底层缓冲存区大小 默认是Broker端参数socket.receive.buffer.bytes的值 即100KB
                               val recvBufferSize: Int, // 设置的是SocketOptions的SO_RCVBUF 用于设置入站(Inbound)网络IO的底层缓冲区大小 默认是Broker端参数 socket.receive.buffer.bytes的值 即100KB
-                              brokerId: Int,
+                              nodeId: Int,
                               connectionQuotas: ConnectionQuotas,
                               metricPrefix: String,
-                              time: Time) extends AbstractServerThread(connectionQuotas) with KafkaMetricsGroup {
+                              time: Time,
+                              logPrefix: String = "") extends AbstractServerThread(connectionQuotas) with KafkaMetricsGroup {
 
+  this.logIdent = logPrefix
   // Java NIO库的Selector对象实例 是后续所有网络通信组件实现Java NIO机制的基础
   private val nioSelector = NSelector.open()
   val serverChannel = openServerSocket(endPoint.host, endPoint.port)
@@ -659,7 +671,8 @@ private[kafka] class Acceptor(val endPoint: EndPoint, // 定义的Kafka Broker�
       KafkaThread.nonDaemon(
         // 线程命名规范 processor线程前缀-kafka-network-thread-broker序号-监听器名称-安全协议-processor序号
         // 如data-plane-kafka-network-thread-0-ListenerName(PLAINTEXT)-PLAINTEXT-0
-        s"${processorThreadPrefix}-kafka-network-thread-$brokerId-${endPoint.listenerName}-${endPoint.securityProtocol}-${processor.id}", processor
+        s"${processorThreadPrefix}-kafka-network-thread-$nodeId-${endPoint.listenerName}-${endPoint.securityProtocol}-${processor.id}",
+        processor
       ).start()
     }
   }
@@ -737,7 +750,7 @@ private[kafka] class Acceptor(val endPoint: EndPoint, // 定义的Kafka Broker�
   private def openServerSocket(host: String, port: Int): ServerSocketChannel = {
     // 构造地址
     val socketAddress =
-      if (host == null || host.trim.isEmpty)
+      if (Utils.isBlank(host))
         new InetSocketAddress(port)
       else
         new InetSocketAddress(host, port)
@@ -875,7 +888,6 @@ private[kafka] object Processor {
   val IdlePercentMetricName = "IdlePercent"
   val NetworkProcessorMetricTag = "networkProcessor"
   val ListenerMetricTag = "listener"
-
   val ConnectionQueueSize = 20
 }
 
@@ -907,9 +919,9 @@ private[kafka] class Processor(val id: Int,
                                credentialProvider: CredentialProvider,
                                memoryPool: MemoryPool,
                                logContext: LogContext,
-                               connectionQueueSize: Int = ConnectionQueueSize,
-                               isPrivilegedListener: Boolean = false,
-                               allowControllerOnlyApis: Boolean = false) extends AbstractServerThread(connectionQuotas) with KafkaMetricsGroup {
+                               connectionQueueSize: Int,
+                               isPrivilegedListener: Boolean,
+                               apiVersionManager: ApiVersionManager) extends AbstractServerThread(connectionQuotas) with KafkaMetricsGroup {
 
   private object ConnectionId {
     def fromString(s: String): Option[ConnectionId] = s.split("-") match {
@@ -956,14 +968,18 @@ private[kafka] class Processor(val id: Int,
 
   // 每个Processor线程都维护了一个Selector实例 用于执行非阻塞多通道的网络 I/O 操作
   private val selector = createSelector(
-    ChannelBuilders.serverChannelBuilder(listenerName,
+    ChannelBuilders.serverChannelBuilder(
+      listenerName,
       listenerName == config.interBrokerListenerName,
       securityProtocol,
       config,
       credentialProvider.credentialCache,
       credentialProvider.tokenCache,
       time,
-      logContext))
+      logContext,
+      () => apiVersionManager.apiVersionResponse(throttleTimeMs = 0)
+    )
+  )
 
   // Visible to override for testing
   protected[network] def createSelector(channelBuilder: ChannelBuilder): KSelector = {
@@ -1136,10 +1152,10 @@ private[kafka] class Processor(val id: Int,
    */
   protected def parseRequestHeader(buffer: ByteBuffer): RequestHeader = {
     val header = RequestHeader.parse(buffer)
-    if (!header.apiKey.isControllerOnlyApi || allowControllerOnlyApis) {
+    if (apiVersionManager.isApiEnabled(header.apiKey)) {
       header
     } else {
-      throw new InvalidRequestException("Received request for KIP-500 controller-only api key " + header.apiKey)
+      throw new InvalidRequestException(s"Received request api key ${header.apiKey} which is not enabled")
     }
   }
 

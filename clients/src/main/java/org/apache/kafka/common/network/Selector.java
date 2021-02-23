@@ -674,7 +674,7 @@ public class Selector implements Selectable, AutoCloseable {
                     // 处理写事件 如果数据写完就取消对OP_WRITE事件的关注 只关注OP_READ事件
                     attemptWrite(key, channel, nowNanos);
                 } catch (Exception e) {
-                    sendFailed = true;
+                    sendFailed = true;  // 数据发送出现错误 如Broker Leader故障转移 想外层抛异常
                     throw e;
                 }
 
@@ -707,6 +707,7 @@ public class Selector implements Selectable, AutoCloseable {
                 if (e instanceof DelayedResponseAuthenticationException) {
                     maybeDelayCloseOnAuthenticationFailure(channel);
                 } else {
+                    // 关闭连接
                     close(channel, sendFailed ? CloseMode.NOTIFY_ONLY : CloseMode.GRACEFUL);
                 }
             } finally {

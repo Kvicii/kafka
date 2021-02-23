@@ -178,7 +178,7 @@ public class SubscriptionInfoData implements ApiMessage {
             if (arrayLength < 0) {
                 throw new RuntimeException("non-nullable field prevTasks was serialized as null");
             } else {
-                ArrayList<TaskId> newCollection = new ArrayList<TaskId>(arrayLength);
+                ArrayList<TaskId> newCollection = new ArrayList<>(arrayLength);
                 for (int i = 0; i < arrayLength; i++) {
                     newCollection.add(new TaskId(_readable, _version));
                 }
@@ -193,7 +193,7 @@ public class SubscriptionInfoData implements ApiMessage {
             if (arrayLength < 0) {
                 throw new RuntimeException("non-nullable field standbyTasks was serialized as null");
             } else {
-                ArrayList<TaskId> newCollection = new ArrayList<TaskId>(arrayLength);
+                ArrayList<TaskId> newCollection = new ArrayList<>(arrayLength);
                 for (int i = 0; i < arrayLength; i++) {
                     newCollection.add(new TaskId(_readable, _version));
                 }
@@ -221,7 +221,7 @@ public class SubscriptionInfoData implements ApiMessage {
             if (arrayLength < 0) {
                 throw new RuntimeException("non-nullable field taskOffsetSums was serialized as null");
             } else {
-                ArrayList<TaskOffsetSum> newCollection = new ArrayList<TaskOffsetSum>(arrayLength);
+                ArrayList<TaskOffsetSum> newCollection = new ArrayList<>(arrayLength);
                 for (int i = 0; i < arrayLength; i++) {
                     newCollection.add(new TaskOffsetSum(_readable, _version));
                 }
@@ -913,7 +913,7 @@ public class SubscriptionInfoData implements ApiMessage {
                 if (arrayLength < 0) {
                     throw new RuntimeException("non-nullable field partitionToOffsetSum was serialized as null");
                 } else {
-                    ArrayList<PartitionToOffsetSum> newCollection = new ArrayList<PartitionToOffsetSum>(arrayLength);
+                    ArrayList<PartitionToOffsetSum> newCollection = new ArrayList<>(arrayLength);
                     for (int i = 0; i < arrayLength; i++) {
                         newCollection.add(new PartitionToOffsetSum(_readable, _version));
                     }

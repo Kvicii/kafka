@@ -37,6 +37,7 @@ import kafka.utils._
 import kafka.zk.{AdminZkClient, BrokerInfo, KafkaZkClient}
 import org.apache.kafka.clients.{ApiVersions, ClientDnsLookup, ManualMetadataUpdater, NetworkClient, NetworkClientUtils}
 import org.apache.kafka.common.internals.Topic
+import org.apache.kafka.common.message.ApiMessageType.ListenerType
 import org.apache.kafka.common.message.ControlledShutdownRequestData
 import org.apache.kafka.common.metrics.Metrics
 import org.apache.kafka.common.network._
@@ -45,7 +46,7 @@ import org.apache.kafka.common.requests.{ControlledShutdownRequest, ControlledSh
 import org.apache.kafka.common.security.scram.internals.ScramMechanism
 import org.apache.kafka.common.security.token.delegation.internals.DelegationTokenCache
 import org.apache.kafka.common.security.{JaasContext, JaasUtils}
-import org.apache.kafka.common.utils.{AppInfoParser, LogContext, Time}
+import org.apache.kafka.common.utils.{AppInfoParser, LogContext, Time, Utils}
 import org.apache.kafka.common.{Endpoint, Node}
 import org.apache.kafka.metadata.BrokerState
 import org.apache.kafka.server.authorizer.Authorizer
@@ -138,7 +139,7 @@ class KafkaServer(
 
   var kafkaScheduler: KafkaScheduler = null
 
-  var metadataCache: MetadataCache = null
+  var metadataCache: ZkMetadataCache = null
   var quotaManagers: QuotaFactory.QuotaManagers = null
 
   val zkClientConfig: ZKClientConfig = KafkaServer.zkClientConfigFromKafkaConfig(config).getOrElse(new ZKClientConfig())
@@ -157,7 +158,6 @@ class KafkaServer(
   private var _featureChangeListener: FinalizedFeatureChangeListener = null
 
   val brokerFeatures: BrokerFeatures = BrokerFeatures.createDefault()
-
   val featureCache: FinalizedFeatureCache = new FinalizedFeatureCache(brokerFeatures)
 
   def clusterId: String = _clusterId
@@ -261,6 +261,25 @@ class KafkaServer(
         tokenCache = new DelegationTokenCache(ScramMechanism.mechanismNames)
         credentialProvider = new CredentialProvider(ScramMechanism.mechanismNames, tokenCache)
 
+        if (enableForwarding) {
+          this.forwardingManager = Some(ForwardingManager(
+            config,
+            metadataCache,
+            time,
+            metrics,
+            threadNamePrefix
+          ))
+          forwardingManager.foreach(_.start())
+        }
+
+        val apiVersionManager = ApiVersionManager(
+          ListenerType.ZK_BROKER,
+          config,
+          forwardingManager,
+          brokerFeatures,
+          featureCache
+        )
+
         // Create and start the socket server acceptor threads so that the bound port is known.
         // Delay starting processors until the end of the initialization sequence to ensure
         // that credentials have been loaded before processing authentications.
@@ -268,8 +287,7 @@ class KafkaServer(
         // Note that we allow the use of KIP-500 controller APIs when forwarding is enabled
         // so that the Envelope request is exposed. This is only used in testing currently.
         // 创建SocketServer(网络通信组件)
-        socketServer = new SocketServer(config, metrics, time, credentialProvider,
-          allowControllerOnlyApis = enableForwarding)
+        socketServer = new SocketServer(config, metrics, time, credentialProvider, apiVersionManager)
         // 启动SocketServer的Acceptor线程 获取绑定的端口号
         socketServer.startup(startProcessingRequests = false)
 
@@ -282,7 +300,8 @@ class KafkaServer(
             time = time,
             metrics = metrics,
             threadNamePrefix = threadNamePrefix,
-            brokerEpochSupplier = () => kafkaController.brokerEpoch
+            brokerEpochSupplier = () => kafkaController.brokerEpoch,
+            config.brokerId
           )
         } else {
           AlterIsrManager(kafkaScheduler, time, zkClient)
@@ -310,18 +329,6 @@ class KafkaServer(
         kafkaController = new KafkaController(config, zkClient, time, metrics, brokerInfo, brokerEpoch, tokenManager, brokerFeatures, featureCache, threadNamePrefix)
         kafkaController.startup() // 启动Controller
 
-        /* start forwarding manager */
-        if (enableForwarding) {
-          this.forwardingManager = Some(ForwardingManager(
-            config,
-            metadataCache,
-            time,
-            metrics,
-            threadNamePrefix
-          ))
-          forwardingManager.foreach(_.start())
-        }
-
         adminManager = new ZkAdminManager(config, metrics, metadataCache, zkClient)
 
         /* start group coordinator */
@@ -344,8 +351,8 @@ class KafkaServer(
           time,
           metrics,
           threadNamePrefix,
-          adminManager,
-          kafkaController,
+          Some(adminManager),
+          Some(kafkaController),
           groupCoordinator,
           transactionCoordinator,
           enableForwarding
@@ -374,10 +381,11 @@ class KafkaServer(
          * start processing requests
          * broker处理请求的相关组件
          */
-        val zkSupport = ZkSupport(adminManager, kafkaController, zkClient, forwardingManager)
+        val zkSupport = ZkSupport(adminManager, kafkaController, zkClient, forwardingManager, metadataCache)
         dataPlaneRequestProcessor = new KafkaApis(socketServer.dataPlaneRequestChannel, zkSupport, replicaManager, groupCoordinator, transactionCoordinator,
           autoTopicCreationManager, config.brokerId, config, configRepository, metadataCache, metrics, authorizer, quotaManagers,
-          fetchManager, brokerTopicStats, clusterId, time, tokenManager, brokerFeatures, featureCache)
+          fetchManager, brokerTopicStats, clusterId, time, tokenManager, apiVersionManager)
+
         // 创建处理数据类请求的工作线程池
         dataPlaneRequestHandlerPool = new KafkaRequestHandlerPool(config.brokerId, socketServer.dataPlaneRequestChannel, dataPlaneRequestProcessor, time,
           config.numIoThreads, s"${SocketServer.DataPlaneMetricPrefix}RequestHandlerAvgIdlePercent", SocketServer.DataPlaneThreadPrefix)
@@ -385,7 +393,7 @@ class KafkaServer(
         socketServer.controlPlaneRequestChannelOpt.foreach { controlPlaneRequestChannel =>
           controlPlaneRequestProcessor = new KafkaApis(controlPlaneRequestChannel, zkSupport, replicaManager, groupCoordinator, transactionCoordinator,
             autoTopicCreationManager, config.brokerId, config, configRepository, metadataCache, metrics, authorizer, quotaManagers,
-            fetchManager, brokerTopicStats, clusterId, time, tokenManager, brokerFeatures, featureCache)
+            fetchManager, brokerTopicStats, clusterId, time, tokenManager, apiVersionManager)
 
           controlPlaneRequestHandlerPool = new KafkaRequestHandlerPool(config.brokerId, socketServer.controlPlaneRequestChannelOpt.get, controlPlaneRequestProcessor, time,
             1, s"${SocketServer.ControlPlaneMetricPrefix}RequestHandlerAvgIdlePercent", SocketServer.ControlPlaneThreadPrefix)
@@ -486,7 +494,7 @@ class KafkaServer(
     }
 
     val updatedEndpoints = listeners.map(endpoint =>
-      if (endpoint.host == null || endpoint.host.trim.isEmpty)
+      if (Utils.isBlank(endpoint.host))
         endpoint.copy(host = InetAddress.getLocalHost.getCanonicalHostName)
       else
         endpoint

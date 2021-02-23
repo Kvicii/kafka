@@ -25,11 +25,13 @@ import com.fasterxml.jackson.databind.JsonNode
 import com.typesafe.scalalogging.Logger
 import com.yammer.metrics.core.Meter
 import kafka.metrics.KafkaMetricsGroup
+import kafka.network
 import kafka.server.KafkaConfig
 import kafka.utils.{Logging, NotNothing, Pool}
 import kafka.utils.Implicits._
 import org.apache.kafka.common.config.ConfigResource
 import org.apache.kafka.common.memory.MemoryPool
+import org.apache.kafka.common.message.ApiMessageType.ListenerType
 import org.apache.kafka.common.message.IncrementalAlterConfigsRequestData
 import org.apache.kafka.common.message.IncrementalAlterConfigsRequestData._
 import org.apache.kafka.common.network.Send
@@ -61,16 +63,19 @@ object RequestChannel extends Logging {
     val sanitizedUser: String = Sanitizer.sanitize(principal.getName)
   }
 
-  class Metrics(allowControllerOnlyApis: Boolean = false) {
+  class Metrics(enabledApis: Iterable[ApiKeys]) {
+    def this(scope: ListenerType) = {
+      this(ApiKeys.apisForListener(scope).asScala)
+    }
 
     private val metricsMap = mutable.Map[String, RequestMetrics]()
 
-    (ApiKeys.values.toSeq.filter(!_.isControllerOnlyApi || allowControllerOnlyApis).map(_.name) ++
-        Seq(RequestMetrics.consumerFetchMetricName, RequestMetrics.followFetchMetricName)).foreach { name =>
+    (enabledApis.map(_.name) ++
+      Seq(RequestMetrics.consumerFetchMetricName, RequestMetrics.followFetchMetricName)).foreach { name =>
       metricsMap.put(name, new RequestMetrics(name))
     }
 
-    def apply(metricName: String) = metricsMap(metricName)
+    def apply(metricName: String): RequestMetrics = metricsMap(metricName)
 
     def close(): Unit = {
       metricsMap.values.foreach(_.removeMetrics())
@@ -319,8 +324,6 @@ object RequestChannel extends Logging {
     def responseLog: Option[JsonNode] = None
 
     def onComplete: Option[Send => Unit] = None
-
-    override def toString: String
   }
 
   /** responseAsString should only be defined if request logging is enabled */
@@ -392,10 +395,9 @@ object RequestChannel extends Logging {
 class RequestChannel(val queueSize: Int, /*Request队列的最大长度 当Broker启动时 SocketServer组件会创建RequestChannel对象 并把Broker端参数queued.max.requests赋值给queueSize 因此在默认情况下 每个RequestChannel上的队列长度是500*/
                      val metricNamePrefix: String,
                      time: Time,
-                     allowControllerOnlyApis: Boolean = false) extends KafkaMetricsGroup  /*KafkaMetricsGroup封装了许多实用的指标监控方法*/ {
-  import RequestChannel._
-  val metrics = new RequestChannel.Metrics(allowControllerOnlyApis)
   // 每个RequestChannel对象实例创建时 会定义一个队列来保存Broker接收到的各类请求 这个队列被称为请求队列(或Request队列)
+                     val metrics: RequestChannel.Metrics) extends KafkaMetricsGroup /*KafkaMetricsGroup封装了许多实用的指标监控方法*/ {
+  import RequestChannel._
   private val requestQueue = new ArrayBlockingQueue[BaseRequest](queueSize)
   // RequestChannel下辖的Processor线程池 每个Processor线程负责具体的请求处理逻辑
   // Map中的Key就是processor序号 而Value则对应具体的Processor线程对象
@@ -442,9 +444,45 @@ class RequestChannel(val queueSize: Int, /*Request队列的最大长度 当Broke
   /** Send a response back to the socket server to be sent over the network */
   // 没有所谓的接收Response 只有发送Response
   // 将Response对象发送出去 也就是将Response添加到Response队列的过程
-  def sendResponse(response: RequestChannel.Response): Unit = {
+  def closeConnection(
+    request: RequestChannel.Request,
+    errorCounts: java.util.Map[Errors, Integer]
+  ): Unit = {
+    // This case is used when the request handler has encountered an error, but the client
+    // does not expect a response (e.g. when produce request has acks set to 0)
+    updateErrorMetrics(request.header.apiKey, errorCounts.asScala)
+    sendResponse(new RequestChannel.CloseConnectionResponse(request))
+  }
 
-    if (isTraceEnabled) { // 构造Trace日志输出字符串
+  def sendResponse(
+    request: RequestChannel.Request,
+    response: AbstractResponse,
+    onComplete: Option[Send => Unit]
+  ): Unit = {
+    updateErrorMetrics(request.header.apiKey, response.errorCounts.asScala)
+    sendResponse(new RequestChannel.SendResponse(
+      request,
+      request.buildResponseSend(response),
+      request.responseNode(response),
+      onComplete
+    ))
+  }
+
+  def sendNoOpResponse(request: RequestChannel.Request): Unit = {
+    sendResponse(new network.RequestChannel.NoOpResponse(request))
+  }
+
+  def startThrottling(request: RequestChannel.Request): Unit = {
+    sendResponse(new RequestChannel.StartThrottlingResponse(request))
+  }
+
+  def endThrottling(request: RequestChannel.Request): Unit = {
+    sendResponse(new EndThrottlingResponse(request))
+  }
+
+  /** Send a response back to the socket server to be sent over the network */
+  private[network] def sendResponse(response: RequestChannel.Response): Unit = {
+    if (isTraceEnabled) {
       val requestHeader = response.request.headerForLoggingOrThrottling()
       val message = response match {
         case sendResponse: SendResponse =>

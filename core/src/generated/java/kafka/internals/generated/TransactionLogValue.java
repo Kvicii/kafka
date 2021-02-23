@@ -108,7 +108,7 @@ public class TransactionLogValue implements ApiMessage {
             if (arrayLength < 0) {
                 this.transactionPartitions = null;
             } else {
-                ArrayList<PartitionsSchema> newCollection = new ArrayList<PartitionsSchema>(arrayLength);
+                ArrayList<PartitionsSchema> newCollection = new ArrayList<>(arrayLength);
                 for (int i = 0; i < arrayLength; i++) {
                     newCollection.add(new PartitionsSchema(_readable, _version));
                 }
@@ -367,7 +367,7 @@ public class TransactionLogValue implements ApiMessage {
                 if (arrayLength < 0) {
                     throw new RuntimeException("non-nullable field partitionIds was serialized as null");
                 } else {
-                    ArrayList<Integer> newCollection = new ArrayList<Integer>(arrayLength);
+                    ArrayList<Integer> newCollection = new ArrayList<>(arrayLength);
                     for (int i = 0; i < arrayLength; i++) {
                         newCollection.add(_readable.readInt());
                     }

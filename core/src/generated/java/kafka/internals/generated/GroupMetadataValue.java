@@ -173,7 +173,7 @@ public class GroupMetadataValue implements ApiMessage {
             if (arrayLength < 0) {
                 throw new RuntimeException("non-nullable field members was serialized as null");
             } else {
-                ArrayList<MemberMetadata> newCollection = new ArrayList<MemberMetadata>(arrayLength);
+                ArrayList<MemberMetadata> newCollection = new ArrayList<>(arrayLength);
                 for (int i = 0; i < arrayLength; i++) {
                     newCollection.add(new MemberMetadata(_readable, _version));
                 }

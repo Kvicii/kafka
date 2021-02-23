@@ -63,7 +63,7 @@ public class ByteBufferSend implements Send {
     @Override
     public long writeTo(TransferableChannel channel) throws IOException {
         // written --> 发送多少数据出去
-        long written = channel.write(buffers);
+        long written = channel.write(buffers);  // 一旦要发送的Broker Leader宕机了会向上抛出异常进行处理
         if (written < 0) {
             throw new EOFException("Wrote negative bytes to channel. This shouldn't happen.");
         }

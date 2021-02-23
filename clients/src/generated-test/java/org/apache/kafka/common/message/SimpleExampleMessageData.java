@@ -235,7 +235,7 @@ public class SimpleExampleMessageData implements ApiMessage {
                         if (arrayLength < 0) {
                             throw new RuntimeException("non-nullable field myTaggedIntArray was serialized as null");
                         } else {
-                            ArrayList<Integer> newCollection = new ArrayList<Integer>(arrayLength);
+                            ArrayList<Integer> newCollection = new ArrayList<>(arrayLength);
                             for (int i = 0; i < arrayLength; i++) {
                                 newCollection.add(_readable.readInt());
                             }
@@ -317,7 +317,7 @@ public class SimpleExampleMessageData implements ApiMessage {
         if (_version >= 1) {
             _writable.writeUuid(processId);
         } else {
-            if (this.processId != Uuid.ZERO_UUID) {
+            if (!this.processId.equals(Uuid.ZERO_UUID)) {
                 throw new UnsupportedVersionException("Attempted to write a non-default processId at version " + _version);
             }
         }
@@ -376,11 +376,11 @@ public class SimpleExampleMessageData implements ApiMessage {
             }
         }
         if (_version >= 1) {
-            if (this.taggedUuid != Uuid.fromString("H3KKO4NTRPaCWtEmm3vW7A")) {
+            if (!this.taggedUuid.equals(Uuid.fromString("H3KKO4NTRPaCWtEmm3vW7A"))) {
                 _numTaggedFields++;
             }
         } else {
-            if (this.taggedUuid != Uuid.fromString("H3KKO4NTRPaCWtEmm3vW7A")) {
+            if (!this.taggedUuid.equals(Uuid.fromString("H3KKO4NTRPaCWtEmm3vW7A"))) {
                 throw new UnsupportedVersionException("Attempted to write a non-default taggedUuid at version " + _version);
             }
         }
@@ -495,7 +495,7 @@ public class SimpleExampleMessageData implements ApiMessage {
                 }
             }
             {
-                if (this.taggedUuid != Uuid.fromString("H3KKO4NTRPaCWtEmm3vW7A")) {
+                if (!this.taggedUuid.equals(Uuid.fromString("H3KKO4NTRPaCWtEmm3vW7A"))) {
                     _writable.writeUnsignedVarint(6);
                     _writable.writeUnsignedVarint(16);
                     _writable.writeUuid(taggedUuid);
@@ -607,7 +607,7 @@ public class SimpleExampleMessageData implements ApiMessage {
             }
         }
         if (_version >= 1) {
-            if (this.taggedUuid != Uuid.fromString("H3KKO4NTRPaCWtEmm3vW7A")) {
+            if (!this.taggedUuid.equals(Uuid.fromString("H3KKO4NTRPaCWtEmm3vW7A"))) {
                 _numTaggedFields++;
                 _size.addBytes(1);
                 _size.addBytes(1);
@@ -1027,7 +1027,7 @@ public class SimpleExampleMessageData implements ApiMessage {
                 if (arrayLength < 0) {
                     throw new RuntimeException("non-nullable field arrayInStruct was serialized as null");
                 } else {
-                    ArrayList<StructArray> newCollection = new ArrayList<StructArray>(arrayLength);
+                    ArrayList<StructArray> newCollection = new ArrayList<>(arrayLength);
                     for (int i = 0; i < arrayLength; i++) {
                         newCollection.add(new StructArray(_readable, _version));
                     }

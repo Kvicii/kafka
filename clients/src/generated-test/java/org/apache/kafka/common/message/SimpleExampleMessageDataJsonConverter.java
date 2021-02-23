@@ -198,7 +198,7 @@ public class SimpleExampleMessageDataJsonConverter {
         if (_version >= 1) {
             _node.set("processId", new TextNode(_object.processId.toString()));
         } else {
-            if (_object.processId != Uuid.ZERO_UUID) {
+            if (!_object.processId.equals(Uuid.ZERO_UUID)) {
                 throw new UnsupportedVersionException("Attempted to write a non-default processId at version " + _version);
             }
         }
@@ -265,11 +265,11 @@ public class SimpleExampleMessageDataJsonConverter {
             }
         }
         if (_version >= 1) {
-            if (_object.taggedUuid != Uuid.fromString("H3KKO4NTRPaCWtEmm3vW7A")) {
+            if (!_object.taggedUuid.equals(Uuid.fromString("H3KKO4NTRPaCWtEmm3vW7A"))) {
                 _node.set("taggedUuid", new TextNode(_object.taggedUuid.toString()));
             }
         } else {
-            if (_object.taggedUuid != Uuid.fromString("H3KKO4NTRPaCWtEmm3vW7A")) {
+            if (!_object.taggedUuid.equals(Uuid.fromString("H3KKO4NTRPaCWtEmm3vW7A"))) {
                 throw new UnsupportedVersionException("Attempted to write a non-default taggedUuid at version " + _version);
             }
         }

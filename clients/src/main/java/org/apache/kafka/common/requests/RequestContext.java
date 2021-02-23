@@ -141,56 +141,71 @@ public class RequestContext implements AuthorizableRequestContext {
         return body.serializeWithHeader(header.toResponseHeader(), apiVersion());
     }
 
-	private boolean isUnsupportedApiVersionsRequest() {
-		// 当 Broker 接收到一个 ApiVersionsRequest 的时候 它会返回 Broker 当前支持的请求类型列表 包括请求类型名称、支持的最早版本号和最新版本号
-		return header.apiKey() == API_VERSIONS && !API_VERSIONS.isVersionSupported(header.apiVersion());
-	}
 
-	public short apiVersion() {
-		// Use v0 when serializing an unhandled ApiVersion response
-		if (isUnsupportedApiVersionsRequest()) {
-			return 0;
-		}
-		return header.apiVersion();
-	}
+    private boolean isUnsupportedApiVersionsRequest() {
+        // 当 Broker 接收到一个 ApiVersionsRequest 的时候 它会返回 Broker 当前支持的请求类型列表 包括请求类型名称、支持的最早版本号和最新版本号
+        return header.apiKey() == API_VERSIONS && !API_VERSIONS.isVersionSupported(header.apiVersion());
+    }
 
-	@Override
-	public String listenerName() {
-		return listenerName.value();
-	}
+    public short apiVersion() {
+        // Use v0 when serializing an unhandled ApiVersion response
+        if (isUnsupportedApiVersionsRequest())
+            return 0;
+        return header.apiVersion();
+    }
 
-	@Override
-	public SecurityProtocol securityProtocol() {
-		return securityProtocol;
-	}
+    @Override
+    public String listenerName() {
+        return listenerName.value();
+    }
 
-	@Override
-	public KafkaPrincipal principal() {
-		return principal;
-	}
+    @Override
+    public SecurityProtocol securityProtocol() {
+        return securityProtocol;
+    }
 
-	@Override
-	public InetAddress clientAddress() {
-		return clientAddress;
-	}
+    @Override
+    public KafkaPrincipal principal() {
+        return principal;
+    }
 
-	@Override
-	public int requestType() {
-		return header.apiKey().id;
-	}
+    @Override
+    public InetAddress clientAddress() {
+        return clientAddress;
+    }
 
-	@Override
-	public int requestVersion() {
-		return header.apiVersion();
-	}
+    @Override
+    public int requestType() {
+        return header.apiKey().id;
+    }
 
-	@Override
-	public String clientId() {
-		return header.clientId();
-	}
+    @Override
+    public int requestVersion() {
+        return header.apiVersion();
+    }
 
-	@Override
-	public int correlationId() {
-		return header.correlationId();
-	}
+    @Override
+    public String clientId() {
+        return header.clientId();
+    }
+
+    @Override
+    public int correlationId() {
+        return header.correlationId();
+    }
+
+    @Override
+    public String toString() {
+        return "RequestContext(" +
+            "header=" + header +
+            ", connectionId='" + connectionId + '\'' +
+            ", clientAddress=" + clientAddress +
+            ", principal=" + principal +
+            ", listenerName=" + listenerName +
+            ", securityProtocol=" + securityProtocol +
+            ", clientInformation=" + clientInformation +
+            ", fromPrivilegedListener=" + fromPrivilegedListener +
+            ", principalSerde=" + principalSerde +
+            ')';
+    }
 }

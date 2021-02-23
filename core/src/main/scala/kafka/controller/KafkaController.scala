@@ -681,6 +681,7 @@ class KafkaController(val config: KafkaConfig,
   /**
    * This callback is invoked by the replica state machine's broker change listener with the list of failed brokers
    * as input. It will call onReplicaBecomeOffline(...) with the list of replicas on those failed brokers as input.
+   *
    * 为关闭中的Broker执行清扫工作
    *
    * @param deadBrokers 给定的一组已终止运行的Broker ID列表
