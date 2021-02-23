@@ -814,7 +814,7 @@ public class NetworkClient implements KafkaClient {
         }
         // 清理掉该broker对应的所有的request
         cancelInFlightRequests(nodeId, now, responses);
-        // 进行标记 重新拉取元数据
+        // 进行标记 重新拉取元数据 说明如果Broker故障转移过程中 一定会重新拉取元数据
         metadataUpdater.handleServerDisconnect(now, nodeId, Optional.ofNullable(disconnectState.exception()));
     }
 
