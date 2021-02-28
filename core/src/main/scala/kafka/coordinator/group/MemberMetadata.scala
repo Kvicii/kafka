@@ -103,11 +103,9 @@ private[group] class MemberMetadata(var memberId: String,
   // 保存分配给该成员的分区分配方案
   // var assignment: Array[Byte] = Array.empty[Byte]
   // 表示组成员是否正在等待加入组
-  var awaitingJoinCallback: JoinGroupResult => Unit = null
+  var awaitingJoinCallback: JoinGroupResult => Unit = _
   // 表示组成员是否正在等待 GroupCoordinator 发送分配方案
-  var awaitingSyncCallback: SyncGroupResult => Unit = null
-  // 表示组成员是否发起"退出组"的操作
-  var isLeaving: Boolean = false
+  var awaitingSyncCallback: SyncGroupResult => Unit = _
   // 表示是否是消费者组下的新成员
   var isNew: Boolean = false
 
@@ -121,10 +119,9 @@ private[group] class MemberMetadata(var memberId: String,
   var heartbeatSatisfied: Boolean = false
 
   // 组成员是否正在等待加入组
-  def isAwaitingJoin = awaitingJoinCallback != null
-
+  def isAwaitingJoin: Boolean = awaitingJoinCallback != null
   // 组成员是否正在等待 GroupCoordinator 发送分配方案
-  def isAwaitingSync = awaitingSyncCallback != null
+  def isAwaitingSync: Boolean = awaitingSyncCallback != null
 
   /**
    * Get metadata corresponding to the provided protocol.

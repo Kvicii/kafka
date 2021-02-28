@@ -962,6 +962,24 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径(�
    * @throws LogSegmentOffsetOverflowException if we encountered a legacy segment with offset overflow
    */
   private[log] def recoverLog(): Long = {
+    /** return the log end offset if valid */
+    def deleteSegmentsIfLogStartGreaterThanLogEnd(): Option[Long] = {
+      if (logSegments.nonEmpty) {
+        val logEndOffset = activeSegment.readNextOffset
+        if (logEndOffset >= logStartOffset)
+          Some(logEndOffset)
+        else {
+          warn(s"Deleting all segments because logEndOffset ($logEndOffset) is smaller than logStartOffset ($logStartOffset). " +
+            "This could happen if segment files were deleted from the file system.")
+          // 日志段集合不为空 验证分区日志的LEO值是否 < LogStartOffset 小于删除这些日志段对象
+          removeAndDeleteSegments(logSegments, asyncDelete = true, LogRecovery)
+          leaderEpochCache.foreach(_.clearAndFlush())
+          producerStateManager.truncateFullyAndStartAt(logStartOffset)
+          None
+        }
+      } else None
+    }
+
     // if we have the clean shutdown marker, skip recovery
     // 如果不存在以.kafka_cleanshutdown结尾的文件(通常都不存在)
     if (!hadCleanShutdown) {
@@ -996,17 +1014,8 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径(�
       }
     }
 
-    if (logSegments.nonEmpty) {
-      val logEndOffset = activeSegment.readNextOffset
-      // 日志段集合不为空 验证分区日志的LEO值是否 < LogStartOffset 小于删除这些日志段对象
-      if (logEndOffset < logStartOffset) {
-        warn(s"Deleting all segments because logEndOffset ($logEndOffset) is smaller than logStartOffset ($logStartOffset). " +
-          "This could happen if segment files were deleted from the file system.")
-        removeAndDeleteSegments(logSegments,
-          asyncDelete = true,
-          reason = LogRecovery)
-      }
-    }
+    // 日志段集合不为空 验证分区日志的LEO值是否 < LogStartOffset 小于删除这些日志段对象
+    val logEndOffsetOption = deleteSegmentsIfLogStartGreaterThanLogEnd()
 
     if (logSegments.isEmpty) {
       // no existing segments, create a new mutable segment beginning at logStartOffset
@@ -1018,9 +1027,23 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径(�
         initFileSize = this.initFileSize,
         preallocate = config.preallocate))
     }
+
+    // Update the recovery point if there was a clean shutdown and did not perform any changes to
+    // the segment. Otherwise, we just ensure that the recovery point is not ahead of the log end
+    // offset. To ensure correctness and to make it easier to reason about, it's best to only advance
+    // the recovery point in flush(Long). If we advanced the recovery point here, we could skip recovery for
+    // unflushed segments if the broker crashed after we checkpoint the recovery point and before we flush the
+    // segment.
     // 更新上一次恢复点属性并返回
-    recoveryPoint = activeSegment.readNextOffset
-    recoveryPoint
+    (hadCleanShutdown, logEndOffsetOption) match {
+      case (true, Some(logEndOffset)) =>
+        recoveryPoint = logEndOffset
+        logEndOffset
+      case _ =>
+        val logEndOffset = logEndOffsetOption.getOrElse(activeSegment.readNextOffset)
+        recoveryPoint = Math.min(recoveryPoint, logEndOffset)
+        logEndOffset
+    }
   }
 
   // Rebuild producer state until lastOffset. This method may be called from the recovery code path, and thus must be
