@@ -695,6 +695,7 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
             this.defaultApiTimeoutMs = config.getInt(ConsumerConfig.DEFAULT_API_TIMEOUT_MS_CONFIG);
             this.time = Time.SYSTEM;
             this.metrics = buildMetrics(config, time, clientId);
+			// 重试的时间间隔
             this.retryBackoffMs = config.getLong(ConsumerConfig.RETRY_BACKOFF_MS_CONFIG);
 
             // load interceptors and make sure they get clientId
@@ -718,11 +719,13 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
                 config.ignore(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG);
                 this.valueDeserializer = valueDeserializer;
             }
+			// offset重置策略
             OffsetResetStrategy offsetResetStrategy = OffsetResetStrategy.valueOf(config.getString(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG).toUpperCase(Locale.ROOT));
             // 创建订阅对象 封装订阅信息
             this.subscriptions = new SubscriptionState(logContext, offsetResetStrategy);
             ClusterResourceListeners clusterResourceListeners = configureClusterResourceListeners(keyDeserializer,
                     valueDeserializer, metrics.reporters(), interceptorList);
+			// 元数据管理
             this.metadata = new ConsumerMetadata(retryBackoffMs,
                     config.getLong(ConsumerConfig.METADATA_MAX_AGE_CONFIG),
                     !config.getBoolean(ConsumerConfig.EXCLUDE_INTERNAL_TOPICS_CONFIG),
@@ -743,7 +746,7 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
             int heartbeatIntervalMs = config.getInt(ConsumerConfig.HEARTBEAT_INTERVAL_MS_CONFIG);
 
             ApiVersions apiVersions = new ApiVersions();
-            // 网络客户端
+            // 网络客户端 处理网络请求
             NetworkClient netClient = new NetworkClient(
                     new Selector(config.getLong(ConsumerConfig.CONNECTIONS_MAX_IDLE_MS_CONFIG), metrics, time, metricGrpPrefix, channelBuilder, logContext),
                     this.metadata,
@@ -964,9 +967,10 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
                 this.unsubscribe();
             } else {
                 for (String topic : topics) {
-                    if (Utils.isBlank(topic))
-                        throw new IllegalArgumentException("Topic collection to subscribe to cannot contain null or empty topic");
-                    }
+                    if (Utils.isBlank(topic)) {
+                    	throw new IllegalArgumentException("Topic collection to subscribe to cannot contain null or empty topic");
+					}
+                }
 
                 throwIfNoAssignorsConfigured();
                 fetcher.clearBufferedDataForUnassignedTopics(topics);
@@ -1028,9 +1032,10 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
     @Override
     public void subscribe(Pattern pattern, ConsumerRebalanceListener listener) {
         maybeThrowInvalidGroupIdException();
-        if (pattern == null || pattern.toString().equals(""))
-            throw new IllegalArgumentException("Topic pattern to subscribe to cannot be " + (pattern == null ?
-                    "null" : "empty"));
+        if (pattern == null || pattern.toString().equals("")) {
+        	throw new IllegalArgumentException("Topic pattern to subscribe to cannot be " + (pattern == null ?
+					"null" : "empty"));
+		}
 
         acquireAndEnsureOpen();
         try {
@@ -1116,19 +1121,22 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
             } else {
                 for (TopicPartition tp : partitions) {
                     String topic = (tp != null) ? tp.topic() : null;
-                    if (Utils.isBlank(topic))
-                        throw new IllegalArgumentException("Topic partitions to assign to cannot have null or empty topic");
+                    if (Utils.isBlank(topic)) {
+                    	throw new IllegalArgumentException("Topic partitions to assign to cannot have null or empty topic");
+					}
                 }
                 fetcher.clearBufferedDataForUnassignedPartitions(partitions);
 
                 // make sure the offsets of topic partitions the consumer is unsubscribing from
                 // are committed since there will be no following rebalance
-                if (coordinator != null)
-                    this.coordinator.maybeAutoCommitOffsetsAsync(time.milliseconds());
+                if (coordinator != null) {
+                	this.coordinator.maybeAutoCommitOffsetsAsync(time.milliseconds());
+				}
 
                 log.info("Subscribed to partition(s): {}", Utils.join(partitions, ", "));
-                if (this.subscriptions.assignFromUser(new HashSet<>(partitions)))
-                    metadata.requestUpdateForNewTopics();
+                if (this.subscriptions.assignFromUser(new HashSet<>(partitions))) {
+                	metadata.requestUpdateForNewTopics();
+				}
             }
         } finally {
             release();
@@ -1230,6 +1238,7 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
 
                 if (includeMetadataInTimeout) {
                     // try to update assignment metadata BUT do not need to block on the timer for join group
+					// 触发Coordinator选举以及JoinGroup和SyncGroup请求的处理 以及自动提交offset 启动Consumer心跳线程
                     updateAssignmentMetadataIfNeeded(timer, false);
                 } else {
                     while (!updateAssignmentMetadataIfNeeded(time.timer(Long.MAX_VALUE), true)) {
@@ -1237,6 +1246,7 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
                     }
                 }
 
+				// 对消息进行消费
                 final FetchedRecords<K, V> records = pollForFetches(timer);
                 if (!records.isEmpty()) {
                     // before returning the fetched records, we can send off the next round of fetches
@@ -1261,6 +1271,11 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
     }
 
     boolean updateAssignmentMetadataIfNeeded(final Timer timer, final boolean waitForJoinGroup) {
+		// poll方法包含了
+		// 1. Coordinator选举
+		// 2. JoinGroup和SyncGroup请求的处理
+		// 3. 以及自动提交offset
+		// 4. 启动Consumer心跳线程
         if (coordinator != null && !coordinator.poll(timer, waitForJoinGroup)) {
             return false;
         }
@@ -1276,12 +1291,14 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
                 Math.min(coordinator.timeToNextPoll(timer.currentTimeMs()), timer.remainingMs());
 
         // if data is available already, return it immediately
+		// 拉取消息 获取到一批数据
         final FetchedRecords<K, V> records = fetcher.fetchedRecords();
-        if (!records.isEmpty()) {
+        if (!records.isEmpty()) {	// 如果拉取到数据 直接返回即可
             return records;
         }
 
         // send any new fetches (won't resend pending fetches)
+		// 如果没有拉取到数据 进行异步调度 延迟一段时间拉取
         fetcher.sendFetches();
 
         // We do not want to be stuck blocking in poll if we are missing some positions
@@ -1302,7 +1319,7 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
             return !fetcher.hasAvailableFetches();
         });
         timer.update(pollTimer.currentTimeMs());
-
+        // 延迟一段时间之后 再次尝试拉取数据
         return fetcher.fetchedRecords();
     }
 
@@ -1578,8 +1595,9 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
      */
     @Override
     public void seek(TopicPartition partition, long offset) {
-        if (offset < 0)
-            throw new IllegalArgumentException("seek offset must not be a negative number");
+        if (offset < 0) {
+        	throw new IllegalArgumentException("seek offset must not be a negative number");
+		}
 
         acquireAndEnsureOpen();
         try {
@@ -1640,8 +1658,9 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
      */
     @Override
     public void seekToBeginning(Collection<TopicPartition> partitions) {
-        if (partitions == null)
-            throw new IllegalArgumentException("Partitions collection cannot be null");
+        if (partitions == null) {
+        	throw new IllegalArgumentException("Partitions collection cannot be null");
+		}
 
         acquireAndEnsureOpen();
         try {
@@ -1665,8 +1684,9 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
      */
     @Override
     public void seekToEnd(Collection<TopicPartition> partitions) {
-        if (partitions == null)
-            throw new IllegalArgumentException("Partitions collection cannot be null");
+        if (partitions == null) {
+        	throw new IllegalArgumentException("Partitions collection cannot be null");
+		}
 
         acquireAndEnsureOpen();
         try {
@@ -1737,14 +1757,16 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
     public long position(TopicPartition partition, final Duration timeout) {
         acquireAndEnsureOpen();
         try {
-            if (!this.subscriptions.isAssigned(partition))
-                throw new IllegalStateException("You can only check the position for partitions assigned to this consumer.");
+            if (!this.subscriptions.isAssigned(partition)) {
+            	throw new IllegalStateException("You can only check the position for partitions assigned to this consumer.");
+			}
 
             Timer timer = time.timer(timeout);
             do {
                 SubscriptionState.FetchPosition position = this.subscriptions.validPosition(partition);
-                if (position != null)
-                    return position.offset;
+                if (position != null) {
+                	return position.offset;
+				}
 
                 updateFetchPositions(timer);
                 client.poll(timer);
@@ -1941,8 +1963,9 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
         try {
             Cluster cluster = this.metadata.fetch();
             List<PartitionInfo> parts = cluster.partitionsForTopic(topic);
-            if (!parts.isEmpty())
-                return parts;
+            if (!parts.isEmpty()) {
+            	return parts;
+			}
 
             Timer timer = time.timer(timeout);
             Map<String, List<PartitionInfo>> topicMetadata = fetcher.getTopicMetadata(
@@ -2106,9 +2129,10 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
             for (Map.Entry<TopicPartition, Long> entry : timestampsToSearch.entrySet()) {
                 // we explicitly exclude the earliest and latest offset here so the timestamp in the returned
                 // OffsetAndTimestamp is always positive.
-                if (entry.getValue() < 0)
-                    throw new IllegalArgumentException("The target time for partition " + entry.getKey() + " is " +
-                            entry.getValue() + ". The target time cannot be negative.");
+                if (entry.getValue() < 0) {
+                	throw new IllegalArgumentException("The target time for partition " + entry.getKey() + " is " +
+							entry.getValue() + ". The target time cannot be negative.");
+				}
             }
             return fetcher.offsetsForTimes(timestampsToSearch, time.timer(timeout));
         } finally {
@@ -2313,8 +2337,9 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
      */
     @Override
     public void close(Duration timeout) {
-        if (timeout.toMillis() < 0)
-            throw new IllegalArgumentException("The timeout cannot be negative.");
+        if (timeout.toMillis() < 0) {
+        	throw new IllegalArgumentException("The timeout cannot be negative.");
+		}
         acquire();
         try {
             if (!closed) {
@@ -2340,8 +2365,9 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
 
     private ClusterResourceListeners configureClusterResourceListeners(Deserializer<K> keyDeserializer, Deserializer<V> valueDeserializer, List<?>... candidateLists) {
         ClusterResourceListeners clusterResourceListeners = new ClusterResourceListeners();
-        for (List<?> candidateList : candidateLists)
-            clusterResourceListeners.maybeAddAll(candidateList);
+        for (List<?> candidateList : candidateLists) {
+        	clusterResourceListeners.maybeAddAll(candidateList);
+		}
 
         clusterResourceListeners.maybeAdd(keyDeserializer);
         clusterResourceListeners.maybeAdd(valueDeserializer);
@@ -2352,8 +2378,9 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
         log.trace("Closing the Kafka consumer");
         AtomicReference<Throwable> firstException = new AtomicReference<>();
         try {
-            if (coordinator != null)
-                coordinator.close(time.timer(Math.min(timeoutMs, requestTimeoutMs)));
+            if (coordinator != null) {
+            	coordinator.close(time.timer(Math.min(timeoutMs, requestTimeoutMs)));
+			}
         } catch (Throwable t) {
             firstException.compareAndSet(null, t);
             log.error("Failed to close coordinator", t);
@@ -2390,14 +2417,18 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
         fetcher.validateOffsetsIfNeeded();
 
         cachedSubscriptionHashAllFetchPositions = subscriptions.hasAllFetchPositions();
-        if (cachedSubscriptionHashAllFetchPositions) return true;
+        if (cachedSubscriptionHashAllFetchPositions) {
+        	return true;
+		}
 
         // If there are any partitions which do not have a valid position and are not
         // awaiting reset, then we need to fetch committed offsets. We will only do a
         // coordinator lookup if there are partitions which have missing positions, so
         // a consumer with manually assigned partitions can avoid a coordinator dependence
         // by always ensuring that assigned partitions have an initial position.
-        if (coordinator != null && !coordinator.refreshCommittedOffsetsIfNeeded(timer)) return false;
+        if (coordinator != null && !coordinator.refreshCommittedOffsetsIfNeeded(timer)) {
+        	return false;
+		}
 
         // If there are partitions still needing a position and a reset policy is defined,
         // request reset using the default policy. If no reset strategy is defined and there
@@ -2433,8 +2464,9 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
      */
     private void acquire() {
         long threadId = Thread.currentThread().getId();
-        if (threadId != currentThread.get() && !currentThread.compareAndSet(NO_CURRENT_THREAD, threadId))
-            throw new ConcurrentModificationException("KafkaConsumer is not safe for multi-threaded access");
+        if (threadId != currentThread.get() && !currentThread.compareAndSet(NO_CURRENT_THREAD, threadId)) {
+        	throw new ConcurrentModificationException("KafkaConsumer is not safe for multi-threaded access");
+		}
         refcount.incrementAndGet();
     }
 
@@ -2442,25 +2474,29 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
      * Release the light lock protecting the consumer from multi-threaded access.
      */
     private void release() {
-        if (refcount.decrementAndGet() == 0)
-            currentThread.set(NO_CURRENT_THREAD);
+        if (refcount.decrementAndGet() == 0) {
+        	currentThread.set(NO_CURRENT_THREAD);
+		}
     }
 
     private void throwIfNoAssignorsConfigured() {
-        if (assignors.isEmpty())
-            throw new IllegalStateException("Must configure at least one partition assigner class name to " +
-                    ConsumerConfig.PARTITION_ASSIGNMENT_STRATEGY_CONFIG + " configuration property");
+        if (assignors.isEmpty()) {
+        	throw new IllegalStateException("Must configure at least one partition assigner class name to " +
+					ConsumerConfig.PARTITION_ASSIGNMENT_STRATEGY_CONFIG + " configuration property");
+		}
     }
 
     private void maybeThrowInvalidGroupIdException() {
-        if (!groupId.isPresent())
-            throw new InvalidGroupIdException("To use the group management or offset commit APIs, you must " +
-                    "provide a valid " + ConsumerConfig.GROUP_ID_CONFIG + " in the consumer configuration.");
+        if (!groupId.isPresent()) {
+        	throw new InvalidGroupIdException("To use the group management or offset commit APIs, you must " +
+					"provide a valid " + ConsumerConfig.GROUP_ID_CONFIG + " in the consumer configuration.");
+		}
     }
 
     private void updateLastSeenEpochIfNewer(TopicPartition topicPartition, OffsetAndMetadata offsetAndMetadata) {
-        if (offsetAndMetadata != null)
-            offsetAndMetadata.leaderEpoch().ifPresent(epoch -> metadata.updateLastSeenEpochIfNewer(topicPartition, epoch));
+        if (offsetAndMetadata != null) {
+        	offsetAndMetadata.leaderEpoch().ifPresent(epoch -> metadata.updateLastSeenEpochIfNewer(topicPartition, epoch));
+		}
     }
 
     // Functions below are for testing only

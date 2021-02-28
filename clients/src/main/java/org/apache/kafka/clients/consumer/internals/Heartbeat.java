@@ -40,8 +40,9 @@ public final class Heartbeat {
 
     public Heartbeat(GroupRebalanceConfig config,
                      Time time) {
-        if (config.heartbeatIntervalMs >= config.sessionTimeoutMs)
+        if (config.heartbeatIntervalMs >= config.sessionTimeoutMs) {
             throw new IllegalArgumentException("Heartbeat must be set lower than the session timeout");
+        }
         this.rebalanceConfig = config;
         this.time = time;
         this.heartbeatTimer = time.timer(config.heartbeatIntervalMs);

@@ -207,8 +207,9 @@ public class StickyAssignor extends AbstractStickyAssignor {
 
     @Override
     public ByteBuffer subscriptionUserData(Set<String> topics) {
-        if (memberAssignment == null)
+        if (memberAssignment == null) {
             return null;
+        }
 
         return serializeTopicPartitionAssignment(new MemberData(memberAssignment, Optional.of(generation)));
     }

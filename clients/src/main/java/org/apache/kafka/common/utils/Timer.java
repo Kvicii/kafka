@@ -99,16 +99,18 @@ public class Timer {
      * @param timeoutMs The new timeout in milliseconds
      */
     public void reset(long timeoutMs) {
-        if (timeoutMs < 0)
+        if (timeoutMs < 0) {
             throw new IllegalArgumentException("Invalid negative timeout " + timeoutMs);
+        }
 
         this.timeoutMs = timeoutMs;
         this.startMs = this.currentTimeMs;
 
-        if (currentTimeMs > Long.MAX_VALUE - timeoutMs)
+        if (currentTimeMs > Long.MAX_VALUE - timeoutMs) {
             this.deadlineMs = Long.MAX_VALUE;
-        else
+        } else {
             this.deadlineMs = currentTimeMs + timeoutMs;
+        }
     }
 
     /**
@@ -117,8 +119,9 @@ public class Timer {
      * @param deadlineMs The new deadline in milliseconds
      */
     public void resetDeadline(long deadlineMs) {
-        if (deadlineMs < 0)
+        if (deadlineMs < 0) {
             throw new IllegalArgumentException("Invalid negative deadline " + deadlineMs);
+        }
 
         this.timeoutMs = Math.max(0, deadlineMs - this.currentTimeMs);
         this.startMs = this.currentTimeMs;
