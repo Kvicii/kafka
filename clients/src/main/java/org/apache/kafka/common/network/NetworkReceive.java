@@ -104,6 +104,7 @@ public class NetworkReceive implements Receive {
      * 假如size是4个字节 一次read就读取到了2个字节 连size都没有读取完毕出现了拆包 或者读取到了一个size 199个字节 但是在读取响应消息的时候 就读取到了162个字节
      * 即响应消息没有读取完毕
      * Kafka解决READABLE事件的拆包问题 -->
+     * 等待下次轮询时进行处理
      *
      * @param channel The channel to read from
      * @return 本次读取的字节数

@@ -1685,7 +1685,7 @@ public class Fetcher<K, V> implements Closeable {
         }
 
         private PriorityQueue<FetchResponseData.AbortedTransaction> abortedTransactions(FetchResponseData.PartitionData partition) {
-            if (partition.abortedTransactions() == null || partition.abortedTransactions().isEmpty())
+            if (partition.abortedTransactions() == null || partition.abortedTransactions().isEmpty()) {
                 return null;
             }
 
