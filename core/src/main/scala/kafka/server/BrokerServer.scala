@@ -51,7 +51,7 @@ import scala.collection.{Map, Seq}
 import scala.jdk.CollectionConverters._
 
 /**
- * A KIP-500 Kafka broker.
+ * A self-managed Kafka broker.
  */
 class BrokerServer(
                     val config: KafkaConfig,
@@ -101,6 +101,8 @@ class BrokerServer(
   var groupCoordinator: GroupCoordinator = null
 
   var transactionCoordinator: TransactionCoordinator = null
+
+  var clientToControllerChannelManager: BrokerToControllerChannelManager = null
 
   var forwardingManager: ForwardingManager = null
 
@@ -179,7 +181,7 @@ class BrokerServer(
       val controllerNodes = RaftConfig.quorumVoterStringsToNodes(controllerQuorumVotersFuture.get()).asScala
       val controllerNodeProvider = RaftControllerNodeProvider(metaLogManager, config, controllerNodes)
 
-      val forwardingChannelManager = BrokerToControllerChannelManager(
+      clientToControllerChannelManager = BrokerToControllerChannelManager(
         controllerNodeProvider,
         time,
         metrics,
@@ -188,8 +190,8 @@ class BrokerServer(
         threadNamePrefix,
         retryTimeoutMs = 60000
       )
-      forwardingManager = new ForwardingManagerImpl(forwardingChannelManager)
-      forwardingManager.start()
+      clientToControllerChannelManager.start()
+      forwardingManager = new ForwardingManagerImpl(clientToControllerChannelManager)
 
       val apiVersionManager = ApiVersionManager(
         ListenerType.BROKER,
@@ -210,7 +212,7 @@ class BrokerServer(
         time,
         metrics,
         config,
-        channelName = "alterisr",
+        channelName = "alterIsr",
         threadNamePrefix,
         retryTimeoutMs = Long.MaxValue
       )
@@ -245,12 +247,9 @@ class BrokerServer(
         new KafkaScheduler(threads = 1, threadNamePrefix = "transaction-log-manager-"),
         createTemporaryProducerIdManager, metrics, metadataCache, Time.SYSTEM)
 
-      val autoTopicCreationChannelManager = BrokerToControllerChannelManager(controllerNodeProvider,
-        time, metrics, config, "autocreate", threadNamePrefix, 60000)
       autoTopicCreationManager = new DefaultAutoTopicCreationManager(
-        config, Some(autoTopicCreationChannelManager), None, None,
+        config, Some(clientToControllerChannelManager), None, None,
         groupCoordinator, transactionCoordinator)
-      autoTopicCreationManager.start()
 
       /* Add all reconfigurables for config change notification before starting the metadata listener */
       config.dynamicConfig.addReconfigurables(this)
@@ -448,11 +447,8 @@ class BrokerServer(
       if (alterIsrManager != null)
         CoreUtils.swallow(alterIsrManager.shutdown(), this)
 
-      if (forwardingManager != null)
-        CoreUtils.swallow(forwardingManager.shutdown(), this)
-
-      if (autoTopicCreationManager != null)
-        CoreUtils.swallow(autoTopicCreationManager.shutdown(), this)
+      if (clientToControllerChannelManager != null)
+        CoreUtils.swallow(clientToControllerChannelManager.shutdown(), this)
 
       if (logManager != null)
         CoreUtils.swallow(logManager.shutdown(), this)
