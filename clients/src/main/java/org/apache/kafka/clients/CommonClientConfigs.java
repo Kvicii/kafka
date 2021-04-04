@@ -43,17 +43,14 @@ public class CommonClientConfigs {
 
     public static final String CLIENT_DNS_LOOKUP_CONFIG = "client.dns.lookup";
     public static final String CLIENT_DNS_LOOKUP_DOC = "Controls how the client uses DNS lookups. "
-            + "If set to <code>use_all_dns_ips</code>, connect to each returned IP "
-            + "address in sequence until a successful connection is established. "
-            + "After a disconnection, the next IP is used. Once all IPs have been "
-            + "used once, the client resolves the IP(s) from the hostname again "
-            + "(both the JVM and the OS cache DNS name lookups, however). "
-            + "If set to <code>resolve_canonical_bootstrap_servers_only</code>, "
-            + "resolve each bootstrap address into a list of canonical names. After "
-            + "the bootstrap phase, this behaves the same as <code>use_all_dns_ips</code>. "
-            + "If set to <code>default</code> (deprecated), attempt to connect to the "
-            + "first IP address returned by the lookup, even if the lookup returns multiple "
-            + "IP addresses.";
+                                                       + "If set to <code>use_all_dns_ips</code>, connect to each returned IP "
+                                                       + "address in sequence until a successful connection is established. "
+                                                       + "After a disconnection, the next IP is used. Once all IPs have been "
+                                                       + "used once, the client resolves the IP(s) from the hostname again "
+                                                       + "(both the JVM and the OS cache DNS name lookups, however). "
+                                                       + "If set to <code>resolve_canonical_bootstrap_servers_only</code>, "
+                                                       + "resolve each bootstrap address into a list of canonical names. After "
+                                                       + "the bootstrap phase, this behaves the same as <code>use_all_dns_ips</code>.";
 
     public static final String METADATA_MAX_AGE_CONFIG = "metadata.max.age.ms";
     public static final String METADATA_MAX_AGE_DOC = "The period of time in milliseconds after which we force a refresh of metadata even if we haven't seen any partition leadership changes to proactively discover any new brokers or partitions.";
@@ -188,14 +185,5 @@ public class CommonClientConfigs {
             rval.put(RECONNECT_BACKOFF_MAX_MS_CONFIG, parsedValues.get(RECONNECT_BACKOFF_MS_CONFIG));
         }
         return rval;
-    }
-
-    public static void warnIfDeprecatedDnsLookupValue(AbstractConfig config) {
-        String clientDnsLookupValue = config.getString(CLIENT_DNS_LOOKUP_CONFIG);
-        if (clientDnsLookupValue.equals(ClientDnsLookup.DEFAULT.toString()))
-            log.warn("Configuration '{}' with value '{}' is deprecated and will be removed in " +
-                            "future version. Please use '{}' or another non-deprecated value.",
-                    CLIENT_DNS_LOOKUP_CONFIG, ClientDnsLookup.DEFAULT,
-                    ClientDnsLookup.USE_ALL_DNS_IPS);
     }
 }

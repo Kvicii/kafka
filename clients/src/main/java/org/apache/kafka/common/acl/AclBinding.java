@@ -18,8 +18,6 @@
 package org.apache.kafka.common.acl;
 
 import org.apache.kafka.common.annotation.InterfaceStability;
-import org.apache.kafka.common.resource.PatternType;
-import org.apache.kafka.common.resource.Resource;
 import org.apache.kafka.common.resource.ResourcePattern;
 
 import java.util.Objects;
@@ -45,24 +43,12 @@ public class AclBinding {
 		this.entry = Objects.requireNonNull(entry, "entry");
 	}
 
-	/**
-	 * Create an instance of this class with the provided parameters.
-	 *
-	 * @param resource non-null resource
-	 * @param entry    non-null entry
-	 * @deprecated Since 2.0. Use {@link #AclBinding(ResourcePattern, AccessControlEntry)}
-	 */
-	@Deprecated
-	public AclBinding(Resource resource, AccessControlEntry entry) {
-		this(new ResourcePattern(resource.resourceType(), resource.name(), PatternType.LITERAL), entry);
-	}
-
-	/**
-	 * @return true if this binding has any UNKNOWN components.
-	 */
-	public boolean isUnknown() {
-		return pattern.isUnknown() || entry.isUnknown();
-	}
+    /**
+     * @return true if this binding has any UNKNOWN components.
+     */
+    public boolean isUnknown() {
+        return pattern.isUnknown() || entry.isUnknown();
+    }
 
 	/**
 	 * @return the resource pattern for this binding.

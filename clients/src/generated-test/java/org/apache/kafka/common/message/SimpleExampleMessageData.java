@@ -967,7 +967,7 @@ public class SimpleExampleMessageData implements ApiMessage {
     
     public SimpleExampleMessageData setMyUint16(int v) {
         if (v < 0 || v > 65535) {
-            throw new RuntimeException("Invalid value " + v + "for unsigned short field.");
+            throw new RuntimeException("Invalid value " + v + " for unsigned short field.");
         }
         this.myUint16 = v;
         return this;
