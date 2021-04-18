@@ -692,8 +692,6 @@ class KafkaServer(
           CoreUtils.swallow(dataPlaneRequestHandlerPool.shutdown(), this)
         if (controlPlaneRequestHandlerPool != null)
           CoreUtils.swallow(controlPlaneRequestHandlerPool.shutdown(), this)
-        if (kafkaScheduler != null)
-          CoreUtils.swallow(kafkaScheduler.shutdown(), this)
 
         if (dataPlaneRequestProcessor != null)
           CoreUtils.swallow(dataPlaneRequestProcessor.close(), this)
@@ -721,6 +719,9 @@ class KafkaServer(
 
         if (logManager != null)
           CoreUtils.swallow(logManager.shutdown(), this)
+        // be sure to shutdown scheduler after log manager
+        if (kafkaScheduler != null)
+          CoreUtils.swallow(kafkaScheduler.shutdown(), this)
 
         if (kafkaController != null)
           CoreUtils.swallow(kafkaController.shutdown(), this)

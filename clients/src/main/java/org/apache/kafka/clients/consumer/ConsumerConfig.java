@@ -73,7 +73,9 @@ public class ConsumerConfig extends AbstractConfig {
      * 一次调用poll()方法返回的记录最大数量
      */
     public static final String MAX_POLL_RECORDS_CONFIG = "max.poll.records";
-    private static final String MAX_POLL_RECORDS_DOC = "The maximum number of records returned in a single call to poll().";
+    private static final String MAX_POLL_RECORDS_DOC = "The maximum number of records returned in a single call to poll()."
+        + " Note, that <code>" + MAX_POLL_RECORDS_CONFIG + "</code> does not impact the underlying fetching behavior."
+        + " The consumer will cache the records from each fetch request and returns them incrementally from each poll.";
 
     /**
      * <code>max.poll.interval.ms</code>
