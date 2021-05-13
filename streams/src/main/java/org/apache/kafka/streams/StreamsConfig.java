@@ -501,8 +501,8 @@ public class StreamsConfig extends AbstractConfig {
     /** {@code replication.factor} */
     @SuppressWarnings("WeakerAccess")
     public static final String REPLICATION_FACTOR_CONFIG = "replication.factor";
-    private static final String REPLICATION_FACTOR_DOC = "The replication factor for change log topics and repartition topics created by the stream processing application." +
-        " If your broker cluster is on version 2.4 or newer, you can set -1 to use the broker default replication factor.";
+    private static final String REPLICATION_FACTOR_DOC = "The replication factor for change log topics and repartition topics created by the stream processing application."
+        + " The default of <code>-1</code> (meaning: use broker default replication factor) requires broker version 2.4 or newer";
 
     /** {@code request.timeout.ms} */
     @SuppressWarnings("WeakerAccess")
@@ -608,11 +608,6 @@ public class StreamsConfig extends AbstractConfig {
                     Type.LIST,
                     Importance.HIGH,
                     CommonClientConfigs.BOOTSTRAP_SERVERS_DOC)
-            .define(REPLICATION_FACTOR_CONFIG,
-                    Type.INT,
-                    1,
-                    Importance.HIGH,
-                    REPLICATION_FACTOR_DOC)
             .define(STATE_DIR_CONFIG,
                     Type.STRING,
                     System.getProperty("java.io.tmpdir") + File.separator + "kafka-streams",
@@ -700,6 +695,11 @@ public class StreamsConfig extends AbstractConfig {
                     in(AT_LEAST_ONCE, EXACTLY_ONCE, EXACTLY_ONCE_BETA, EXACTLY_ONCE_V2),
                     Importance.MEDIUM,
                     PROCESSING_GUARANTEE_DOC)
+            .define(REPLICATION_FACTOR_CONFIG,
+                    Type.INT,
+                    -1,
+                    Importance.MEDIUM,
+                    REPLICATION_FACTOR_DOC)
             .define(SECURITY_PROTOCOL_CONFIG,
                     Type.STRING,
                     CommonClientConfigs.DEFAULT_SECURITY_PROTOCOL,
@@ -917,6 +917,21 @@ public class StreamsConfig extends AbstractConfig {
 
         // This is settable in the main Streams config, but it's a private API for testing
         public static final String ASSIGNMENT_LISTENER = "__assignment.listener__";
+
+        // Private API used to disable the fix on left/outer joins (https://issues.apache.org/jira/browse/KAFKA-10847)
+        public static final String ENABLE_KSTREAMS_OUTER_JOIN_SPURIOUS_RESULTS_FIX = "__enable.kstreams.outer.join.spurious.results.fix__";
+
+        public static boolean getBoolean(final Map<String, Object> configs, final String key, final boolean defaultValue) {
+            final Object value = configs.getOrDefault(key, defaultValue);
+            if (value instanceof Boolean) {
+                return (boolean) value;
+            } else if (value instanceof String) {
+                return Boolean.parseBoolean((String) value);
+            } else {
+                log.warn("Invalid value (" + value + ") on internal configuration '" + key + "'. Please specify a true/false value.");
+                return defaultValue;
+            }
+        }
     }
 
     /**
