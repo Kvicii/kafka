@@ -270,7 +270,6 @@ case object SnapshotGenerated extends LogStartOffsetIncrementReason {
  * @param scheduler The thread pool scheduler used for background actions
  * @param brokerTopicStats Container for Broker Topic Yammer Metrics
  * @param time The time instance used for checking the clock
- * @param maxProducerIdExpirationMs The maximum amount of time to wait before a producer id is considered expired
  * @param producerIdExpirationCheckIntervalMs How often to check for producer ids which need to be expired
  * @param topicPartition The topic partition associated with this Log instance
  * @param leaderEpochCache The LeaderEpochFileCache instance (if any) containing state associated
@@ -301,7 +300,6 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径(�
           scheduler: Scheduler,
           brokerTopicStats: BrokerTopicStats,
           val time: Time,
-          val maxProducerIdExpirationMs: Int,
           val producerIdExpirationCheckIntervalMs: Int,
           val topicPartition: TopicPartition,
           // Leader Epoch 是社区于 0.11.0.0 版本引入源码中的 主要是用来判断出现 Failure 时是否执行日志截断操作(Truncation)
@@ -1841,7 +1839,10 @@ class Log(@volatile private var _dir: File, // 日志所在的文件夹路径(�
         debug(s"Flushing log up to offset $offset, last flushed: $lastFlushTime,  current time: ${time.milliseconds()}, " +
           s"unflushed: $unflushedMessages")
         // 找到所有的LogSegment文件 调用flush进行写入
-        logSegments(this.recoveryPoint, offset).foreach(_.flush())
+        val segments = logSegments(this.recoveryPoint, offset)
+        segments.foreach(_.flush())
+        // if there are any new segments, we need to flush the parent directory for crash consistency
+        segments.lastOption.filter(_.baseOffset >= this.recoveryPoint).foreach(_ => Utils.flushDir(dir.toPath))
 
         lock synchronized {
           checkIfMemoryMappedBufferClosed()
@@ -2203,8 +2204,8 @@ object Log extends Logging {
       leaderEpochCache,
       producerStateManager))
     new Log(dir, config, segments, offsets.logStartOffset, offsets.recoveryPoint, offsets.nextOffsetMetadata, scheduler,
-      brokerTopicStats, time, maxProducerIdExpirationMs, producerIdExpirationCheckIntervalMs, topicPartition,
-      leaderEpochCache, producerStateManager, logDirFailureChannel, topicId, keepPartitionMetadataFile)
+      brokerTopicStats, time, producerIdExpirationCheckIntervalMs, topicPartition, leaderEpochCache,
+      producerStateManager, logDirFailureChannel, topicId, keepPartitionMetadataFile)
   }
 
   /**
@@ -2501,7 +2502,7 @@ object Log extends Logging {
       // need to do this in two phases to be crash safe AND do the delete asynchronously
       // if we crash in the middle of this we complete the swap in loadSegments()
       if (!isRecoveredSwapFile)
-        sortedNewSegments.reverse.foreach(_.changeFileSuffixes(Log.CleanedFileSuffix, Log.SwapFileSuffix, false))
+        sortedNewSegments.reverse.foreach(_.changeFileSuffixes(Log.CleanedFileSuffix, Log.SwapFileSuffix))
       sortedNewSegments.reverse.foreach(existingSegments.add(_))
       val newSegmentBaseOffsets = sortedNewSegments.map(_.baseOffset).toSet
 
@@ -2524,6 +2525,7 @@ object Log extends Logging {
       }
       // okay we are safe now, remove the swap suffix
       sortedNewSegments.foreach(_.changeFileSuffixes(Log.SwapFileSuffix, ""))
+      Utils.flushDir(dir.toPath)
   }
 
   /**
@@ -2558,7 +2560,7 @@ object Log extends Logging {
                                       scheduler: Scheduler,
                                       logDirFailureChannel: LogDirFailureChannel,
                                       producerStateManager: ProducerStateManager): Unit = {
-    segmentsToDelete.foreach(_.changeFileSuffixes("", Log.DeletedFileSuffix, false))
+    segmentsToDelete.foreach(_.changeFileSuffixes("", Log.DeletedFileSuffix))
 
     def deleteSegments(): Unit = {
       info(s"Deleting segment files ${segmentsToDelete.mkString(",")}")

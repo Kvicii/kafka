@@ -20,7 +20,6 @@ import java.io.{File, IOException}
 import java.nio.file.attribute.FileTime
 import java.nio.file.{Files, NoSuchFileException}
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicBoolean
 import kafka.common.LogSegmentOffsetOverflowException
 import kafka.metrics.{KafkaMetricsGroup, KafkaTimer}
 import kafka.server.epoch.LeaderEpochFileCache
@@ -66,8 +65,7 @@ class LogSegment private[log](val log: FileRecords, // 实际保存Kafka消息�
                               val baseOffset: Long, // 每个日志段的起始偏移量 每个LogSegment对象实例一旦被创建 它的起始偏移量就不能再被更改
                               val indexIntervalBytes: Int, // 对应broker端参数log.index.interval.bytes的值 控制日志段对象新增索引项的频率(默认情况下 日志段至少新写入4KB的消息数据才会新增一条索引项)
                               val rollJitterMs: Long, // 日志段对象新增倒计时的扰动值 由于新增倒计时是全局设置(在未来某一时刻很可能同时创建多个日志段对象 会极大地增加IO) 此干扰值的作用就是每个日志段在创建时会岔开一段时间 减少IO压力
-                              val time: Time,
-                              val needsFlushParentDir: Boolean = false) extends Logging {
+                               val time: Time) extends Logging {
 
   def offsetIndex: OffsetIndex = lazyOffsetIndex.get
 
@@ -103,9 +101,6 @@ class LogSegment private[log](val log: FileRecords, // 实际保存Kafka消息�
 
   /* the number of bytes since we last added an entry in the offset index */
   private var bytesSinceLastIndexEntry = 0
-
-  /* whether or not we need to flush the parent dir during the next flush */
-  private val atomicNeedsFlushParentDir = new AtomicBoolean(needsFlushParentDir)
 
   // The timestamp we used for time based log rolling and for ensuring max compaction delay
   // volatile for LogCleaner to see the update
@@ -551,9 +546,6 @@ class LogSegment private[log](val log: FileRecords, // 实际保存Kafka消息�
       offsetIndex.flush()
       timeIndex.flush()
       txnIndex.flush()
-      // We only need to flush the parent of the log file because all other files share the same parent
-      if (atomicNeedsFlushParentDir.getAndSet(false))
-        log.flushParentDir()
     }
   }
 
@@ -572,14 +564,11 @@ class LogSegment private[log](val log: FileRecords, // 实际保存Kafka消息�
    * Change the suffix for the index and log files for this log segment
    * IOException from this method should be handled by the caller
    */
-  def changeFileSuffixes(oldSuffix: String, newSuffix: String, needsFlushParentDir: Boolean = true): Unit = {
+  def changeFileSuffixes(oldSuffix: String, newSuffix: String): Unit = {
     log.renameTo(new File(CoreUtils.replaceSuffix(log.file.getPath, oldSuffix, newSuffix)))
     lazyOffsetIndex.renameTo(new File(CoreUtils.replaceSuffix(lazyOffsetIndex.file.getPath, oldSuffix, newSuffix)))
     lazyTimeIndex.renameTo(new File(CoreUtils.replaceSuffix(lazyTimeIndex.file.getPath, oldSuffix, newSuffix)))
     txnIndex.renameTo(new File(CoreUtils.replaceSuffix(txnIndex.file.getPath, oldSuffix, newSuffix)))
-    // We only need to flush the parent of the log file because all other files share the same parent
-    if (needsFlushParentDir)
-      log.flushParentDir()
   }
 
   /**
@@ -742,8 +731,7 @@ class LogSegment private[log](val log: FileRecords, // 实际保存Kafka消息�
 object LogSegment {
 
   def open(dir: File, baseOffset: Long, config: LogConfig, time: Time, fileAlreadyExists: Boolean = false,
-           initFileSize: Int = 0, preallocate: Boolean = false, fileSuffix: String = "",
-           needsRecovery: Boolean = false): LogSegment = {
+           initFileSize: Int = 0, preallocate: Boolean = false, fileSuffix: String = ""): LogSegment = {
     val maxIndexSize = config.maxIndexSize
     new LogSegment(
       /**
@@ -757,8 +745,7 @@ object LogSegment {
       baseOffset,
       indexIntervalBytes = config.indexInterval,
       rollJitterMs = config.randomSegmentJitter,
-      time,
-      needsFlushParentDir = needsRecovery || !fileAlreadyExists)
+      time)
   }
 
   def deleteIfExists(dir: File, baseOffset: Long, fileSuffix: String = ""): Unit = {

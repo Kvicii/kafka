@@ -50,7 +50,6 @@ public interface Partitioner extends Configurable, Closeable {
      */
     void close();
 
-
     /**
      * Notifies the partitioner a new batch is about to be created. When using the sticky partitioner,
      * this method can change the chosen sticky partition for the new batch.
