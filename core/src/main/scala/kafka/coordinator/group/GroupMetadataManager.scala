@@ -24,14 +24,13 @@ import java.util.Optional
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.locks.ReentrantLock
-
 import com.yammer.metrics.core.Gauge
 import kafka.api.{ApiVersion, KAFKA_0_10_1_IV0, KAFKA_2_1_IV0, KAFKA_2_1_IV1, KAFKA_2_3_IV0}
 import kafka.common.OffsetAndMetadata
 import kafka.internals.generated.{GroupMetadataValue, OffsetCommitKey, OffsetCommitValue, GroupMetadataKey => GroupMetadataKeyData}
 import kafka.log.AppendOrigin
 import kafka.metrics.KafkaMetricsGroup
-import kafka.server.{FetchLogEnd, ReplicaManager}
+import kafka.server.{FetchLogEnd, ReplicaManager, RequestLocal}
 import kafka.utils.CoreUtils.inLock
 import kafka.utils.Implicits._
 import kafka.utils._
@@ -246,7 +245,8 @@ class GroupMetadataManager(brokerId: Int,
 
   def storeGroup(group: GroupMetadata,
                  groupAssignment: Map[String, Array[Byte]],
-                 responseCallback: Errors => Unit): Unit = {
+                 responseCallback: Errors => Unit,
+                 requestLocal: RequestLocal = RequestLocal.NoCaching): Unit = {
     getMagic(partitionFor(group.groupId)) match {
       case Some(magicValue) =>
         // We always use CREATE_TIME, like the producer. The conversion to LOG_APPEND_TIME (if necessary) happens automatically.
@@ -316,8 +316,7 @@ class GroupMetadataManager(brokerId: Int,
 
           responseCallback(responseError)
         }
-
-        appendForGroup(group, groupMetadataRecords, putCacheCallback)
+        appendForGroup(group, groupMetadataRecords, requestLocal, putCacheCallback)
 
       case None =>
         responseCallback(Errors.NOT_COORDINATOR)
@@ -327,6 +326,7 @@ class GroupMetadataManager(brokerId: Int,
 
   private def appendForGroup(group: GroupMetadata,
                              records: Map[TopicPartition, MemoryRecords],
+                             requestLocal: RequestLocal,
                              callback: Map[TopicPartition, PartitionResponse] => Unit): Unit = {
     // call replica manager to append the group message
     replicaManager.appendRecords(
@@ -336,7 +336,8 @@ class GroupMetadataManager(brokerId: Int,
       origin = AppendOrigin.Coordinator,
       entriesPerPartition = records,
       delayedProduceLock = Some(group.lock),
-      responseCallback = callback)
+      responseCallback = callback,
+      requestLocal = requestLocal)
   }
 
   /**
@@ -347,7 +348,8 @@ class GroupMetadataManager(brokerId: Int,
                    offsetMetadata: immutable.Map[TopicPartition, OffsetAndMetadata],
                    responseCallback: immutable.Map[TopicPartition, Errors] => Unit,
                    producerId: Long = RecordBatch.NO_PRODUCER_ID,
-                   producerEpoch: Short = RecordBatch.NO_PRODUCER_EPOCH): Unit = {
+                   producerEpoch: Short = RecordBatch.NO_PRODUCER_EPOCH,
+                   requestLocal: RequestLocal = RequestLocal.NoCaching): Unit = {
     // first filter out partitions with offset metadata size exceeding limit
     val filteredOffsetMetadata = offsetMetadata.filter { case (_, offsetAndMetadata) =>
       validateOffsetMetadataLength(offsetAndMetadata.metadata)
@@ -474,7 +476,7 @@ class GroupMetadataManager(brokerId: Int,
             }
           }
 
-          appendForGroup(group, entries, putCacheCallback)
+          appendForGroup(group, entries, requestLocal, putCacheCallback)
 
         case None =>
           val commitStatus = offsetMetadata.map { case (topicPartition, _) =>
@@ -788,23 +790,22 @@ class GroupMetadataManager(brokerId: Int,
   // visible for testing
   private[group] def cleanupGroupMetadata(): Unit = {
     val currentTimestamp = time.milliseconds()
-    val numOffsetsRemoved = cleanupGroupMetadata(groupMetadataCache.values, group => {
-      group.removeExpiredOffsets(currentTimestamp, config.offsetsRetentionMs)
-    })
+    val numOffsetsRemoved = cleanupGroupMetadata(groupMetadataCache.values, RequestLocal.NoCaching,
+      _.removeExpiredOffsets(currentTimestamp, config.offsetsRetentionMs))
     offsetExpiredSensor.record(numOffsetsRemoved)
     if (numOffsetsRemoved > 0)
       info(s"Removed $numOffsetsRemoved expired offsets in ${time.milliseconds() - currentTimestamp} milliseconds.")
   }
 
   /**
-   * This function is used to clean up group offsets given the groups and also a function that performs the offset deletion.
-   *
-   * @param groups   Groups whose metadata are to be cleaned up
-   * @param selector A function that implements deletion of (all or part of) group offsets. This function is called while
-   *                 a group lock is held, therefore there is no need for the caller to also obtain a group lock.
-   * @return The cumulative number of offsets removed
-   */
-  def cleanupGroupMetadata(groups: Iterable[GroupMetadata], selector: GroupMetadata => Map[TopicPartition, OffsetAndMetadata]): Int = {
+    * This function is used to clean up group offsets given the groups and also a function that performs the offset deletion.
+    * @param groups Groups whose metadata are to be cleaned up
+    * @param selector A function that implements deletion of (all or part of) group offsets. This function is called while
+    *                 a group lock is held, therefore there is no need for the caller to also obtain a group lock.
+    * @return The cumulative number of offsets removed
+    */
+  def cleanupGroupMetadata(groups: Iterable[GroupMetadata], requestLocal: RequestLocal,
+                           selector: GroupMetadata => Map[TopicPartition, OffsetAndMetadata]): Int = {
     var offsetsRemoved = 0
 
     groups.foreach { group =>
@@ -851,7 +852,8 @@ class GroupMetadataManager(brokerId: Int,
                 // do not need to require acks since even if the tombstone is lost,
                 // it will be appended again in the next purge cycle
                 val records = MemoryRecords.withRecords(magicValue, 0L, compressionType, timestampType, tombstones.toArray: _*)
-                partition.appendRecordsToLeader(records, origin = AppendOrigin.Coordinator, requiredAcks = 0)
+                partition.appendRecordsToLeader(records, origin = AppendOrigin.Coordinator, requiredAcks = 0,
+                  requestLocal = requestLocal)
 
                 offsetsRemoved += removedOffsets.size
                 trace(s"Successfully appended ${tombstones.size} tombstones to $appendPartition for expired/deleted " +

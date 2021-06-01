@@ -2046,7 +2046,9 @@ object KafkaZkClient {
           connectionTimeoutMs, maxInFlightRequests, time, metricGroup, metricType, name, zkClientConfig)
         try {
           val chroot = connectString.substring(chrootIndex)
-          zkClientForChrootCreation.makeSurePersistentPathExists(chroot)
+          if (!zkClientForChrootCreation.pathExists(chroot)) {
+            zkClientForChrootCreation.makeSurePersistentPathExists(chroot)
+          }
         } finally {
           zkClientForChrootCreation.close()
         }

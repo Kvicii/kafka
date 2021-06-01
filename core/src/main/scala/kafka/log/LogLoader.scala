@@ -67,7 +67,7 @@ case class LoadLogParams(dir: File,
                          maxProducerIdExpirationMs: Int,
                          leaderEpochCache: Option[LeaderEpochFileCache],
                          producerStateManager: ProducerStateManager) {
-  val logIdentifier: String = s"[LogLoader partition=$topicPartition, dir=${dir.getParent}]"
+  val logIdentifier: String = s"[LogLoader partition=$topicPartition, dir=${dir.getParent}] "
 }
 
 /**
@@ -152,7 +152,8 @@ object LogLoader extends Logging {
       nextOffset,
       params.config.messageFormatVersion.recordVersion,
       params.time,
-      reloadFromCleanShutdown = params.hadCleanShutdown)
+      reloadFromCleanShutdown = params.hadCleanShutdown,
+      params.logIdentifier)
 
     val activeSegment = params.segments.lastSegment.get
     LoadedLogOffsets(
@@ -173,7 +174,7 @@ object LogLoader extends Logging {
 
     // 删除日志文件对应的索引文件
     def deleteIndicesIfExist(baseFile: File, suffix: String = ""): Unit = {
-      info(s"${params.logIdentifier} Deleting index files with suffix $suffix for baseFile $baseFile")
+      info(s"${params.logIdentifier}Deleting index files with suffix $suffix for baseFile $baseFile")
       val offset = offsetFromFile(baseFile)
       Files.deleteIfExists(Log.offsetIndexFile(params.dir, offset, suffix).toPath)
       Files.deleteIfExists(Log.timeIndexFile(params.dir, offset, suffix).toPath)
@@ -192,7 +193,7 @@ object LogLoader extends Logging {
       val filename = file.getName
       if (filename.endsWith(DeletedFileSuffix)) {
         // 如果以.deleted结尾说明是上一次Failure遗留下来的文件 直接删除
-        debug(s"${params.logIdentifier} Deleting stray temporary file ${file.getAbsolutePath}")
+        debug(s"${params.logIdentifier}Deleting stray temporary file ${file.getAbsolutePath}")
         Files.deleteIfExists(file.toPath)
       } else if (filename.endsWith(CleanedFileSuffix)) {
         // 如果以.cleaned结尾 获取其位移值 并将该文件加入待删除文件集合
@@ -204,7 +205,7 @@ object LogLoader extends Logging {
         // if an index just delete the index files, they will be rebuilt
         // 如果以.swap结尾
         val baseFile = new File(CoreUtils.replaceSuffix(file.getPath, SwapFileSuffix, ""))
-        info(s"${params.logIdentifier} Found file ${file.getAbsolutePath} from interrupted swap operation.")
+        info(s"${params.logIdentifier}Found file ${file.getAbsolutePath} from interrupted swap operation.")
         if (Log.isIndexFile(baseFile)) {
           // 如果该文件是索引文件 删除
           deleteIndicesIfExist(baseFile)
@@ -222,7 +223,7 @@ object LogLoader extends Logging {
     // 从待恢复的swap集合中找出起始位移值 > minCleanedFileOffset的文件 直接删除这些无效的.swap文件
     val (invalidSwapFiles, validSwapFiles) = swapFiles.partition(file => offsetFromFile(file) >= minCleanedFileOffset)
     invalidSwapFiles.foreach { file =>
-      debug(s"${params.logIdentifier} Deleting invalid swap file ${file.getAbsoluteFile} minCleanedFileOffset: $minCleanedFileOffset")
+      debug(s"${params.logIdentifier}Deleting invalid swap file ${file.getAbsoluteFile} minCleanedFileOffset: $minCleanedFileOffset")
       val baseFile = new File(CoreUtils.replaceSuffix(file.getPath, SwapFileSuffix, ""))
       deleteIndicesIfExist(baseFile, SwapFileSuffix)
       Files.deleteIfExists(file.toPath)
@@ -231,7 +232,7 @@ object LogLoader extends Logging {
     // Now that we have deleted all .swap files that constitute an incomplete split operation, let's delete all .clean files
     // 清除所有待删除文件集合中的文件
     cleanFiles.foreach { file =>
-      debug(s"${params.logIdentifier} Deleting stray .clean file ${file.getAbsolutePath}")
+      debug(s"${params.logIdentifier}Deleting stray .clean file ${file.getAbsolutePath}")
       Files.deleteIfExists(file.toPath)
     }
 
@@ -255,7 +256,7 @@ object LogLoader extends Logging {
         return fn
       } catch {
         case e: LogSegmentOffsetOverflowException =>
-          info(s"${params.logIdentifier} Caught segment overflow error: ${e.getMessage}. Split segment and retry.")
+          info(s"${params.logIdentifier}Caught segment overflow error: ${e.getMessage}. Split segment and retry.")
           Log.splitOverflowedSegment(
             e.segment,
             params.segments,
@@ -264,7 +265,8 @@ object LogLoader extends Logging {
             params.config,
             params.scheduler,
             params.logDirFailureChannel,
-            params.producerStateManager)
+            params.producerStateManager,
+            params.logIdentifier)
       }
     }
     throw new IllegalStateException()
@@ -293,7 +295,7 @@ object LogLoader extends Logging {
         val logFile = Log.logFile(params.dir, offset)
         if (!logFile.exists) {
           // 对应的日志文件若不存在 记录一个警告并删除此索引文件
-          warn(s"${params.logIdentifier} Found an orphaned index file ${file.getAbsolutePath}, with no corresponding log file.")
+          warn(s"${params.logIdentifier}Found an orphaned index file ${file.getAbsolutePath}, with no corresponding log file.")
           Files.deleteIfExists(file.toPath)
         }
       } else if (isLogFile(file)) {
@@ -312,11 +314,11 @@ object LogLoader extends Logging {
         try segment.sanityCheck(timeIndexFileNewlyCreated)
         catch {
           case _: NoSuchFileException =>
-            error(s"${params.logIdentifier} Could not find offset index file corresponding to log file" +
+            error(s"${params.logIdentifier}Could not find offset index file corresponding to log file" +
               s" ${segment.log.file.getAbsolutePath}, recovering segment and rebuilding index files...")
             recoverSegment(segment, params)
           case e: CorruptIndexException =>
-            warn(s"${params.logIdentifier} Found a corrupted index file corresponding to log file" +
+            warn(s"${params.logIdentifier}Found a corrupted index file corresponding to log file" +
               s" ${segment.log.file.getAbsolutePath} due to ${e.getMessage}}, recovering segment and" +
               " rebuilding index files...")
             recoverSegment(segment, params)
@@ -337,7 +339,11 @@ object LogLoader extends Logging {
    * @throws LogSegmentOffsetOverflowException if the segment contains messages that cause index offset overflow
    */
   private def recoverSegment(segment: LogSegment, params: LoadLogParams): Int = {
-    val producerStateManager = new ProducerStateManager(params.topicPartition, params.dir, params.maxProducerIdExpirationMs)
+    val producerStateManager = new ProducerStateManager(
+      params.topicPartition,
+      params.dir,
+      params.maxProducerIdExpirationMs,
+      params.time)
     Log.rebuildProducerState(
       producerStateManager,
       params.segments,
@@ -345,7 +351,8 @@ object LogLoader extends Logging {
       segment.baseOffset,
       params.config.messageFormatVersion.recordVersion,
       params.time,
-      reloadFromCleanShutdown = false)
+      reloadFromCleanShutdown = false,
+      params.logIdentifier)
     val bytesTruncated = segment.recover(producerStateManager, params.leaderEpochCache)
     // once we have recovered the segment's data, take a snapshot to ensure that we won't
     // need to reload the same segment again while recovering another segment.
@@ -412,7 +419,8 @@ object LogLoader extends Logging {
         params.config,
         params.scheduler,
         params.logDirFailureChannel,
-        params.producerStateManager)
+        params.producerStateManager,
+        params.logIdentifier)
     }
   }
 
@@ -459,7 +467,7 @@ object LogLoader extends Logging {
       // 遍历这些unflushed日志段对象
       while (unflushed.hasNext && !truncated) {
         val segment = unflushed.next()
-        info(s"${params.logIdentifier} Recovering unflushed segment ${segment.baseOffset}")
+        info(s"${params.logIdentifier}Recovering unflushed segment ${segment.baseOffset}")
         val truncatedBytes =
           try {
             // 恢复操作
@@ -467,13 +475,13 @@ object LogLoader extends Logging {
           } catch {
             case _: InvalidOffsetException =>
               val startOffset = segment.baseOffset
-              warn(s"${params.logIdentifier} Found invalid offset during recovery. Deleting the" +
+              warn(s"${params.logIdentifier}Found invalid offset during recovery. Deleting the" +
                 s" corrupt segment and creating an empty one with starting offset $startOffset")
               segment.truncateTo(startOffset)
           }
         if (truncatedBytes > 0) {
           // we had an invalid message, delete all remaining log
-          warn(s"${params.logIdentifier} Corruption found in segment ${segment.baseOffset}," +
+          warn(s"${params.logIdentifier}Corruption found in segment ${segment.baseOffset}," +
             s" truncating to offset ${segment.readNextOffset}")
           // 如果有无效的消息导致被截断的字节数不为0 直接删除剩余的日志段对象
           removeAndDeleteSegmentsAsync(unflushed.toList, params)
@@ -548,7 +556,8 @@ object LogLoader extends Logging {
         params.config,
         params.scheduler,
         params.logDirFailureChannel,
-        params.producerStateManager)
+        params.producerStateManager,
+        params.logIdentifier)
     }
   }
 }

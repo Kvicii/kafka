@@ -21,7 +21,6 @@ import java.util.Optional
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.locks.Lock
-
 import com.yammer.metrics.core.Meter
 import kafka.api._
 import kafka.cluster.{BrokerEndPoint, Partition}
@@ -646,12 +645,13 @@ class ReplicaManager(val config: KafkaConfig,
                     entriesPerPartition: Map[TopicPartition, MemoryRecords],
                     responseCallback: Map[TopicPartition, PartitionResponse] => Unit,
                     delayedProduceLock: Option[Lock] = None,
-                    recordConversionStatsCallback: Map[TopicPartition, RecordConversionStats] => Unit = _ => ()): Unit = {
-    if (isValidRequiredAcks(requiredAcks)) { // acks参数符合条件
+                    recordConversionStatsCallback: Map[TopicPartition, RecordConversionStats] => Unit = _ => (),
+                    requestLocal: RequestLocal = RequestLocal.NoCaching): Unit = {
+    if (isValidRequiredAcks(requiredAcks)) {  acks参数符合条件
       val sTime = time.milliseconds
       // 将数据写入每个Partition的磁盘文件 获取到每个Partition磁盘文件写入的结果
       val localProduceResults = appendToLocalLog(internalTopicsAllowed = internalTopicsAllowed,
-        origin, entriesPerPartition, requiredAcks)
+        origin, entriesPerPartition, requiredAcks, requestLocal)
       debug("Produce to local log in %d ms".format(time.milliseconds - sTime))
       // 处理写入结果
       val produceStatus = localProduceResults.map { case (topicPartition, result) =>
@@ -977,7 +977,8 @@ class ReplicaManager(val config: KafkaConfig,
   private def appendToLocalLog(internalTopicsAllowed: Boolean,
                                origin: AppendOrigin,
                                entriesPerPartition: Map[TopicPartition, MemoryRecords],
-                               requiredAcks: Short): Map[TopicPartition, LogAppendResult] = {
+                               requiredAcks: Short,
+                               requestLocal: RequestLocal): Map[TopicPartition, LogAppendResult] = {
     val traceEnabled = isTraceEnabled
 
     def processFailedRecord(topicPartition: TopicPartition, t: Throwable) = {
@@ -1007,7 +1008,7 @@ class ReplicaManager(val config: KafkaConfig,
         try {
           val partition = getPartitionOrException(topicPartition)
           // 调用Partition的方法 将属于Partition的数据写入分区对应的磁盘文件
-          val info = partition.appendRecordsToLeader(records, origin, requiredAcks)
+          val info = partition.appendRecordsToLeader(records, origin, requiredAcks, requestLocal)
           val numAppendedMessages = info.numMessages
 
           // update stats for successfully appended bytes and messages as bytesInRate and messageInRate
