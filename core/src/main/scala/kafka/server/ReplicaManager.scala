@@ -647,7 +647,7 @@ class ReplicaManager(val config: KafkaConfig,
                     delayedProduceLock: Option[Lock] = None,
                     recordConversionStatsCallback: Map[TopicPartition, RecordConversionStats] => Unit = _ => (),
                     requestLocal: RequestLocal = RequestLocal.NoCaching): Unit = {
-    if (isValidRequiredAcks(requiredAcks)) {  acks参数符合条件
+    if (isValidRequiredAcks(requiredAcks)) {  // acks参数符合条件
       val sTime = time.milliseconds
       // 将数据写入每个Partition的磁盘文件 获取到每个Partition磁盘文件写入的结果
       val localProduceResults = appendToLocalLog(internalTopicsAllowed = internalTopicsAllowed,

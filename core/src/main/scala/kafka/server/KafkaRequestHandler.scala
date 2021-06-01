@@ -17,9 +17,6 @@
 
 package kafka.server
 
-import kafka.network._
-import kafka.utils._
-import kafka.metrics.KafkaMetricsGroup
 
 import java.util.concurrent.{CountDownLatch, TimeUnit}
 import java.util.concurrent.atomic.AtomicInteger
