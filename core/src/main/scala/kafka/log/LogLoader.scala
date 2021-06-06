@@ -392,8 +392,8 @@ object LogLoader extends Logging {
         params.config,
         time = params.time,
         fileSuffix = Log.SwapFileSuffix)
-      info(s"Found log file ${swapFile.getPath} from interrupted swap operation, repairing.")
       // 进行日志段恢复操作
+      info(s"${params.logIdentifier}Found log file ${swapFile.getPath} from interrupted swap operation, repairing.")
       recoverSegment(swapSegment, params)
 
       // We create swap files for two cases:
@@ -447,9 +447,10 @@ object LogLoader extends Logging {
         if (logEndOffset >= params.logStartOffsetCheckpoint)
           Some(logEndOffset)
         else {
-          warn(s"Deleting all segments because logEndOffset ($logEndOffset) is smaller than logStartOffset ${params.logStartOffsetCheckpoint}. " +
-            "This could happen if segment files were deleted from the file system.")
           // 日志段集合不为空 验证分区日志的LEO值是否 < LogStartOffset 小于删除这些日志段对象
+          warn(s"${params.logIdentifier}Deleting all segments because logEndOffset ($logEndOffset) " +
+            s" smaller than logStartOffset ${params.logStartOffsetCheckpoint}." +
+            " This could happen if segment files were deleted from the file system.")
           removeAndDeleteSegmentsAsync(params.segments.values, params)
           params.leaderEpochCache.foreach(_.clearAndFlush())
           params.producerStateManager.truncateFullyAndStartAt(params.logStartOffsetCheckpoint)
@@ -543,7 +544,7 @@ object LogLoader extends Logging {
       // materialization of the iterator here, so that results of the iteration remain valid and
       // deterministic.
       val toDelete = segmentsToDelete.toList
-      info(s"Deleting segments as part of log recovery: ${toDelete.mkString(",")}")
+      info(s"${params.logIdentifier}Deleting segments as part of log recovery: ${toDelete.mkString(",")}")
       toDelete.foreach { segment =>
         params.segments.remove(segment.baseOffset)
       }

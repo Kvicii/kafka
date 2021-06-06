@@ -70,7 +70,7 @@ public interface ConsumerInterceptor<K, V> extends Configurable, AutoCloseable {
      *        由上个拦截器返回的由客户端消费的消息
      * @return records that are either modified by the interceptor or same as records passed to this method.
      */
-    public ConsumerRecords<K, V> onConsume(ConsumerRecords<K, V> records);
+    ConsumerRecords<K, V> onConsume(ConsumerRecords<K, V> records);
 
     /**
      * This is called when offsets get committed.
@@ -82,10 +82,10 @@ public interface ConsumerInterceptor<K, V> extends Configurable, AutoCloseable {
      * 
      * @param offsets A map of offsets by partition with associated metadata
      */
-    public void onCommit(Map<TopicPartition, OffsetAndMetadata> offsets);
+    void onCommit(Map<TopicPartition, OffsetAndMetadata> offsets);
 
     /**
      * This is called when interceptor is closed
      */
-    public void close();
+    void close();
 }
