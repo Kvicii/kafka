@@ -46,8 +46,8 @@ class AdminZkClient(zkClient: KafkaZkClient) extends Logging {
    * @param topic             topic name to create
    * @param partitions        Number of partitions to be set
    * @param replicationFactor Replication factor
-   * @param topicConfig       topic configs
-   * @param rackAwareMode
+   * @param topicConfig  topic configs
+   * @param rackAwareMode rack aware mode for replica assignment
    * @param usesTopicId Boolean indicating whether the topic ID will be created
    */
   def createTopic(topic: String,
@@ -66,9 +66,9 @@ class AdminZkClient(zkClient: KafkaZkClient) extends Logging {
   /**
    * Gets broker metadata list
    *
-   * @param rackAwareMode
-   * @param brokerList
-   * @return
+   * @param rackAwareMode rack aware mode for replica assignment
+   * @param brokerList The brokers to gather metadata about.
+   * @return The metadata for each broker that was found.
    */
   def getBrokerMetadatas(rackAwareMode: RackAwareMode = RackAwareMode.Enforced,
                          brokerList: Option[Seq[Int]] = None): Seq[BrokerMetadata] = {
@@ -183,8 +183,7 @@ class AdminZkClient(zkClient: KafkaZkClient) extends Logging {
 
   /**
    * Creates a delete path for a given topic
-   *
-   * @param topic
+   * @param topic Topic name to delete
    */
   def deleteTopic(topic: String): Unit = {
     if (zkClient.topicExists(topic)) {
@@ -335,6 +334,11 @@ class AdminZkClient(zkClient: KafkaZkClient) extends Logging {
     }
   }
 
+  /**
+   * Parse broker from entity name to integer id
+   * @param broker The broker entity name to parse
+   * @return Integer brokerId after successfully parsed or default None
+   */
   def parseBroker(broker: String): Option[Int] = {
     broker match {
       case ConfigEntityName.Default => None
@@ -349,10 +353,9 @@ class AdminZkClient(zkClient: KafkaZkClient) extends Logging {
 
   /**
    * Change the configs for a given entityType and entityName
-   *
-   * @param entityType
-   * @param entityName
-   * @param configs
+   * @param entityType The entityType of the configs that will be changed
+   * @param entityName The entityName of the entityType
+   * @param configs The config of the entityName
    */
   def changeConfigs(entityType: String, entityName: String, configs: Properties): Unit = {
 
@@ -423,9 +426,8 @@ class AdminZkClient(zkClient: KafkaZkClient) extends Logging {
 
   /**
    * validates the topic configs
-   *
-   * @param topic
-   * @param configs
+   * @param topic topic for which configs are being validated
+   * @param configs properties to validate for the topic
    */
   def validateTopicConfig(topic: String, configs: Properties): Unit = {
     Topic.validate(topic)
@@ -495,9 +497,9 @@ class AdminZkClient(zkClient: KafkaZkClient) extends Logging {
   /**
    * Read the entity (topic, broker, client, user, <user, client> or <ip>) config (if any) from zk
    * sanitizedEntityName is <topic>, <broker>, <client-id>, <user>, <user>/clients/<client-id> or <ip>.
-   * @param rootEntityType
-   * @param sanitizedEntityName
-   * @return
+   * @param rootEntityType entityType for which configs are being fetched
+   * @param sanitizedEntityName entityName of the entityType
+   * @return The successfully gathered configs
    */
   def fetchEntityConfig(rootEntityType: String, sanitizedEntityName: String): Properties = {
     zkClient.getEntityConfigs(rootEntityType, sanitizedEntityName)
@@ -505,27 +507,24 @@ class AdminZkClient(zkClient: KafkaZkClient) extends Logging {
 
   /**
    * Gets all topic configs
-   *
-   * @return
+   * @return The successfully gathered configs of all topics
    */
   def getAllTopicConfigs(): Map[String, Properties] =
     zkClient.getAllTopicsInCluster().map(topic => (topic, fetchEntityConfig(ConfigType.Topic, topic))).toMap
 
   /**
    * Gets all the entity configs for a given entityType
-   *
-   * @param entityType
-   * @return
+   * @param entityType entityType for which configs are being fetched
+   * @return The successfully gathered configs of the entityType
    */
   def fetchAllEntityConfigs(entityType: String): Map[String, Properties] =
     zkClient.getAllEntitiesWithConfig(entityType).map(entity => (entity, fetchEntityConfig(entityType, entity))).toMap
 
   /**
    * Gets all the entity configs for a given childEntityType
-   *
-   * @param rootEntityType
-   * @param childEntityType
-   * @return
+   * @param rootEntityType rootEntityType for which configs are being fetched
+   * @param childEntityType childEntityType of the rootEntityType
+   * @return The successfully gathered configs of the childEntityType
    */
   def fetchAllChildEntityConfigs(rootEntityType: String, childEntityType: String): Map[String, Properties] = {
     def entityPaths(rootPath: Option[String]): Seq[String] = {

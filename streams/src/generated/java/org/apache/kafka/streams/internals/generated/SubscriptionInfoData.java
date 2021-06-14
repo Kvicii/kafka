@@ -19,6 +19,7 @@
 
 package org.apache.kafka.streams.internals.generated;
 
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -116,6 +117,17 @@ public class SubscriptionInfoData implements ApiMessage {
             new Field("error_code", Type.INT32, "")
         );
     
+    public static final Schema SCHEMA_10 =
+        new Schema(
+            new Field("version", Type.INT32, ""),
+            new Field("latest_supported_version", Type.INT32, ""),
+            new Field("process_id", Type.UUID, ""),
+            new Field("user_end_point", Type.BYTES, ""),
+            new Field("task_offset_sums", new ArrayOf(TaskOffsetSum.SCHEMA_10), ""),
+            new Field("unique_field", Type.INT8, ""),
+            new Field("error_code", Type.INT32, "")
+        );
+    
     public static final Schema[] SCHEMAS = new Schema[] {
         null,
         SCHEMA_1,
@@ -126,11 +138,12 @@ public class SubscriptionInfoData implements ApiMessage {
         SCHEMA_6,
         SCHEMA_7,
         SCHEMA_8,
-        SCHEMA_9
+        SCHEMA_9,
+        SCHEMA_10
     };
     
     public static final short LOWEST_SUPPORTED_VERSION = 1;
-    public static final short HIGHEST_SUPPORTED_VERSION = 9;
+    public static final short HIGHEST_SUPPORTED_VERSION = 10;
     
     public SubscriptionInfoData(Readable _readable, short _version) {
         read(_readable, _version);
@@ -160,7 +173,7 @@ public class SubscriptionInfoData implements ApiMessage {
     
     @Override
     public short highestSupportedVersion() {
-        return 9;
+        return 10;
     }
     
     @Override
@@ -593,7 +606,7 @@ public class SubscriptionInfoData implements ApiMessage {
         
         @Override
         public short highestSupportedVersion() {
-            return 32767;
+            return 9;
         }
         
         @Override
@@ -714,12 +727,6 @@ public class SubscriptionInfoData implements ApiMessage {
         
         public static final Schema SCHEMA_6 = SCHEMA_5;
         
-        public static final Schema SCHEMA_7 = SCHEMA_6;
-        
-        public static final Schema SCHEMA_8 = SCHEMA_7;
-        
-        public static final Schema SCHEMA_9 = SCHEMA_8;
-        
         public static final Schema[] SCHEMAS = new Schema[] {
             null,
             SCHEMA_1,
@@ -727,14 +734,11 @@ public class SubscriptionInfoData implements ApiMessage {
             SCHEMA_3,
             SCHEMA_4,
             SCHEMA_5,
-            SCHEMA_6,
-            SCHEMA_7,
-            SCHEMA_8,
-            SCHEMA_9
+            SCHEMA_6
         };
         
         public static final short LOWEST_SUPPORTED_VERSION = 1;
-        public static final short HIGHEST_SUPPORTED_VERSION = 9;
+        public static final short HIGHEST_SUPPORTED_VERSION = 6;
         
         public TaskId(Readable _readable, short _version) {
             read(_readable, _version);
@@ -753,7 +757,7 @@ public class SubscriptionInfoData implements ApiMessage {
         
         @Override
         public short highestSupportedVersion() {
-            return 32767;
+            return 6;
         }
         
         @Override
@@ -855,6 +859,9 @@ public class SubscriptionInfoData implements ApiMessage {
     
     public static class TaskOffsetSum implements Message {
         int topicGroupId;
+        int partition;
+        long offsetSum;
+        String namedTopology;
         List<PartitionToOffsetSum> partitionToOffsetSum;
         private List<RawTaggedField> _unknownTaggedFields;
         
@@ -868,6 +875,14 @@ public class SubscriptionInfoData implements ApiMessage {
         
         public static final Schema SCHEMA_9 = SCHEMA_8;
         
+        public static final Schema SCHEMA_10 =
+            new Schema(
+                new Field("topic_group_id", Type.INT32, ""),
+                new Field("partition", Type.INT32, ""),
+                new Field("offset_sum", Type.INT64, ""),
+                new Field("named_topology", Type.NULLABLE_STRING, "")
+            );
+        
         public static final Schema[] SCHEMAS = new Schema[] {
             null,
             null,
@@ -878,11 +893,12 @@ public class SubscriptionInfoData implements ApiMessage {
             null,
             SCHEMA_7,
             SCHEMA_8,
-            SCHEMA_9
+            SCHEMA_9,
+            SCHEMA_10
         };
         
         public static final short LOWEST_SUPPORTED_VERSION = 7;
-        public static final short HIGHEST_SUPPORTED_VERSION = 9;
+        public static final short HIGHEST_SUPPORTED_VERSION = 10;
         
         public TaskOffsetSum(Readable _readable, short _version) {
             read(_readable, _version);
@@ -890,6 +906,9 @@ public class SubscriptionInfoData implements ApiMessage {
         
         public TaskOffsetSum() {
             this.topicGroupId = 0;
+            this.partition = 0;
+            this.offsetSum = 0L;
+            this.namedTopology = "";
             this.partitionToOffsetSum = new ArrayList<PartitionToOffsetSum>(0);
         }
         
@@ -907,7 +926,30 @@ public class SubscriptionInfoData implements ApiMessage {
         @Override
         public void read(Readable _readable, short _version) {
             this.topicGroupId = _readable.readInt();
-            {
+            if (_version >= 10) {
+                this.partition = _readable.readInt();
+            } else {
+                this.partition = 0;
+            }
+            if (_version >= 10) {
+                this.offsetSum = _readable.readLong();
+            } else {
+                this.offsetSum = 0L;
+            }
+            if (_version >= 10) {
+                int length;
+                length = _readable.readShort();
+                if (length < 0) {
+                    this.namedTopology = null;
+                } else if (length > 0x7fff) {
+                    throw new RuntimeException("string field namedTopology had invalid length " + length);
+                } else {
+                    this.namedTopology = _readable.readString(length);
+                }
+            } else {
+                this.namedTopology = "";
+            }
+            if (_version <= 9) {
                 int arrayLength;
                 arrayLength = _readable.readInt();
                 if (arrayLength < 0) {
@@ -919,6 +961,8 @@ public class SubscriptionInfoData implements ApiMessage {
                     }
                     this.partitionToOffsetSum = newCollection;
                 }
+            } else {
+                this.partitionToOffsetSum = new ArrayList<PartitionToOffsetSum>(0);
             }
             this._unknownTaggedFields = null;
         }
@@ -927,9 +971,42 @@ public class SubscriptionInfoData implements ApiMessage {
         public void write(Writable _writable, ObjectSerializationCache _cache, short _version) {
             int _numTaggedFields = 0;
             _writable.writeInt(topicGroupId);
-            _writable.writeInt(partitionToOffsetSum.size());
-            for (PartitionToOffsetSum partitionToOffsetSumElement : partitionToOffsetSum) {
-                partitionToOffsetSumElement.write(_writable, _cache, _version);
+            if (_version >= 10) {
+                _writable.writeInt(partition);
+            } else {
+                if (this.partition != 0) {
+                    throw new UnsupportedVersionException("Attempted to write a non-default partition at version " + _version);
+                }
+            }
+            if (_version >= 10) {
+                _writable.writeLong(offsetSum);
+            } else {
+                if (this.offsetSum != 0L) {
+                    throw new UnsupportedVersionException("Attempted to write a non-default offsetSum at version " + _version);
+                }
+            }
+            if (_version >= 10) {
+                if (namedTopology == null) {
+                    _writable.writeShort((short) -1);
+                } else {
+                    byte[] _stringBytes = _cache.getSerializedValue(namedTopology);
+                    _writable.writeShort((short) _stringBytes.length);
+                    _writable.writeByteArray(_stringBytes);
+                }
+            } else {
+                if (this.namedTopology == null || !this.namedTopology.equals("")) {
+                    throw new UnsupportedVersionException("Attempted to write a non-default namedTopology at version " + _version);
+                }
+            }
+            if (_version <= 9) {
+                _writable.writeInt(partitionToOffsetSum.size());
+                for (PartitionToOffsetSum partitionToOffsetSumElement : partitionToOffsetSum) {
+                    partitionToOffsetSumElement.write(_writable, _cache, _version);
+                }
+            } else {
+                if (!this.partitionToOffsetSum.isEmpty()) {
+                    throw new UnsupportedVersionException("Attempted to write a non-default partitionToOffsetSum at version " + _version);
+                }
             }
             RawTaggedFieldWriter _rawWriter = RawTaggedFieldWriter.forFields(_unknownTaggedFields);
             _numTaggedFields += _rawWriter.numFields();
@@ -942,10 +1019,30 @@ public class SubscriptionInfoData implements ApiMessage {
         public void addSize(MessageSizeAccumulator _size, ObjectSerializationCache _cache, short _version) {
             int _numTaggedFields = 0;
             _size.addBytes(4);
-            {
+            if (_version >= 10) {
                 _size.addBytes(4);
-                for (PartitionToOffsetSum partitionToOffsetSumElement : partitionToOffsetSum) {
-                    partitionToOffsetSumElement.addSize(_size, _cache, _version);
+            }
+            if (_version >= 10) {
+                _size.addBytes(8);
+            }
+            if (_version >= 10) {
+                if (namedTopology == null) {
+                    _size.addBytes(2);
+                } else {
+                    byte[] _stringBytes = namedTopology.getBytes(StandardCharsets.UTF_8);
+                    if (_stringBytes.length > 0x7fff) {
+                        throw new RuntimeException("'namedTopology' field is too long to be serialized");
+                    }
+                    _cache.cacheSerializedValue(namedTopology, _stringBytes);
+                    _size.addBytes(_stringBytes.length + 2);
+                }
+            }
+            if (_version <= 9) {
+                {
+                    _size.addBytes(4);
+                    for (PartitionToOffsetSum partitionToOffsetSumElement : partitionToOffsetSum) {
+                        partitionToOffsetSumElement.addSize(_size, _cache, _version);
+                    }
                 }
             }
             if (_unknownTaggedFields != null) {
@@ -966,6 +1063,13 @@ public class SubscriptionInfoData implements ApiMessage {
             if (!(obj instanceof TaskOffsetSum)) return false;
             TaskOffsetSum other = (TaskOffsetSum) obj;
             if (topicGroupId != other.topicGroupId) return false;
+            if (partition != other.partition) return false;
+            if (offsetSum != other.offsetSum) return false;
+            if (this.namedTopology == null) {
+                if (other.namedTopology != null) return false;
+            } else {
+                if (!this.namedTopology.equals(other.namedTopology)) return false;
+            }
             if (this.partitionToOffsetSum == null) {
                 if (other.partitionToOffsetSum != null) return false;
             } else {
@@ -978,6 +1082,9 @@ public class SubscriptionInfoData implements ApiMessage {
         public int hashCode() {
             int hashCode = 0;
             hashCode = 31 * hashCode + topicGroupId;
+            hashCode = 31 * hashCode + partition;
+            hashCode = 31 * hashCode + ((int) (offsetSum >> 32) ^ (int) offsetSum);
+            hashCode = 31 * hashCode + (namedTopology == null ? 0 : namedTopology.hashCode());
             hashCode = 31 * hashCode + (partitionToOffsetSum == null ? 0 : partitionToOffsetSum.hashCode());
             return hashCode;
         }
@@ -986,6 +1093,13 @@ public class SubscriptionInfoData implements ApiMessage {
         public TaskOffsetSum duplicate() {
             TaskOffsetSum _duplicate = new TaskOffsetSum();
             _duplicate.topicGroupId = topicGroupId;
+            _duplicate.partition = partition;
+            _duplicate.offsetSum = offsetSum;
+            if (namedTopology == null) {
+                _duplicate.namedTopology = null;
+            } else {
+                _duplicate.namedTopology = namedTopology;
+            }
             ArrayList<PartitionToOffsetSum> newPartitionToOffsetSum = new ArrayList<PartitionToOffsetSum>(partitionToOffsetSum.size());
             for (PartitionToOffsetSum _element : partitionToOffsetSum) {
                 newPartitionToOffsetSum.add(_element.duplicate());
@@ -998,12 +1112,27 @@ public class SubscriptionInfoData implements ApiMessage {
         public String toString() {
             return "TaskOffsetSum("
                 + "topicGroupId=" + topicGroupId
+                + ", partition=" + partition
+                + ", offsetSum=" + offsetSum
+                + ", namedTopology=" + ((namedTopology == null) ? "null" : "'" + namedTopology.toString() + "'")
                 + ", partitionToOffsetSum=" + MessageUtil.deepToString(partitionToOffsetSum.iterator())
                 + ")";
         }
         
         public int topicGroupId() {
             return this.topicGroupId;
+        }
+        
+        public int partition() {
+            return this.partition;
+        }
+        
+        public long offsetSum() {
+            return this.offsetSum;
+        }
+        
+        public String namedTopology() {
+            return this.namedTopology;
         }
         
         public List<PartitionToOffsetSum> partitionToOffsetSum() {
@@ -1020,6 +1149,21 @@ public class SubscriptionInfoData implements ApiMessage {
         
         public TaskOffsetSum setTopicGroupId(int v) {
             this.topicGroupId = v;
+            return this;
+        }
+        
+        public TaskOffsetSum setPartition(int v) {
+            this.partition = v;
+            return this;
+        }
+        
+        public TaskOffsetSum setOffsetSum(long v) {
+            this.offsetSum = v;
+            return this;
+        }
+        
+        public TaskOffsetSum setNamedTopology(String v) {
+            this.namedTopology = v;
             return this;
         }
         
