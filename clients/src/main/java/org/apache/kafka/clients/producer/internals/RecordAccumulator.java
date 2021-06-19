@@ -531,13 +531,20 @@ public final class RecordAccumulator {
                         // 当前Batch已经等待的时间(如120ms) >= batch最多只能等待的时间(如100ms) 已经超出了linger.ms的时间范围了
                         // 否则60ms < 100ms 此时就没有过期 如果linger.ms默认是0 意味着只要batch创建出来了 在这个地方一定是expired = true
                         boolean expired = waitedTimeMs >= timeToWaitMs;
+                        boolean transactionCompleting = transactionManager != null && transactionManager.isCompleting();
                         // 综合上述所有条件来判断 这个batch是否需要发送出去
                         // a. 如果batch已满必须得发送
                         // b. 如果batch没有写满但是expired也必须得发送出去
                         // c. 如果说batch没有写满而且也没有expired 但是内存已经消耗完毕也必须发送出去
                         // d. 如果上述条件都不满足 此时处于closed(即当前客户端要关闭掉) 此时就必须立马把内存缓冲的batch都发送出去
                         // e. 强制必须把所有数据都flush出去到网络里面去 此时就必须得发送
-                        boolean sendable = full || expired || exhausted || closed || flushInProgress();
+
+                        boolean sendable = full
+                            || expired
+                            || exhausted
+                            || closed
+                            || flushInProgress()
+                            || transactionCompleting;
                         if (sendable && !backingOff) {  // 3. 如果batch是符合发送条件的 此时会将该batch对应的partition的leader放入集合
                             // 对于一个broker 是有多个partition的batch可以发送过去的
                             readyNodes.add(leader); // 实际上是找到可以向哪些leader broker发送数据 使用Set去重

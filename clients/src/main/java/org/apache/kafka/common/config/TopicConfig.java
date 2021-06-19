@@ -97,6 +97,20 @@ public class TopicConfig {
     /**
      * kafka追加消息的最大字节数 如果增大这个字节数 也必须增大consumer的fetch字节数 这样consumer才能fetch到这些最大字节数的消息
      */
+    public static final String REMOTE_LOG_STORAGE_ENABLE_CONFIG = "remote.storage.enable";
+    public static final String REMOTE_LOG_STORAGE_ENABLE_DOC = "To enable tier storage for a topic, set `remote.storage.enable` as true. " +
+            "You can not disable this config once it is enabled. It will be provided in future versions.";
+
+    public static final String LOCAL_LOG_RETENTION_MS_CONFIG = "local.retention.ms";
+    public static final String LOCAL_LOG_RETENTION_MS_DOC = "The number of milli seconds to keep the local log segment before it gets deleted. " +
+            "Default value is -2, it represents `retention.ms` value is to be used. The effective value should always be less than or equal " +
+            "to `retention.ms` value.";
+
+    public static final String LOCAL_LOG_RETENTION_BYTES_CONFIG = "local.retention.bytes";
+    public static final String LOCAL_LOG_RETENTION_BYTES_DOC = "The maximum size of local log segments that can grow for a partition before it " +
+            "deletes the old segments. Default value is -2, it represents `retention.bytes` value to be used. The effective value should always be " +
+            "less than or equal to `retention.bytes` value.";
+
     public static final String MAX_MESSAGE_BYTES_CONFIG = "max.message.bytes";
     public static final String MAX_MESSAGE_BYTES_DOC =
             "The largest record batch size allowed by Kafka (after compression if compression is enabled). " +
