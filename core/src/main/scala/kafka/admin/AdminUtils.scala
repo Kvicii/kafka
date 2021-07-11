@@ -101,7 +101,7 @@ object AdminUtils extends Logging {
    *                                 assign each replica to a unique rack.
    *
    */
-  def assignReplicasToBrokers(brokerMetadatas: Seq[BrokerMetadata],
+  def assignReplicasToBrokers(brokerMetadatas: Iterable[BrokerMetadata],
                               nPartitions: Int,
                               replicationFactor: Int,
                               fixedStartIndex: Int = -1,
@@ -125,7 +125,7 @@ object AdminUtils extends Logging {
 
   private def assignReplicasToBrokersRackUnaware(nPartitions: Int,
                                                  replicationFactor: Int,
-                                                 brokerList: Seq[Int],
+                                                 brokerList: Iterable[Int],
                                                  fixedStartIndex: Int,
                                                  startPartitionId: Int): Map[Int, Seq[Int]] = {
     val ret = mutable.Map[Int, Seq[Int]]()
@@ -148,7 +148,7 @@ object AdminUtils extends Logging {
 
   private def assignReplicasToBrokersRackAware(nPartitions: Int,
                                                replicationFactor: Int,
-                                               brokerMetadatas: Seq[BrokerMetadata],
+                                               brokerMetadatas: Iterable[BrokerMetadata],
                                                fixedStartIndex: Int,
                                                startPartitionId: Int): Map[Int, Seq[Int]] = {
     val brokerRackMap = brokerMetadatas.collect { case BrokerMetadata(id, Some(rack)) =>

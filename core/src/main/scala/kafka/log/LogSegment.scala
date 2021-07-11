@@ -106,10 +106,16 @@ class LogSegment private[log](val log: FileRecords, // 实际保存Kafka消息�
   // volatile for LogCleaner to see the update
   @volatile private var rollingBasedTimestamp: Option[Long] = None
 
-  /* The maximum timestamp we see so far */
-  @volatile private var _maxTimestampSoFar: Option[Long] = None
+  /* The maximum timestamp and offset we see so far */
+  @volatile private var _maxTimestampAndOffsetSoFar: TimestampOffset = TimestampOffset.Unknown
+  def maxTimestampAndOffsetSoFar_= (timestampOffset: TimestampOffset): Unit = _maxTimestampAndOffsetSoFar = timestampOffset
+  def maxTimestampAndOffsetSoFar: TimestampOffset = {
+    if (_maxTimestampAndOffsetSoFar == TimestampOffset.Unknown)
+      _maxTimestampAndOffsetSoFar = timeIndex.lastEntry
+    _maxTimestampAndOffsetSoFar
+  }
 
-  def maxTimestampSoFar_=(timestamp: Long): Unit = _maxTimestampSoFar = Some(timestamp)
+  /* The maximum timestamp we see so far */
 
   /**
    * 当前日志段最大时间戳
@@ -118,14 +124,8 @@ class LogSegment private[log](val log: FileRecords, // 实际保存Kafka消息�
    * @return
    */
   def maxTimestampSoFar: Long = {
-    if (_maxTimestampSoFar.isEmpty)
-      _maxTimestampSoFar = Some(timeIndex.lastEntry.timestamp)
-    _maxTimestampSoFar.get
+    maxTimestampAndOffsetSoFar.timestamp
   }
-
-  @volatile private var _offsetOfMaxTimestampSoFar: Option[Long] = None
-
-  def offsetOfMaxTimestampSoFar_=(offset: Long): Unit = _offsetOfMaxTimestampSoFar = Some(offset)
 
   /**
    * 当前日志段最大时间戳对应的偏移量
@@ -135,9 +135,7 @@ class LogSegment private[log](val log: FileRecords, // 实际保存Kafka消息�
    * @return
    */
   def offsetOfMaxTimestampSoFar: Long = {
-    if (_offsetOfMaxTimestampSoFar.isEmpty)
-      _offsetOfMaxTimestampSoFar = Some(timeIndex.lastEntry.offset)
-    _offsetOfMaxTimestampSoFar.get
+    maxTimestampAndOffsetSoFar.offset
   }
 
   /* Return the size in bytes of this log segment */
@@ -192,8 +190,7 @@ class LogSegment private[log](val log: FileRecords, // 实际保存Kafka消息�
       // 4.更新日志段的最大时间戳和最大时间戳对应的偏移量 每个日志段都要保存当前最大时间戳信息和所属消息的位移信息
       // 最大时间戳用于日志留存的 最大时间戳对应的消息偏移量用于时间戳索引项(时间戳索引项用于保存时间戳和消息位移之间的对应关系)
       if (largestTimestamp > maxTimestampSoFar) {
-        maxTimestampSoFar = largestTimestamp
-        offsetOfMaxTimestampSoFar = shallowOffsetOfMaxTimestamp
+        maxTimestampAndOffsetSoFar = TimestampOffset(largestTimestamp, shallowOffsetOfMaxTimestamp)
       }
       // append an entry to the index (if needed)
       // .log文件 offset -> 38272 物理位置 -> 301
@@ -403,7 +400,7 @@ class LogSegment private[log](val log: FileRecords, // 实际保存Kafka消息�
     txnIndex.reset()
     var validBytes = 0
     var lastIndexEntry = 0
-    maxTimestampSoFar = RecordBatch.NO_TIMESTAMP
+    maxTimestampAndOffsetSoFar = TimestampOffset.Unknown
     try {
       // 2.遍历日志段中所有消息集合或消息批次
       for (batch <- log.batches.asScala) {
@@ -414,8 +411,7 @@ class LogSegment private[log](val log: FileRecords, // 实际保存Kafka消息�
         // The max timestamp is exposed at the batch level, so no need to iterate the records
         // 2.2保存最大时间戳和最大时间戳对应的偏移量
         if (batch.maxTimestamp > maxTimestampSoFar) {
-          maxTimestampSoFar = batch.maxTimestamp
-          offsetOfMaxTimestampSoFar = batch.lastOffset
+          maxTimestampAndOffsetSoFar = TimestampOffset(batch.maxTimestamp, batch.lastOffset)
         }
 
         // Build offset index
@@ -459,15 +455,13 @@ class LogSegment private[log](val log: FileRecords, // 实际保存Kafka消息�
   private def loadLargestTimestamp(): Unit = {
     // Get the last time index entry. If the time index is empty, it will return (-1, baseOffset)
     val lastTimeIndexEntry = timeIndex.lastEntry
-    maxTimestampSoFar = lastTimeIndexEntry.timestamp
-    offsetOfMaxTimestampSoFar = lastTimeIndexEntry.offset
+    maxTimestampAndOffsetSoFar = lastTimeIndexEntry
 
     val offsetPosition = offsetIndex.lookup(lastTimeIndexEntry.offset)
     // Scan the rest of the messages to see if there is a larger timestamp after the last time index entry.
     val maxTimestampOffsetAfterLastEntry = log.largestTimestampAfter(offsetPosition.position)
     if (maxTimestampOffsetAfterLastEntry.timestamp > lastTimeIndexEntry.timestamp) {
-      maxTimestampSoFar = maxTimestampOffsetAfterLastEntry.timestamp
-      offsetOfMaxTimestampSoFar = maxTimestampOffsetAfterLastEntry.offset
+      maxTimestampAndOffsetSoFar = TimestampOffset(maxTimestampOffsetAfterLastEntry.timestamp, maxTimestampOffsetAfterLastEntry.offset)
     }
   }
 
@@ -658,7 +652,7 @@ class LogSegment private[log](val log: FileRecords, // 实际保存Kafka消息�
    * Close this log segment
    */
   def close(): Unit = {
-    if (_maxTimestampSoFar.nonEmpty || _offsetOfMaxTimestampSoFar.nonEmpty)
+    if (_maxTimestampAndOffsetSoFar != TimestampOffset.Unknown)
       CoreUtils.swallow(timeIndex.maybeAppend(maxTimestampSoFar, offsetOfMaxTimestampSoFar,
         skipFullCheck = true), this)
     CoreUtils.swallow(lazyOffsetIndex.close(), this)

@@ -27,7 +27,7 @@ import kafka.server.AbstractFetcherThread.ReplicaFetch
 import kafka.server.AbstractFetcherThread.ResultWithPartitions
 import kafka.utils.Implicits._
 import org.apache.kafka.clients.FetchSessionHandler
-import org.apache.kafka.common.TopicPartition
+import org.apache.kafka.common.{TopicPartition, Uuid}
 import org.apache.kafka.common.errors.KafkaStorageException
 import org.apache.kafka.common.message.ListOffsetsRequestData.{ListOffsetsPartition, ListOffsetsTopic}
 import org.apache.kafka.common.message.OffsetForLeaderEpochRequestData.OffsetForLeaderTopic
@@ -91,7 +91,8 @@ class ReplicaFetcherThread(name: String,
 
   // Visible for testing
   private[server] val fetchRequestVersion: Short =
-    if (brokerConfig.interBrokerProtocolVersion >= KAFKA_2_7_IV1) 12
+    if (brokerConfig.interBrokerProtocolVersion >= KAFKA_3_1_IV0) 13
+    else if (brokerConfig.interBrokerProtocolVersion >= KAFKA_2_7_IV1) 12
     else if (brokerConfig.interBrokerProtocolVersion >= KAFKA_2_3_IV1) 11
     else if (brokerConfig.interBrokerProtocolVersion >= KAFKA_2_1_IV2) 10
     else if (brokerConfig.interBrokerProtocolVersion >= KAFKA_2_0_IV1) 8
@@ -260,19 +261,26 @@ class ReplicaFetcherThread(name: String,
    * @return
    */
   override protected def fetchFromLeader(fetchRequest: FetchRequest.Builder): Map[TopicPartition, FetchData] = {
-    try {
-      // 向Leader Broker发送请求 接收Leader Broker的响应
-      val clientResponse = leaderEndpoint.sendRequest(fetchRequest)
-      val fetchResponse = clientResponse.responseBody.asInstanceOf[FetchResponse]
-      if (!fetchSessionHandler.handleResponse(fetchResponse)) {
-        Map.empty
-      } else {
-        fetchResponse.responseData.asScala
-      }
+    // 向Leader Broker发送请求 接收Leader Broker的响应
+    val clientResponse = try {
+      leaderEndpoint.sendRequest(fetchRequest)
     } catch {
       case t: Throwable =>
         fetchSessionHandler.handleError(t)
         throw t
+    }
+    val fetchResponse = clientResponse.responseBody.asInstanceOf[FetchResponse]
+    if (!fetchSessionHandler.handleResponse(fetchResponse, clientResponse.requestHeader().apiVersion())) {
+      // If we had a topic ID related error, throw it, otherwise return an empty fetch data map.
+      if (fetchResponse.error == Errors.UNKNOWN_TOPIC_ID ||
+          fetchResponse.error == Errors.FETCH_SESSION_TOPIC_ID_ERROR ||
+          fetchResponse.error == Errors.INCONSISTENT_TOPIC_ID) {
+        throw Errors.forCode(fetchResponse.error().code()).exception()
+      } else {
+        Map.empty
+      }
+    } else {
+      fetchResponse.responseData(fetchSessionHandler.sessionTopicNames, clientResponse.requestHeader().apiVersion()).asScala
     }
   }
 
@@ -318,6 +326,7 @@ class ReplicaFetcherThread(name: String,
    */
   override def buildFetch(partitionMap: Map[TopicPartition, PartitionFetchState]): ResultWithPartitions[Option[ReplicaFetch]] = {
     val partitionsWithError = mutable.Set[TopicPartition]()
+    val topicIds = replicaMgr.metadataCache.topicNamesToIds()
 
     // 构造FetchSessionHandler的Builder实例 该对象保存用于向Leader副本请求数据的所有分区
     val builder = fetchSessionHandler.newBuilder(partitionMap.size, false)
@@ -332,7 +341,7 @@ class ReplicaFetcherThread(name: String,
             fetchState.lastFetchedEpoch.map(_.asInstanceOf[Integer]).asJava
           else
             Optional.empty[Integer]
-          builder.add(topicPartition, new FetchRequest.PartitionData(
+          builder.add(topicPartition, topicIds.getOrDefault(topicPartition.topic(), Uuid.ZERO_UUID), new FetchRequest.PartitionData(
             fetchState.fetchOffset,
             logStartOffset,
             fetchSize,  // 一次拉取最多能拉取的数据量是多少 默认1M
@@ -350,11 +359,12 @@ class ReplicaFetcherThread(name: String,
     val fetchData = builder.build() // 获取构造好的待读取分区数据
     val fetchRequestOpt = if (fetchData.sessionPartitions.isEmpty && fetchData.toForget.isEmpty) { // 是否有数据需要从Leader副本拉取
       None
-    } else { // 构造FETCH请求的Builder对象
+    } else {  // 构造FETCH请求的Builder对象
+      val version: Short = if (fetchRequestVersion >= 13 && !fetchData.canUseTopicIds) 12 else fetchRequestVersion
+      // 一次Fetch请求过去 至少得拉取到minBytes(默认1Byte)数据
+      // 如果连1Byte数据都没有 就需要等待一段时间 最多等待maxWait(500ms) 如果500ms之后仍未有数据到达Leader 此时就返回
       val requestBuilder = FetchRequest.Builder
-        // 一次Fetch请求过去 至少得拉取到minBytes(默认1Byte)数据
-        // 如果连1Byte数据都没有 就需要等待一段时间 最多等待maxWait(500ms) 如果500ms之后仍未有数据到达Leader 此时就返回
-        .forReplica(fetchRequestVersion, replicaId, maxWait, minBytes, fetchData.toSend)
+        .forReplica(version, replicaId, maxWait, minBytes, fetchData.toSend, fetchData.topicIds)
         .setMaxBytes(maxBytes)
         .toForget(fetchData.toForget)
         .metadata(fetchData.metadata)
